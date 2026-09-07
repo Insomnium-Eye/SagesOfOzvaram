@@ -35,3 +35,4 @@
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/Debug/net8.0/SagesOfOzvaram.genruntimeconfig.cache
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/Debug/net8.0/ref/SagesOfOzvaram.dll
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/bin/Debug/net8.0/Content/Fonts/DefaultFont.xnb
+/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/Debug/net8.0/SagesOfOzvaram.sourcelink.json
