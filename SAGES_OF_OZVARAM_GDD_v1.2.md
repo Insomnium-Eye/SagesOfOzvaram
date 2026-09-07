@@ -224,6 +224,7 @@ This approach creates a richer, more believable world where cultural misundersta
   - **Human - Punch**: `1 + STR/5` damage, 95% base accuracy, knocks the target back 1 tile (+1 tile per 5 damage dealt)
   - **Lethios - Bite**: `5 + STR/3` damage, 40% base accuracy, inflicts Bleeding (Moderate rank: 3% of current HP per turn)
   - **Vectium - Swipe**: `3 + STR/1.5` damage, 80% base accuracy, inflicts Bleeding (Minor rank: 2% of current HP per turn)
+  - **Roachlin - Roachlin Slash** *(summoned creature, not a playable race)*: `3 + STR/5` damage, 85% base accuracy
 - **Damage Scaling**: physical weapon moves scale with STR; magical ones (the Sorcerer's Staff) scale with INT instead - see each move below. Flintlock Pistol is the exception: no specialization exists for it, so it doesn't scale with either stat (see Weapon Specialization)
 - **Notable Weapon Moves** *(range 1 unless noted, 2 AP; pending a balance pass)*:
   - **One-Handed Iron Sword - Sword Slash**: `8 + STR/4` damage, 88% accuracy, small (6%) crit chance for 3x damage, small (15%) chance to inflict Bleeding (Weak rank)
@@ -268,10 +269,11 @@ This approach creates a richer, more believable world where cultural misundersta
 #### Card/Deck System
 - **Deck Size**: 10-30 cards per unit
 - **Mechanics**: Draw 1 card per turn (1 AP), use card abilities
-- **Additional Draws**: from the Spell menu, a unit may draw more cards beyond its first this turn - each additional draw doubles the AP cost of the last one (1 AP, then 2, then 4, then 8, etc.); the draw count (and its cost) resets at the start of the unit's next turn
+- **Additional Draws**: from the Cards menu, a unit may draw more cards beyond its first this turn - each additional draw doubles the AP cost of the last one (1 AP, then 2, then 4, then 8, etc.); the draw count (and its cost) resets at the start of the unit's next turn
 - **Depletion**: When deck exhausted, reshuffle (+1 MP cost penalty)
 - **Strategy**: Deck composition affects unit playstyle
-- **Current Implementation**: `SpellCard` exists (wraps a `Move` for its damage/accuracy/range formulas, plus a class requirement, description, and card art) and the "Spell" turn-menu option shows the player's available cards, rendered dynamically - but there's still no actual Deck (draw pile, shuffle, hand), no card-draw/AP-doubling mechanic, and no way to actually cast a spell yet. Just Arcane Bolt for the Sorcerer so far (see Spell Cards below)
+- **Current Implementation**: `SpellCard` and `SummonCard` exist as presentation/stat data, and the turn menu's "Cards" option opens a single browsable hand combining the player's available spell cards (class-gated, via `SpellCatalog`) and summon cards (not class-gated, via `SummonCatalog`) - A/D cycles between them, styled as a hand of playing cards (the selected card centered and large, the previous/next cards peeking out smaller to either side). Clicking a peeking side card selects it too (same effect as A/D) - the hit-test rects come from the same `GetHandCardLayout` the draw call uses, so they can't drift out of sync. Hovering the cursor over any numeric field on the centered card shows a tooltip explaining what it represents (`GetHoveredCardTooltip`, checked against the exact same fractional regions the numbers are drawn into). There's still no actual Deck (draw pile, shuffle), no card-draw/AP-doubling mechanic, and no way to actually cast a spell or summon a creature yet - this is a viewer only. Just Arcane Bolt for the Sorcerer and Dusk Roachlin so far (see Spell Cards / Summon Cards below)
+- **Summoned Units Have No Cards of Their Own**: unlike heroes, a summoned creature doesn't draw cards - it fights with a fixed, set list of attacks (currently just its race's innate move, e.g. Roachlin Slash for the Dusk Roachlin - see Race-Based Attacks). The SummonCard's bottom-left number range (e.g. "3-12") represents the least and most damage that attack list can deal, not a per-hit random roll - it's informational, shown so a player can gauge a summon's damage output before summoning it
 
 #### Spell Cards
 - **Rendering**: cards are composited at runtime from `Content/imgs/Cards/Spells/SpellCard.png` (the shared template) plus the card's own art texture and its dynamic text/values - nothing about a specific card is a separate baked image, so any new `SpellCard` renders correctly through the same code
@@ -279,6 +281,13 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Card Art**: the art window on `SpellCard.png` isn't a plain rectangle - it has a curved notch cut into its top-right corner (clearing the cost circle), which every fractional-rectangle measurement attempt missed, always leaving a seam somewhere along an edge. The fix (`BuildSpellCardArtMask`) flood-fills the template's actual near-white pixels outward from a seed point to capture the window's exact pixel shape (cached once), and `GetCardComposite` resamples the card's art directly into the template's own pixel buffer wherever that mask is true, producing one finished texture per card - not two layers drawn at runtime - so there's no draw-order, blend-state, or region-measurement step left that could reintroduce a gap
 - **Current Cards** *(first-pass numbers, pending a balance pass)*:
   - **Arcane Bolt** (Sorcerer): `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP
+
+#### Summon Cards
+- **Current Implementation**: `SummonCard` holds a creature's presentation data and full stat block (mana cost, unit type, description, ATT/INT/DEF/RES/Accuracy/Evasion/Speed, min-max damage, HP, art). Every card in `SummonCatalog` is included in the "Cards" hand (see Card/Deck System above) alongside spell cards, rendered dynamically through `DrawSummonCard` - same viewer-only stage the Spell cards started at: no deck/draw system and no actual summon-to-battlefield mechanics exist yet, and summons aren't class-gated the way spells are
+- **Rendering**: composited at runtime from `Content/imgs/Cards/Summons/SummonCard.png` (the shared template - a per-theme template, "ground" for now, more to come) plus the card's art and dynamic text/values, using the same flood-fill masking approach as Spell Cards (see above) - the Summon template's art window is a flat maroon fill (matched by color distance from a seed pixel rather than a "near white" test) with seven notches down its left edge clearing the stat-icon bars, which a rectangular region would have overlapped
+- **Dynamic Fields**: name (top bar), mana cost (top-right white "star" circle - the top-left stone medallion is pure decoration and gets no text), the seven stat values placed into their icon-labelled bars (fist=Attack, book=Intelligence, shield=Defense, meditating figure=Resistance, crosshair=Accuracy, feather=Evasion, lightning bolt=Speed - the icons themselves are baked into the template), unit type (bottom bar), description (cream box), damage range as "min-max" (bottom-left bar, next to a sword badge baked into the template), and HP (bottom-right circle over a heart badge)
+- **Description Fit**: `DrawWrappedText` shrinks its font scale in steps (re-wrapping at each step, since fewer/longer lines fit at a smaller scale) until the whole wrapped block fits inside its box's height, rather than just wrapping to width and letting a long description spill out the bottom
+- **Current Cards** *(first-pass numbers, pending a balance pass)*: **Dusk Roachlin** - 5 mana, ATT 8 / INT 3 / DEF 6 / RES 4 / Accuracy 7 / Evasion 6 / Speed 9, 3-12 damage, 12 HP. `Units.Summons.DuskRoachlin` (off `BaseUnit`) mirrors these same stats, using `Race.Roachlin` (a summon-only race, not playable) and `HeroClass.None` (not a hero class, grants no weapon specializations) - not currently spawned into the active session, just defined and ready to instantiate
 
 #### Aggro System
 - **Range**: 0-20 aggro per enemy
@@ -300,7 +309,7 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Resistance (RES)**: Magic damage reduction, in percentage points (same formula as DEF, applied to magic damage)
 - **Aggression**: How easily unit draws enemy attention
 - **Accuracy**: Adds +0.1% hit chance per point, on top of a move's base accuracy; total hit chance is allowed to exceed 100% (no upper cap) - that headroom is intentional, since accuracy-lowering effects (e.g. Blind) are planned
-- **Evasion**: Dodge chance modifier
+- **Evasion**: Dodge chance modifier; implemented on BaseUnit as a placeholder stat - not yet factored into any hit-chance formula (Move.GetHitChance currently only accounts for the attacker's Accuracy, not the target's Evasion)
 - **Vision Range**: How far unit can see (5-7 tiles typical)
 
 #### Status Effects
@@ -465,11 +474,13 @@ SagesOfOzvaram/
 │   ├── BaseUnit.cs
 │   ├── Race.cs
 │   ├── HeroClass.cs
-│   └── Heroes/
-│       ├── ApprenticeSorcerer.cs
-│       ├── ApprenticeWarrior.cs
-│       ├── ApprenticeCleric.cs
-│       └── ApprenticeHunter.cs
+│   ├── Heroes/
+│   │   ├── ApprenticeSorcerer.cs
+│   │   ├── ApprenticeWarrior.cs
+│   │   ├── ApprenticeCleric.cs
+│   │   └── ApprenticeHunter.cs
+│   └── Summons/
+│       └── DuskRoachlin.cs
 ├── Combat/
 │   ├── TurnSystem.cs
 │   ├── Move.cs
@@ -479,6 +490,8 @@ SagesOfOzvaram/
 │   ├── ClassCatalog.cs
 │   ├── SpellCard.cs
 │   ├── SpellCatalog.cs
+│   ├── SummonCard.cs
+│   ├── SummonCatalog.cs
 │   ├── WeaponType.cs
 │   ├── StatusRank.cs
 │   ├── BleedEffect.cs
@@ -507,7 +520,8 @@ SagesOfOzvaram/
 │   │   ├── SpellCard.png       (shared template - see Spell Cards §4.1)
 │   │   └── ArcaneBolt_CardArt.png
 │   ├── imgs/Cards/Summons/
-│   │   └── SummonCard.png      (template only - no Summon cards built yet)
+│   │   ├── SummonCard.png      (shared template - see Summon Cards §4.1)
+│   │   └── DuskRoachlin_CardArt1.png
 │   ├── Fonts/DefaultFont.spritefont  (Liberation Sans, Arial-metric-compatible; built via Content.mgcb)
 │   └── Content.mgcb
 ├── Game1.cs

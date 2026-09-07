@@ -17,6 +17,7 @@ namespace SagesOfOzvaram.Combat
             [HeroClass.Warrior] = new HashSet<WeaponType> { WeaponType.OneHandedSword },
             [HeroClass.Sorcerer] = new HashSet<WeaponType> { WeaponType.Staff },
             [HeroClass.Cleric] = new HashSet<WeaponType> { WeaponType.Mace },
+            [HeroClass.None] = new HashSet<WeaponType>(),
         };
 
         public static HashSet<WeaponType> GetWeaponSpecializations(HeroClass heroClass) => Specializations[heroClass];

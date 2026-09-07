@@ -35,6 +35,9 @@ namespace SagesOfOzvaram.Units
         public int Strength { get; set; } = 10;
         public int Accuracy { get; set; } = 10;
 
+        /// <summary>Placeholder stat pending a dodge/hit-chance formula that factors in the target's evasion - Move.GetHitChance currently only considers the attacker's Accuracy.</summary>
+        public int Evasion { get; set; } = 10;
+
         /// <summary>Magic damage stat - magical weapon moves (e.g. the Sorcerer's Arcane Missile) scale with this instead of Strength.</summary>
         public int Intelligence { get; set; } = 10;
 

@@ -7,6 +7,9 @@ namespace SagesOfOzvaram.Units
     {
         Human,
         Lethios,
-        Vectium
+        Vectium,
+
+        /// <summary>A summoned-creature race, not a playable hero race - see RaceAttacks for its innate move.</summary>
+        Roachlin
     }
 }

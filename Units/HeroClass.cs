@@ -10,6 +10,9 @@ namespace SagesOfOzvaram.Units
         Sorcerer,
         Warrior,
         Cleric,
-        Hunter
+        Hunter,
+
+        /// <summary>Not a hero class - used by non-hero units (e.g. summoned creatures) that have no card-based class system, so ClassCatalog grants them no weapon specializations.</summary>
+        None
     }
 }

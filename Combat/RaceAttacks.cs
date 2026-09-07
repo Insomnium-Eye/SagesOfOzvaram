@@ -28,6 +28,13 @@ namespace SagesOfOzvaram.Combat
                 apCost: 2, mpCost: 0, range: 1,
                 baseAccuracy: 0.80f, baseDamage: 3, strengthDivisor: 1.5f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Minor),
+
+            // Summoned-creature races (not playable heroes) get their attack list the same way -
+            // via their race's innate move - since summons don't have cards/weapons of their own.
+            [Race.Roachlin] = new Move(
+                "Roachlin Slash", "Slashes with claws.",
+                apCost: 2, mpCost: 0, range: 1,
+                baseAccuracy: 0.85f, baseDamage: 3, strengthDivisor: 5f),
         };
 
         public static Move GetInnateMove(Race race) => InnateMoves[race];
