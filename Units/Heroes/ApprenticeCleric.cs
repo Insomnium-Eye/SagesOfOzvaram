@@ -19,6 +19,8 @@ namespace SagesOfOzvaram.Units.Heroes
             Defense = 10;
             Resistance = 12;
             Intelligence = 12; // Mace specialist - the extra INT-based damage on Mace Bash draws on this
+            MaxMP = 15;       // support caster
+            CurrentMP = 15;
 
             Inventory.Add(WeaponCatalog.LightMace);
             Inventory.Add(WeaponCatalog.IronShield);

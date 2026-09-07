@@ -56,10 +56,11 @@ namespace SagesOfOzvaram.Maps
         /// </summary>
         public (int col, int row) WorldToHex(Vector2 worldPos)
         {
-            // Convert world position back to hex coordinates
-            float q = (2f / 3f * worldPos.X) / TileSize;
-            float r = (-1f / 3f * worldPos.X + (float)Math.Sqrt(3f) / 3f * worldPos.Y) / TileSize;
- 
+            // Inverse of the axial-to-pixel placement HexToWorld/OddRToCube imply:
+            // x = TileSize*sqrt(3)*(q + r/2), y = TileSize*1.5*r
+            float q = ((float)Math.Sqrt(3f) * worldPos.X - worldPos.Y) / (3f * TileSize);
+            float r = (2f * worldPos.Y) / (3f * TileSize);
+
             return RoundToHex(q, r);
         }
  

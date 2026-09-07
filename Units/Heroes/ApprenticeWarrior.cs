@@ -19,6 +19,8 @@ namespace SagesOfOzvaram.Units.Heroes
             Defense = 20;    // Lethios: durable tank
             Resistance = 5;
             Intelligence = 4; // brawn over brains
+            MaxMP = 5;       // not a caster
+            CurrentMP = 5;
 
             Inventory.Add(WeaponCatalog.IronSword);
             Inventory.Add(WeaponCatalog.IronShield);

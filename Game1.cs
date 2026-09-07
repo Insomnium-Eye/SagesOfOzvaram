@@ -60,6 +60,13 @@ namespace SagesOfOzvaram
             "ApprenticeHunter_Avatar"    // matches _units[3]
         };
         private Texture2D[] _avatarTextures;
+
+        // Spell cards
+        private Texture2D _spellCardTemplate;
+        private Dictionary<string, Texture2D> _cardArtCache = new Dictionary<string, Texture2D>();
+        private Dictionary<string, Texture2D> _cardCompositeCache = new Dictionary<string, Texture2D>();
+        private bool _spellMenuActive = false;
+        private List<SpellCard> _availableSpellCards = new List<SpellCard>();
         private int _selectedCharacterIndex = 0;  // Sorcerer is the default selection
         private BaseUnit _playerUnit;
 
@@ -76,7 +83,7 @@ namespace SagesOfOzvaram
 
         // Movement mode (opened from the "Move" turn-menu option)
         private bool _movementModeActive = false;
-        private Dictionary<(int col, int row), int> _reachableTiles = new Dictionary<(int, int), int>();
+        private Dictionary<(int col, int row), (int tiles, int waterTiles)> _reachableTiles = new Dictionary<(int, int), (int, int)>();
 
         public Game1()
         {
@@ -227,6 +234,10 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Load the spell card template (per-card art and the finished art+template composite
+            // are both built lazily, see GetCardArt/GetCardComposite).
+            _spellCardTemplate = LoadTextureFromDisk(Path.Combine("Content", "imgs", "Cards", "Spells", "SpellCard.png"));
+
             // Load or create font (monospace for console)
             try
             {
@@ -241,6 +252,138 @@ namespace SagesOfOzvaram
             // Create 1x1 white pixel for UI drawing
             _whitePixel = new Texture2D(GraphicsDevice, 1, 1);
             _whitePixel.SetData(new[] { Color.White });
+        }
+
+        /// <summary>Load a texture directly from disk (bypassing the Content pipeline), or null if the file doesn't exist.</summary>
+        private Texture2D LoadTextureFromDisk(string filePath)
+        {
+            if (!File.Exists(filePath))
+                return null;
+
+            using var stream = File.OpenRead(filePath);
+            return Texture2D.FromStream(GraphicsDevice, stream);
+        }
+
+        /// <summary>Get (loading and caching on first use) a spell card's art texture.</summary>
+        private Texture2D GetCardArt(SpellCard card)
+        {
+            if (!_cardArtCache.TryGetValue(card.ArtAssetPath, out var texture))
+            {
+                texture = LoadTextureFromDisk(Path.Combine("Content", card.ArtAssetPath.Replace('/', Path.DirectorySeparatorChar) + ".png"));
+                _cardArtCache[card.ArtAssetPath] = texture;
+            }
+            return texture;
+        }
+
+        // The art window's true shape isn't a plain axis-aligned rectangle - it has a curved
+        // notch cut into its top-right corner (to clear the cost circle). A fractional-region
+        // rectangle either missed that notch or left a seam where the window's real edge
+        // didn't match the assumed one. FindArtWindowMask flood-fills the template's actual
+        // near-white pixels from a seed point to get the exact shape instead, computed once
+        // and cached.
+        private bool[] _spellCardArtMask;
+        private Rectangle _spellCardArtBounds;
+
+        private static bool IsWindowColor(Color c) => c.R > 230 && c.G > 230 && c.B > 230;
+
+        /// <summary>Flood-fill the template's art window from a seed point at CardArtRegion's center, recording its exact pixel shape and bounding box.</summary>
+        private void BuildSpellCardArtMask()
+        {
+            int w = _spellCardTemplate.Width;
+            int h = _spellCardTemplate.Height;
+            var pixels = new Color[w * h];
+            _spellCardTemplate.GetData(pixels);
+
+            int seedX = (int)((CardArtRegion.x0 + CardArtRegion.x1) / 2f * w);
+            int seedY = (int)((CardArtRegion.y0 + CardArtRegion.y1) / 2f * h);
+            int seedIndex = seedY * w + seedX;
+            if (!IsWindowColor(pixels[seedIndex]))
+                return;
+
+            var visited = new bool[w * h];
+            var queue = new Queue<int>();
+            visited[seedIndex] = true;
+            queue.Enqueue(seedIndex);
+
+            int minX = w, maxX = 0, minY = h, maxY = 0;
+            while (queue.Count > 0)
+            {
+                int idx = queue.Dequeue();
+                int x = idx % w;
+                int y = idx / w;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+
+                if (x > 0) { int n = idx - 1; if (!visited[n] && IsWindowColor(pixels[n])) { visited[n] = true; queue.Enqueue(n); } }
+                if (x < w - 1) { int n = idx + 1; if (!visited[n] && IsWindowColor(pixels[n])) { visited[n] = true; queue.Enqueue(n); } }
+                if (y > 0) { int n = idx - w; if (!visited[n] && IsWindowColor(pixels[n])) { visited[n] = true; queue.Enqueue(n); } }
+                if (y < h - 1) { int n = idx + w; if (!visited[n] && IsWindowColor(pixels[n])) { visited[n] = true; queue.Enqueue(n); } }
+            }
+
+            _spellCardArtMask = visited;
+            _spellCardArtBounds = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+        }
+
+        /// <summary>
+        /// Get (building and caching on first use) a card's finished art+template texture: the
+        /// art pixels are resampled directly into the template's own pixel buffer, in exactly the
+        /// flood-filled art window shape (see BuildSpellCardArtMask) - so every pixel that's
+        /// really part of the window gets art, and every pixel that isn't (including the notch
+        /// cut into the top-right corner) keeps the original template art untouched, with no
+        /// runtime draw-order or blend-state step that could leave a seam.
+        /// </summary>
+        private Texture2D GetCardComposite(SpellCard card)
+        {
+            if (_cardCompositeCache.TryGetValue(card.Name, out var cached))
+                return cached;
+
+            Texture2D composite = null;
+            if (_spellCardTemplate != null)
+            {
+                if (_spellCardArtMask == null)
+                    BuildSpellCardArtMask();
+
+                int w = _spellCardTemplate.Width;
+                int h = _spellCardTemplate.Height;
+                var pixels = new Color[w * h];
+                _spellCardTemplate.GetData(pixels);
+
+                Texture2D art = GetCardArt(card);
+                if (art != null && _spellCardArtMask != null)
+                {
+                    var artPixels = new Color[art.Width * art.Height];
+                    art.GetData(artPixels);
+
+                    int x0 = _spellCardArtBounds.X;
+                    int y0 = _spellCardArtBounds.Y;
+                    int rectW = _spellCardArtBounds.Width;
+                    int rectH = _spellCardArtBounds.Height;
+
+                    for (int y = 0; y < rectH; y++)
+                    {
+                        int ty = y0 + y;
+                        int sy = Math.Min(art.Height - 1, y * art.Height / rectH);
+                        int rowBase = ty * w;
+                        int artRowBase = sy * art.Width;
+                        for (int x = 0; x < rectW; x++)
+                        {
+                            int tx = x0 + x;
+                            if (!_spellCardArtMask[rowBase + tx])
+                                continue;
+                            int sx = Math.Min(art.Width - 1, x * art.Width / rectW);
+                            pixels[rowBase + tx] = artPixels[artRowBase + sx];
+                        }
+                    }
+                }
+
+                composite = new Texture2D(GraphicsDevice, w, h);
+                composite.SetData(pixels);
+            }
+
+            _cardCompositeCache[card.Name] = composite;
+            return composite;
         }
 
         private void RegisterDefaultAssets()
@@ -347,6 +490,10 @@ namespace SagesOfOzvaram
                         {
                             HandleMovementInput(keyboardState, mouseState);
                         }
+                        else if (_spellMenuActive)
+                        {
+                            HandleSpellMenuInput(keyboardState);
+                        }
                         else
                         {
                             // Pause auto-advance and let the player choose an action from the menu
@@ -364,6 +511,7 @@ namespace SagesOfOzvaram
                         _viewingMap = false;
                         _attackMenuActive = false;
                         _movementModeActive = false;
+                        _spellMenuActive = false;
 
                         // Auto-advance to next unit after 3 seconds (once per unit, non-player units only)
                         if (!isPlayerTurn && _turnSystem.UnitTurnElapsed > 3f && !_hasAutoAdvancedThisTurn)
@@ -541,6 +689,32 @@ namespace SagesOfOzvaram
                 _turnMenuActive = false;
                 OpenMovementMode();
             }
+            else if (option == "Spell")
+            {
+                _turnMenuActive = false;
+                OpenSpellMenu();
+            }
+        }
+
+        /// <summary>
+        /// Open the spell display: shows every spell card the player unit's class has access
+        /// to (via SpellCatalog), rendered dynamically through DrawSpellCard. Just a viewer for
+        /// now - no deck/draw system or spell-casting exists yet, matching Attack's move list.
+        /// </summary>
+        private void OpenSpellMenu()
+        {
+            _availableSpellCards = SpellCatalog.GetSpellsForClass(_playerUnit.Class);
+            _spellMenuActive = true;
+        }
+
+        private void HandleSpellMenuInput(KeyboardState keyboardState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                _spellMenuActive = false;
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
         }
 
         /// <summary>
@@ -550,10 +724,9 @@ namespace SagesOfOzvaram
         private void OpenMovementMode()
         {
             var start = _hexGrid.WorldToHex(_playerUnit.Position);
-            int budget = _playerUnit.CurrentAP * _playerUnit.TilesPerAP;
-            int displayRadius = budget + 3;
+            float displayApBudget = _playerUnit.CurrentAP + 2f; // show a bit beyond current reach too, in red
 
-            _reachableTiles = Pathfinder.GetReachableTiles(_hexGrid, _map, start, displayRadius, GetOccupiedTiles(_playerUnit));
+            _reachableTiles = Pathfinder.GetReachableTiles(_hexGrid, _map, start, _playerUnit.TilesPerAP, displayApBudget, GetOccupiedTiles(_playerUnit));
             _reachableTiles.Remove(start);
 
             _movementModeActive = true;
@@ -597,17 +770,34 @@ namespace SagesOfOzvaram
         private void TryMoveTowards((int col, int row) destination)
         {
             var start = _hexGrid.WorldToHex(_playerUnit.Position);
-            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, GetOccupiedTiles(_playerUnit));
+            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, _playerUnit.TilesPerAP, GetOccupiedTiles(_playerUnit));
             if (path == null || path.Count == 0)
                 return;
 
-            int budget = _playerUnit.CurrentAP * _playerUnit.TilesPerAP;
-            int tilesToMove = Math.Min(path.Count, budget);
-            if (tilesToMove <= 0)
-                return;
+            // Walk the path tile by tile, stopping at the last one the unit can still afford
+            // (using the exact integer charge formula, not Dijkstra's float approximation).
+            int tilesPerAP = _playerUnit.TilesPerAP;
+            int tiles = 0, water = 0, lastAffordableIndex = -1;
+            for (int i = 0; i < path.Count; i++)
+            {
+                var (col, row) = path[i];
+                bool isWater = _map.GetTile(col, row)?.Type == "water";
+                int candidateTiles = tiles + 1;
+                int candidateWater = water + (isWater ? 1 : 0);
+                int candidateApCost = (int)Math.Ceiling(candidateTiles / (float)tilesPerAP) + candidateWater;
+                if (candidateApCost > _playerUnit.CurrentAP)
+                    break;
 
-            var actualDestination = path[tilesToMove - 1];
-            int apCost = (int)Math.Ceiling(tilesToMove / (float)_playerUnit.TilesPerAP);
+                tiles = candidateTiles;
+                water = candidateWater;
+                lastAffordableIndex = i;
+            }
+
+            if (lastAffordableIndex < 0)
+                return; // can't afford even the first step
+
+            var actualDestination = path[lastAffordableIndex];
+            int apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
 
             _playerUnit.Position = _hexGrid.HexToWorld(actualDestination.col, actualDestination.row);
             _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - apCost);
@@ -740,7 +930,7 @@ namespace SagesOfOzvaram
         {
             // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
             // since W/S there navigate the menu instead
-            if (!_turnMenuActive && !_attackMenuActive)
+            if (!_turnMenuActive && !_attackMenuActive && !_spellMenuActive)
             {
                 float panSpeed = 5f;
                 if (keyboardState.IsKeyDown(Keys.W))
@@ -892,6 +1082,9 @@ namespace SagesOfOzvaram
 
                 if (_movementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to move - E to cancel");
+
+                if (_spellMenuActive)
+                    DrawSpellMenuOverlay(viewportSize);
 
                 if (_consoleOpen)
                     DrawConsole();
@@ -1064,23 +1257,21 @@ namespace SagesOfOzvaram
         /// </summary>
         private void DrawMovementRange()
         {
-            foreach (var (tile, pathLength) in _reachableTiles)
+            if (_font == null)
+                return;
+
+            foreach (var (tile, steps) in _reachableTiles)
             {
-                int apCost = (int)Math.Ceiling(pathLength / (float)_playerUnit.TilesPerAP);
+                int apCost = (int)Math.Ceiling(steps.tiles / (float)_playerUnit.TilesPerAP) + steps.waterTiles;
                 bool affordable = apCost <= _playerUnit.CurrentAP;
 
+                // Tiles keep their normal terrain color - only the AP cost is overlaid, in red
+                // when the tile is out of reach.
                 Vector2 worldPos = _hexGrid.HexToWorld(tile.col, tile.row);
-                Color fill = affordable ? new Color(80, 160, 255, 110) : new Color(220, 50, 50, 100);
-                Color outline = affordable ? Color.CornflowerBlue : Color.Red;
-                DrawHexFilled(worldPos, fill, outline);
-
-                if (_font != null)
-                {
-                    string costText = apCost.ToString();
-                    Vector2 textSize = _font.MeasureString(costText);
-                    _spriteBatch.DrawString(_font, costText, worldPos - textSize / 2f,
-                        affordable ? Color.White : Color.OrangeRed);
-                }
+                string costText = apCost.ToString();
+                Vector2 textSize = _font.MeasureString(costText);
+                _spriteBatch.DrawString(_font, costText, worldPos - textSize / 2f,
+                    affordable ? Color.White : Color.Red);
             }
         }
 
@@ -1098,7 +1289,7 @@ namespace SagesOfOzvaram
             var start = _hexGrid.WorldToHex(_playerUnit.Position);
             var occupied = GetOccupiedTiles(_playerUnit);
 
-            var path = Pathfinder.FindPath(_hexGrid, _map, start, hoveredHex, occupied);
+            var path = Pathfinder.FindPath(_hexGrid, _map, start, hoveredHex, _playerUnit.TilesPerAP, occupied);
             Vector2? xMarkerPos = null;
 
             if (path == null)
@@ -1106,7 +1297,7 @@ namespace SagesOfOzvaram
                 List<(int col, int row)> bestPath = null;
                 foreach (var neighbor in _hexGrid.GetNeighbors(hoveredHex.col, hoveredHex.row))
                 {
-                    var candidate = Pathfinder.FindPath(_hexGrid, _map, start, neighbor, occupied);
+                    var candidate = Pathfinder.FindPath(_hexGrid, _map, start, neighbor, _playerUnit.TilesPerAP, occupied);
                     if (candidate != null && (bestPath == null || candidate.Count < bestPath.Count))
                         bestPath = candidate;
                 }
@@ -1194,6 +1385,157 @@ namespace SagesOfOzvaram
 
             _spriteBatch.Draw(_whitePixel, start, null, color, angle, Vector2.Zero,
                             new Vector2(length, 1f), SpriteEffects.None, 0f);
+        }
+
+        // Dynamic regions on Content/imgs/Cards/Spells/SpellCard.png, as fractions of the card's
+        // own width/height - measured directly from the template's pixel layout (1500x2100), so
+        // they scale correctly no matter what size the card is drawn at.
+        private static readonly (float x0, float y0, float x1, float y1) CardNameBarRegion = (0.168f, 0.091f, 0.767f, 0.132f);
+        private static readonly (float x0, float y0, float x1, float y1) CardCostCircleRegion = (0.795f, 0.04f, 0.963f, 0.16f);
+        // Re-measured directly off SpellCard.png via solid-run edge detection (the original
+        // naive "any near-white pixel" scan was contaminated by background sparkle decoration
+        // and the cost circle bleeding into the bounding box, giving a region that overshot
+        // into the name bar). Cross-checked at multiple rows/columns for consistency.
+        private static readonly (float x0, float y0, float x1, float y1) CardArtRegion = (0.098f, 0.137f, 0.884f, 0.693f);
+        private static readonly (float x0, float y0, float x1, float y1) CardTypeBarRegion = (0.348f, 0.719f, 0.899f, 0.755f);
+        private static readonly (float x0, float y0, float x1, float y1) CardDescriptionRegion = (0.1f, 0.729f, 0.886f, 0.947f);
+        private static readonly (float x0, float y0, float x1, float y1) CardDamageCircleRegion = (0.829f, 0.869f, 0.952f, 0.952f);
+
+        /// <summary>
+        /// Draw a spell card into destRect: template + art + every dynamic value (name, MP
+        /// cost, class line, description, and computed damage for the given caster) laid out
+        /// via the fractional regions above - nothing about a specific card is hardcoded here,
+        /// so any SpellCard renders correctly through this same method.
+        /// </summary>
+        private void DrawSpellCard(SpellCard card, BaseUnit caster, Rectangle destRect)
+        {
+            if (_spellCardTemplate == null)
+                return;
+
+            // The art is baked directly into the template's own pixel buffer (see
+            // GetCardComposite) rather than drawn as a separate layer on top of or under the
+            // template, so there's a single finished texture here - no runtime layering that
+            // could leave a seam between the art and its frame.
+            Texture2D composite = GetCardComposite(card) ?? _spellCardTemplate;
+            _spriteBatch.Draw(composite, destRect, Color.White);
+
+            if (_font == null)
+                return;
+
+            DrawTextCentered(card.Name, FractionalRect(destRect, CardNameBarRegion), Color.White);
+            DrawTextCentered(card.Effect.MPCost.ToString(), FractionalRect(destRect, CardCostCircleRegion), Color.Black);
+            DrawTextCentered(card.ClassLabel, FractionalRect(destRect, CardTypeBarRegion), Color.White);
+            DrawWrappedText(card.Description, FractionalRect(destRect, CardDescriptionRegion), Color.Black);
+
+            Rectangle damageRect = FractionalRect(destRect, CardDamageCircleRegion);
+            DrawWandGlyph(damageRect);
+            DrawTextCentered(card.Effect.GetDamage(caster).ToString(), damageRect, Color.Black);
+        }
+
+        /// <summary>
+        /// Full-screen-ish spell viewer: dims the background, centers the player's first
+        /// available spell card (sized to the SpellCard template's real aspect ratio, 1500:2100),
+        /// or a "no spells" message if their class has none yet.
+        /// </summary>
+        private void DrawSpellMenuOverlay(Vector2 viewportSize)
+        {
+            _spriteBatch.Draw(_whitePixel, new Rectangle(0, 0, (int)viewportSize.X, (int)viewportSize.Y), new Color(0, 0, 0, 160));
+
+            if (_availableSpellCards.Count > 0)
+            {
+                float cardHeight = viewportSize.Y * 0.85f;
+                float cardWidth = cardHeight * (1500f / 2100f);
+                var destRect = new Rectangle(
+                    (int)((viewportSize.X - cardWidth) / 2f),
+                    (int)((viewportSize.Y - cardHeight) / 2f),
+                    (int)cardWidth, (int)cardHeight);
+
+                DrawSpellCard(_availableSpellCards[0], _playerUnit, destRect);
+            }
+            else if (_font != null)
+            {
+                string text = $"{_playerUnit.Class} has no spells available yet.";
+                Vector2 size = _font.MeasureString(text);
+                _spriteBatch.DrawString(_font, text, (viewportSize - size) / 2f, Color.White);
+            }
+
+            DrawBottomHint(viewportSize, "E to close");
+        }
+
+        /// <summary>Convert a fractional region (0-1) into pixel coordinates within a container rect.</summary>
+        private Rectangle FractionalRect(Rectangle container, (float x0, float y0, float x1, float y1) region)
+        {
+            int x = container.X + (int)(region.x0 * container.Width);
+            int y = container.Y + (int)(region.y0 * container.Height);
+            int w = (int)((region.x1 - region.x0) * container.Width);
+            int h = (int)((region.y1 - region.y0) * container.Height);
+            return new Rectangle(x, y, w, h);
+        }
+
+        /// <summary>Draw text centered in a rect, shrinking it (uniformly) to fit if it's too big.</summary>
+        private void DrawTextCentered(string text, Rectangle rect, Color color)
+        {
+            Vector2 size = _font.MeasureString(text);
+            float scale = 1f;
+            if (size.X > rect.Width || size.Y > rect.Height)
+                scale = Math.Min(rect.Width / size.X, rect.Height / size.Y);
+
+            Vector2 scaledSize = size * scale;
+            Vector2 pos = new Vector2(rect.X + (rect.Width - scaledSize.X) / 2f, rect.Y + (rect.Height - scaledSize.Y) / 2f);
+            _spriteBatch.DrawString(_font, text, pos, color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+        }
+
+        /// <summary>Word-wrap text to fit rect's width, vertically centered as a block.</summary>
+        private void DrawWrappedText(string text, Rectangle rect, Color color)
+        {
+            var words = text.Split(' ');
+            var lines = new List<string>();
+            string currentLine = "";
+
+            foreach (var word in words)
+            {
+                string candidate = currentLine.Length == 0 ? word : currentLine + " " + word;
+                if (_font.MeasureString(candidate).X > rect.Width && currentLine.Length > 0)
+                {
+                    lines.Add(currentLine);
+                    currentLine = word;
+                }
+                else
+                {
+                    currentLine = candidate;
+                }
+            }
+            if (currentLine.Length > 0)
+                lines.Add(currentLine);
+
+            float lineHeight = _font.MeasureString("A").Y;
+            float startY = rect.Y + (rect.Height - lineHeight * lines.Count) / 2f;
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                Vector2 lineSize = _font.MeasureString(lines[i]);
+                Vector2 pos = new Vector2(rect.X + (rect.Width - lineSize.X) / 2f, startY + i * lineHeight);
+                _spriteBatch.DrawString(_font, lines[i], pos, color);
+            }
+        }
+
+        /// <summary>
+        /// A simple placeholder "wand with a sparkle" glyph behind the damage circle's number -
+        /// stands in until real card iconography exists.
+        /// </summary>
+        private void DrawWandGlyph(Rectangle rect)
+        {
+            Vector2 center = new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
+            float radius = Math.Min(rect.Width, rect.Height) * 0.45f;
+            Color glyphColor = new Color(80, 40, 120, 140);
+
+            Vector2 tip = center + new Vector2(-radius, -radius) * 0.7f;
+            Vector2 handle = center + new Vector2(radius, radius) * 0.7f;
+            DrawLineSimple(tip, handle, glyphColor);
+
+            float s = radius * 0.35f;
+            DrawLineSimple(tip + new Vector2(-s, 0), tip + new Vector2(s, 0), glyphColor);
+            DrawLineSimple(tip + new Vector2(0, -s), tip + new Vector2(0, s), glyphColor);
         }
 
         private void DrawTurnAnnouncement(Vector2 viewportSize)

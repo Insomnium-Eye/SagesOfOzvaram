@@ -165,8 +165,9 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Grid Type**: Pointy-top hex grid
 - **Map Size**: Variable; typically 20-30 tiles wide, 15-25 tiles tall
 - **Tiles per AP**: 1 tile per AP by default; +1 additional tile per AP for every 15 points of Speed (15 Speed = 2 tiles/AP, 30 Speed = 3 tiles/AP, etc.)
-- **Pathfinding**: BFS over the hex grid, avoiding impassable tiles (water, blocking objects like trees) and tiles other units occupy
-- **Range Display**: selecting "Move" shows every nearby tile's AP cost - blue/white text if affordable with current AP, red-tinted (and shown beyond the affordable range too, so the "just out of reach" area is visible) if not
+- **Terrain**: Mountain is the only impassable terrain for now (blocking objects like trees and other units' tiles are impassable too); Water is passable but costs +1 AP per water tile crossed, on top of the normal tile cost
+- **Pathfinding**: Dijkstra over the hex grid (weighted, not plain BFS, so it correctly minimizes true AP cost - it'll take a longer land route over a shorter one through water when the land route is actually cheaper) - always routes around impassable tiles, occupied tiles, and each other unit's position, never through them
+- **Range Display**: selecting "Move" overlays every nearby tile's AP cost as text - tiles keep their normal terrain color (no fill/tint), white text if affordable with current AP, red text (shown beyond the affordable range too, so the "just out of reach" area is visible) if not
 - **Live Path Preview**: hovering a tile draws a line from the unit through the path to it, growing/shrinking as the cursor moves, ending in an arrowhead; hovering an unreachable tile (off-grid, blocked, occupied) instead draws the trail to the nearest tile that IS reachable and marks the hovered tile with a red X instead of an arrowhead
 - **Clicking Moves Toward, Not Just To**: clicking any tile - even one further than the unit can currently afford - moves it as far along that path as its AP allows, rather than refusing the click outright. A tile with no path at all (impassable/occupied/unreachable) is simply ignored
 - **Current Implementation**: this is the first fully functional (not just data-modeled) action - Move actually relocates the unit and spends AP; Attack/Spell/Items still don't do anything when selected
@@ -267,8 +268,17 @@ This approach creates a richer, more believable world where cultural misundersta
 #### Card/Deck System
 - **Deck Size**: 10-30 cards per unit
 - **Mechanics**: Draw 1 card per turn (1 AP), use card abilities
+- **Additional Draws**: from the Spell menu, a unit may draw more cards beyond its first this turn - each additional draw doubles the AP cost of the last one (1 AP, then 2, then 4, then 8, etc.); the draw count (and its cost) resets at the start of the unit's next turn
 - **Depletion**: When deck exhausted, reshuffle (+1 MP cost penalty)
 - **Strategy**: Deck composition affects unit playstyle
+- **Current Implementation**: `SpellCard` exists (wraps a `Move` for its damage/accuracy/range formulas, plus a class requirement, description, and card art) and the "Spell" turn-menu option shows the player's available cards, rendered dynamically - but there's still no actual Deck (draw pile, shuffle, hand), no card-draw/AP-doubling mechanic, and no way to actually cast a spell yet. Just Arcane Bolt for the Sorcerer so far (see Spell Cards below)
+
+#### Spell Cards
+- **Rendering**: cards are composited at runtime from `Content/imgs/Cards/Spells/SpellCard.png` (the shared template) plus the card's own art texture and its dynamic text/values - nothing about a specific card is a separate baked image, so any new `SpellCard` renders correctly through the same code
+- **Dynamic Fields**: name (top bar), MP cost (top-right circle), class line "Spell - <Class>" (bar under the art), description (teal box), and computed damage for the viewing unit (bottom-right circle, with a placeholder wand glyph behind it pending real iconography)
+- **Card Art**: the art window on `SpellCard.png` isn't a plain rectangle - it has a curved notch cut into its top-right corner (clearing the cost circle), which every fractional-rectangle measurement attempt missed, always leaving a seam somewhere along an edge. The fix (`BuildSpellCardArtMask`) flood-fills the template's actual near-white pixels outward from a seed point to capture the window's exact pixel shape (cached once), and `GetCardComposite` resamples the card's art directly into the template's own pixel buffer wherever that mask is true, producing one finished texture per card - not two layers drawn at runtime - so there's no draw-order, blend-state, or region-measurement step left that could reintroduce a gap
+- **Current Cards** *(first-pass numbers, pending a balance pass)*:
+  - **Arcane Bolt** (Sorcerer): `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP
 
 #### Aggro System
 - **Range**: 0-20 aggro per enemy
@@ -281,7 +291,7 @@ This approach creates a richer, more believable world where cultural misundersta
 
 #### Stats
 - **HP**: Health points
-- **MP**: Mana/magic points
+- **MP**: Mana/magic points; implemented on BaseUnit (MaxMP/CurrentMP) as a placeholder pool per class - unlike AP, it does not auto-refill each turn, since nothing spends it yet (no Spell/card execution exists)
 - **AP**: Action points per turn
 - **Speed**: Turn order priority (higher = earlier)
 - **Strength**: Adds to physical attack damage (additive per-move bonus, e.g. Punch = 1 + STR/5 - see Race-Based Attacks)
@@ -360,7 +370,7 @@ This approach creates a richer, more believable world where cultural misundersta
 
 ### 4.4 Map Features
 - **Terrain Types**: Grass, Water, Mountain, Forest, Desert, Stone, Dirt
-- **Passability**: Different unit types traverse differently
+- **Passability**: Different unit types traverse differently. Currently implemented: Mountain is impassable, Water is passable but costs +1 AP to cross, everything else (Grass, Forest, Desert, Stone, Dirt) is normal cost - see Grid & Movement
 - **Roofed Areas**: Blocks flying units' vision advantage
 - **Objects**: Trees, buildings, NPCs, treasure chests
 - **Environmental Hazards**: Lava, ice, unstable ground (TBD specifics)
@@ -467,6 +477,8 @@ SagesOfOzvaram/
 │   ├── WeaponCatalog.cs
 │   ├── RaceAttacks.cs
 │   ├── ClassCatalog.cs
+│   ├── SpellCard.cs
+│   ├── SpellCatalog.cs
 │   ├── WeaponType.cs
 │   ├── StatusRank.cs
 │   ├── BleedEffect.cs
@@ -491,6 +503,11 @@ SagesOfOzvaram/
 │   │   ├── ApprenticeWarrior_Avatar.png
 │   │   ├── ApprenticeCleric_Avatar.png
 │   │   └── ApprenticeHunter_Avatar.png
+│   ├── imgs/Cards/Spells/
+│   │   ├── SpellCard.png       (shared template - see Spell Cards §4.1)
+│   │   └── ArcaneBolt_CardArt.png
+│   ├── imgs/Cards/Summons/
+│   │   └── SummonCard.png      (template only - no Summon cards built yet)
 │   ├── Fonts/DefaultFont.spritefont  (Liberation Sans, Arial-metric-compatible; built via Content.mgcb)
 │   └── Content.mgcb
 ├── Game1.cs
@@ -865,8 +882,12 @@ SagesOfOzvaram/
   - **Status**: Resolved; monitor for future edge cases
 
 - [ ] **HexGrid Odd-R/Cube Conversion**: `OddRToCube`/`CubeToOddR` used the wrong offset formula (matched "odd-q" column-offset instead of the "odd-r" row-offset scheme the rest of HexGrid uses) - about 1 in 7 neighbor pairs resolved to a cube delta of the wrong distance, and opposite screen-directions didn't map to opposite cube deltas
-  - **Impact**: `GetDistance` and `WorldToHex` (mouse hex selection/hover) were subtly wrong in some tile configurations; discovered while implementing Facing/backstab detection, which depends on direction math being correct
+  - **Impact**: `GetDistance` was subtly wrong in some tile configurations; discovered while implementing Facing/backstab detection, which depends on direction math being correct
   - **Status**: Resolved - corrected to the standard odd-r formula; verified with a brute-force check (every tile 0-19,0-14: round-trip + all 6 neighbors at distance 1, 2100/2100 checks passing; the old formula failed 300 of them)
+
+- [ ] **HexGrid WorldToHex Pixel Formula**: a second, separate bug (not fixed by the one above) - `WorldToHex`'s pixel-to-axial formula didn't actually match `HexToWorld`'s tile placement at all (looked like a leftover from a different hex orientation); clicking/hovering a tile could resolve to a completely different, unrelated tile
+  - **Impact**: mouse hex selection, hover highlighting, and movement-mode's click-to-move/path-preview (all built on `WorldToHex`) could target the wrong tile - reported as "cursor on one tile, a tile elsewhere gets highlighted"
+  - **Status**: Resolved - derived the correct inverse of the axial-to-pixel formula `HexToWorld`/`OddRToCube` actually imply and swapped it in; verified with a brute-force check (every tile center, plus 500 randomly-jittered click points within each tile's interior, 800/800 passing; the old formula failed 799/800)
 
 ### Technical Debt
 - [ ] DevConsole needs expansion (more commands, better parsing)

@@ -48,7 +48,7 @@ namespace SagesOfOzvaram.Maps
                     // Determine tile type based on noise value
                     Tile tile = map.GetTile(col, row);
                     tile.Type = GetTerrainType(noiseValue);
-                    tile.Passable = tile.Type != "water"; // Water is not passable
+                    tile.Passable = tile.Type != "mountain"; // Only mountain is impassable for now; water is passable but costs extra AP (see Pathfinder)
                 }
             }
  

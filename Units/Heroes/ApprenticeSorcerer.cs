@@ -19,6 +19,8 @@ namespace SagesOfOzvaram.Units.Heroes
             Defense = 5;     // fragile in melee
             Resistance = 15; // naturally magic-attuned
             Intelligence = 18; // primary caster stat - Staff specialist, scales Arcane Missile
+            MaxMP = 20;       // primary spellcaster
+            CurrentMP = 20;
 
             Inventory.Add(WeaponCatalog.RhinewoodStaff);
             Inventory.Add(WeaponCatalog.Crossbow);

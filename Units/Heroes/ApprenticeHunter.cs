@@ -19,6 +19,8 @@ namespace SagesOfOzvaram.Units.Heroes
             Defense = 8;
             Resistance = 8;
             Intelligence = 6;
+            MaxMP = 8;       // skill-based, not a caster
+            CurrentMP = 8;
 
             Inventory.Add(WeaponCatalog.Longbow);
             Inventory.Add(WeaponCatalog.FlintlockPistol);
