@@ -4,14 +4,15 @@ using SagesOfOzvaram.Units;
 namespace SagesOfOzvaram.Combat
 {
     /// <summary>
-    /// Spell cards available. First-pass content: Arcane Bolt (Sorcerer-only) plus the full
-    /// Generic Spells roster (GDD §4.1) - the kind of thing anyone could pick up without
-    /// studying magic, so every one of these has RequiredClass null and shows up for every
-    /// class's hand. Numbers are first-pass placeholders pending a balance pass, same as
-    /// everywhere else. Several of these (Meditate's stacking/interrupt, Forced Sleep's wake
-    /// condition, Conjure Potions' item creation, ...) describe mechanics with no execution
-    /// system behind them yet - see Move.cs's non-attack fields for what IS captured as real
-    /// data (heal amounts, granted AP, status duration) versus what's still prose-only.
+    /// Spell cards available: the full 15-card Sorcerer and Warrior rosters, plus the Generic
+    /// Spells roster (GDD §4.1) - the kind of thing anyone could pick up without studying magic,
+    /// so every one of those has RequiredClass null and shows up for every class's hand. Numbers
+    /// are first-pass placeholders pending a balance pass, same as everywhere else. Several of
+    /// these (Meditate's stacking/interrupt, Forced Sleep's wake condition, Conjure Potions'
+    /// item creation, Execute's low-HP bonus, Summon Blade/Shield's granted equipment, ...)
+    /// describe mechanics with no execution system behind them yet - see Move.cs's non-attack
+    /// fields for what IS captured as real data (heal amounts, granted AP, status duration)
+    /// versus what's still prose-only.
     /// </summary>
     public static class SpellCatalog
     {
@@ -255,6 +256,142 @@ namespace SagesOfOzvaram.Combat
                 critChance: 0.15f, critMultiplier: 2.5f),
             "imgs/Cards/Spells/ArcaneOrb_CardArt");
 
+        // --- Warrior Spells: buffs (self/allies), summoned weapons/shields/armor, weapon techniques ---
+
+        public static readonly SpellCard Taunt = new SpellCard(
+            "Taunt",
+            "Taunts every enemy within 3 tiles, sharply increasing their aggression toward the warrior.",
+            HeroClass.Warrior,
+            new Move("Taunt", "Make yourself impossible to ignore.",
+                apCost: 1, mpCost: 2, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Taunting", statusDurationTurns: 2),
+            "imgs/Cards/Spells/Taunt_CardArt");
+
+        public static readonly SpellCard Bodyguard = new SpellCard(
+            "Bodyguard",
+            "For 1 turn, redirects damage aimed at any ally within 3 tiles onto the warrior instead.",
+            HeroClass.Warrior,
+            new Move("Bodyguard", "Step between your allies and harm.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Bodyguarding", statusDurationTurns: 1),
+            "imgs/Cards/Spells/Bodyguard_CardArt");
+
+        public static readonly SpellCard Rage = new SpellCard(
+            "Rage",
+            "For 3 turns, every hit you take grants +2 damage and +2 DEF, stacking for the rest of the fight.",
+            HeroClass.Warrior,
+            new Move("Rage", "Let every wound feed your fury instead of slowing you down.",
+                apCost: 2, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Enraged", statusDurationTurns: 3),
+            "imgs/Cards/Spells/Rage_CardArt");
+
+        public static readonly SpellCard MightySlash = new SpellCard(
+            "Mighty Slash",
+            "Channel extra force into whatever weapon is equipped, dealing 150% of its normal damage.",
+            HeroClass.Warrior,
+            new Move("Mighty Slash", "One devastating swing, whatever's in hand.",
+                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.90f, baseDamage: 4,
+                strengthDivisor: 2f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/MightySlash_CardArt");
+
+        public static readonly SpellCard SummonBlade = new SpellCard(
+            "Summon Blade",
+            "Conjures a spectral blade into the caster's hand for the rest of the encounter, granting a bonus STR-scaled attack even if unarmed.",
+            HeroClass.Warrior,
+            new Move("Summon Blade", "Will a weapon into being from raw discipline.",
+                apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
+            "imgs/Cards/Spells/SummonBlade_CardArt");
+
+        public static readonly SpellCard SummonShield = new SpellCard(
+            "Summon Shield",
+            "Conjures a spectral shield, granting the caster's Guard stance a bonus as if wielding a real shield.",
+            HeroClass.Warrior,
+            new Move("Summon Shield", "A shield of pure discipline, held in an empty hand.",
+                apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
+            "imgs/Cards/Spells/SummonShield_CardArt");
+
+        public static readonly SpellCard ConjureArmor = new SpellCard(
+            "Conjure Armor",
+            "Conjures a temporary set of magical armor: +DEF/+RES for 3 turns. A placeholder for the real armor system planned later.",
+            HeroClass.Warrior,
+            new Move("Conjure Armor", "Plate yourself in force made solid.",
+                apCost: 3, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Conjured Armor", statusDurationTurns: 3),
+            "imgs/Cards/Spells/ConjureArmor_CardArt");
+
+        public static readonly SpellCard ShieldWall = new SpellCard(
+            "Shield Wall",
+            "Every adjacent ally gains +DEF for 2 turns.",
+            HeroClass.Warrior,
+            new Move("Shield Wall", "Form a wall nothing gets through.",
+                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                hitsAllAdjacent: true, targetsAllies: true,
+                inflictsStatusEffect: "Shield Walled", statusDurationTurns: 2),
+            "imgs/Cards/Spells/ShieldWall_CardArt");
+
+        public static readonly SpellCard Whirlwind = new SpellCard(
+            "Whirlwind",
+            "Spin with weapon extended, striking every adjacent enemy at once.",
+            HeroClass.Warrior,
+            new Move("Whirlwind", "A spinning arc of steel.",
+                apCost: 3, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
+                strengthDivisor: 3f, damageType: DamageType.Physical, hitsAllAdjacent: true),
+            "imgs/Cards/Spells/Whirlwind_CardArt");
+
+        public static readonly SpellCard Execute = new SpellCard(
+            "Execute",
+            "A finishing blow - deals double damage against targets below 25% HP.",
+            HeroClass.Warrior,
+            new Move("Execute", "End it.",
+                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 5,
+                strengthDivisor: 3f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/Execute_CardArt");
+
+        public static readonly SpellCard Charge = new SpellCard(
+            "Charge",
+            "Charge across the battlefield and slam into a distant target, closing the gap instantly.",
+            HeroClass.Warrior,
+            new Move("Charge", "Close the distance before they can react.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
+                strengthDivisor: 3f, damageType: DamageType.Physical, attackerAdvanceTiles: 3),
+            "imgs/Cards/Spells/Charge_CardArt");
+
+        public static readonly SpellCard BattleCry = new SpellCard(
+            "Battle Cry",
+            "A roar that hardens resolve: +STR for 2 turns.",
+            HeroClass.Warrior,
+            new Move("Battle Cry", "A roar that steels every muscle for what's next.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Battle Cry", statusDurationTurns: 2),
+            "imgs/Cards/Spells/BattleCry_CardArt");
+
+        public static readonly SpellCard CounterStance = new SpellCard(
+            "Counter Stance",
+            "Brace for the next attack: the first hit you take this turn is reflected back at the attacker for a portion of the damage dealt.",
+            HeroClass.Warrior,
+            new Move("Counter Stance", "Let them swing first - it'll be their last mistake.",
+                apCost: 1, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Countering", statusDurationTurns: 1),
+            "imgs/Cards/Spells/CounterStance_CardArt");
+
+        public static readonly SpellCard Disarm = new SpellCard(
+            "Disarm",
+            "Knocks a target's weapon off-balance, lowering their damage and Accuracy for 2 turns.",
+            HeroClass.Warrior,
+            new Move("Disarm", "A precise strike aimed at the grip, not the target.",
+                apCost: 2, mpCost: 2, range: 1, baseAccuracy: 0.75f, baseDamage: 0,
+                inflictsStatusEffect: "Disarmed", statusEffectChance: 0.70f, statusDurationTurns: 2),
+            "imgs/Cards/Spells/Disarm_CardArt");
+
+        public static readonly SpellCard IronWill = new SpellCard(
+            "Iron Will",
+            "Steels the mind against fear: +RES for 3 turns, and resists Stun while active.",
+            HeroClass.Warrior,
+            new Move("Iron Will", "Nothing left that can shake you.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Iron Will", statusDurationTurns: 3),
+            "imgs/Cards/Spells/IronWill_CardArt");
+
         private static readonly List<SpellCard> AllCards = new List<SpellCard>
         {
             ArcaneBolt,
@@ -262,6 +399,8 @@ namespace SagesOfOzvaram.Combat
             ThrowGrit, Brace, RallyCry, Trip, SteadyHands,
             ManaShield, Blink, Flames, IceSpike, ChainLightning, EnchantWeapon,
             Fireball, FrostNova, ArcaneShield, Curse, TeleportStrike, ManaBurn, MagicMissile, ArcaneOrb,
+            Taunt, Bodyguard, Rage, MightySlash, SummonBlade, SummonShield, ConjureArmor,
+            ShieldWall, Whirlwind, Execute, Charge, BattleCry, CounterStance, Disarm, IronWill,
         };
 
         /// <summary>Every spell card a given class currently has access to: its class-specific cards plus every Generic (RequiredClass null) card.</summary>

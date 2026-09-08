@@ -279,7 +279,7 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Rendering**: cards are composited at runtime from `Content/imgs/Cards/Spells/SpellCard.png` (the shared template) plus the card's own art texture and its dynamic text/values - nothing about a specific card is a separate baked image, so any new `SpellCard` renders correctly through the same code
 - **Dynamic Fields**: name (top bar), MP cost (top-right circle), class line "Spell - <Class>" (bar under the art, or "Spell - Generic" for a class-less spell), description (teal box), and the card's "headline number" in the bottom-right circle (with a placeholder wand glyph behind it pending real iconography) - `GetSpellHeadlineNumber` shows whichever of the move's non-zero effects applies (damage, flat heal, heal %, or granted AP, checked in that priority order) and draws nothing at all for a pure status/utility spell with no single number to show (e.g. Meditate, Conjure Potions) rather than a misleading "0"
 - **Card Art**: the art window on `SpellCard.png` isn't a plain rectangle - it has a curved notch cut into its top-right corner (clearing the cost circle), which every fractional-rectangle measurement attempt missed, always leaving a seam somewhere along an edge. The fix (`BuildSpellCardArtMask`) flood-fills the template's actual near-white pixels outward from a seed point to capture the window's exact pixel shape (cached once), and `GetCardComposite` resamples the card's art directly into the template's own pixel buffer wherever that mask is true, producing one finished texture per card - not two layers drawn at runtime - so there's no draw-order, blend-state, or region-measurement step left that could reintroduce a gap
-- **Placeholder Art**: there's no image-generation model available in this environment, so every spell's art except Arcane Bolt's (`Content/imgs/Cards/Spells/*_CardArt.png` - the 10 Generic Spells plus 14 of the 15 Sorcerer Spells) is programmatically composed instead of illustrated - a gradient background, a simple geometric icon evoking the spell, and a name label, with a tiled "AI PLACEHOLDER" watermark - clearly not final art, swap out per card whenever real art arrives (only `ArtAssetPath` needs to change, nothing else)
+- **Placeholder Art**: there's no image-generation model available in this environment, so every spell's art except Arcane Bolt's (`Content/imgs/Cards/Spells/*_CardArt.png` - the 10 Generic Spells, 14 of the 15 Sorcerer Spells, and all 15 Warrior Spells) is programmatically composed instead of illustrated - a gradient background, a simple geometric icon evoking the spell, and a name label, with a tiled "AI PLACEHOLDER" watermark - clearly not final art, swap out per card whenever real art arrives (only `ArtAssetPath` needs to change, nothing else). Each class gets its own rough color palette (Sorcerer purples/blues, Warrior reds/steel) to stay visually distinct even as placeholders
 - **Current Cards** *(first-pass numbers, pending a balance pass)*:
   - **Sorcerer Spells** *(15 total - burst arcane/elemental damage plus magical utility, the class's stated identity)*:
     - **Arcane Bolt**: `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP. The only card with real (non-placeholder) art
@@ -297,6 +297,22 @@ This approach creates a richer, more believable world where cultural misundersta
     - **Arcane Shield**: 1 AP / 3 MP, self. +DEF/+RES for 2 turns - a stronger, Mana-costing cousin of the Generic Brace
     - **Blink**: 1 AP / 3 MP, self, range 3 (teleport distance) - pure mobility, no attack
     - **Enchant Weapon**: 1 AP / 4 MP, range 1 (self or adjacent ally) - grants the target's weapon bonus magic damage scaled to the wielder's INT (fluff only, nothing currently applies an enchant bonus to weapon damage rolls)
+  - **Warrior Spells** *(15 total - buffs for self/allies, summoned swords/shields/armor, and special weapon techniques)*:
+    - **Mighty Slash**: `4 + STR/2` Physical, range 1, 90% accuracy, 2 AP / 3 MP - "150% of the equipped weapon's damage" in spirit; a flat STR-scaled approximation until spell damage can reference the actual equipped weapon's Move
+    - **Whirlwind**: `6 + STR/3` Physical to every adjacent enemy, 85% accuracy, 3 AP / 3 MP
+    - **Execute**: `5 + STR/3` Physical, range 1, 85% accuracy, 2 AP / 3 MP - double damage below 25% target HP (fluff only, nothing currently checks target HP% for a damage multiplier)
+    - **Charge**: `5 + STR/3` Physical, range 3, 85% accuracy, 2 AP / 3 MP, advances the caster 3 tiles toward the target on use
+    - **Disarm**: range 1, 75% accuracy, 2 AP / 2 MP, 70% chance to inflict Disarmed (lowers damage/Accuracy) for 2 turns - no damage
+    - **Taunt**: range 3 (all enemies in range), 1 AP / 2 MP - sharply raises aggression toward the warrior (fluff only - see Aggro System; no aggro tracking is implemented yet)
+    - **Bodyguard**: range 3, 2 AP / 3 MP - for 1 turn, redirects damage aimed at any ally in range onto the warrior instead
+    - **Shield Wall**: range 1 (all adjacent allies), 2 AP / 3 MP - +DEF for 2 turns to every adjacent ally
+    - **Rage**: 2 AP / 3 MP, self, 3 turns - every hit taken while active grants +2 damage and +2 DEF, stacking
+    - **Battle Cry**: 1 AP / 2 MP, self, 2 turns - +STR
+    - **Iron Will**: 1 AP / 2 MP, self, 3 turns - +RES, and resists Stun while active (fluff only, no status-resistance system exists yet)
+    - **Counter Stance**: 1 AP / 3 MP, self, 1 turn - the first hit taken this turn is reflected back at its attacker for a portion of the damage dealt (fluff only, no damage-reflection system exists yet)
+    - **Summon Blade**: 2 AP / 4 MP, self - conjures a spectral blade for the encounter, granting a bonus STR-scaled attack even unarmed (fluff only, doesn't add a real Move to AvailableMoves yet)
+    - **Summon Shield**: 2 AP / 4 MP, self - conjures a spectral shield, granting a Guard bonus as if wielding a real shield (fluff only, doesn't affect GetGuardBonusPercent yet)
+    - **Conjure Armor**: 3 AP / 5 MP, self, 3 turns - +DEF/+RES; a placeholder for the real armor system planned later
   - **Generic Spells** *(RequiredClass null - every class gets these, see Card/Deck System above)*:
     - **Meditate**: 2 AP / 3 MP. Each turn while active, gain a stack (up to 3) of +RES/+DEF/+INT/+ACC/+STR. Taking a single hit for 10%+ of max HP interrupts it and clears all stacks. Ending it voluntarily at the start of your turn locks in the current buff for 3 more turns
     - **Forced Sleep**: 2 AP / 4 MP. Immobilized, heals 20% max HP each turn; any single hit of 10+ damage wakes the caster
@@ -547,7 +563,7 @@ SagesOfOzvaram/
 │   ├── imgs/Cards/Spells/
 │   │   ├── SpellCard.png       (shared template - see Spell Cards §4.1)
 │   │   ├── ArcaneBolt_CardArt.png
-│   │   └── *_CardArt.png       (24x - one per Generic/Sorcerer spell except Arcane Bolt - programmatic "AI PLACEHOLDER"-watermarked art, see Spell Cards §4.1)
+│   │   └── *_CardArt.png       (39x - one per Generic/Sorcerer/Warrior spell except Arcane Bolt - programmatic "AI PLACEHOLDER"-watermarked art, see Spell Cards §4.1)
 │   ├── imgs/Cards/Summons/
 │   │   ├── SummonCard.png      (shared template - see Summon Cards §4.1)
 │   │   └── DuskRoachlin_CardArt1.png
