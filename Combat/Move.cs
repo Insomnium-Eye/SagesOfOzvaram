@@ -43,6 +43,20 @@ namespace SagesOfOzvaram.Combat
                                                                // Blocked if an enemy already occupies the tile - not enforced yet, no targeting/movement engine exists.
         public bool ConsumesWeapon { get; }                   // true for thrown/single-use attacks (e.g. Throw Knife) that remove the weapon from Inventory on use
 
+        // Non-attack effect fields, added for the generic support/utility spells (GDD §4.1
+        // Generic Spells) - a Move's damage-formula fields above stay 0/unset for these, since
+        // they aren't attacks. No spell-casting execution exists yet, so these are read by
+        // nothing today; they exist so each spell's headline number (heal amount, AP granted,
+        // status duration) is real data on the card rather than only prose. The more elaborate
+        // per-spell mechanics (Meditate's stacking/interrupt, Forced Sleep's wake condition,
+        // etc.) are still too state-machine-y to reduce to a flat field, so those stay prose-only
+        // in each SpellCard's Description until a real status-effect system exists to run them.
+        public int HealFlat { get; }               // flat HP restored on use, 0 = none
+        public float HealPercentMaxHP { get; }      // % of max HP restored (e.g. per-turn regen while a state is active), 0 = none
+        public int GrantedAP { get; }               // bonus AP granted to the caster, 0 = none
+        public int StatusDurationTurns { get; }     // how many turns InflictsStatusEffect lasts, 0 = instant/not duration-based
+        public bool TargetsAllies { get; }          // true = affects allies (self and/or adjacent allies) rather than an enemy target
+
         public Move(string name, string description, int apCost, int mpCost, int range,
                     float baseAccuracy, int baseDamage, float strengthDivisor = 0f, float intelligenceDivisor = 0f,
                     int knockbackBase = 0, int knockbackDamagePerTile = 0,
@@ -51,7 +65,9 @@ namespace SagesOfOzvaram.Combat
                     float critChance = 0f, float critMultiplier = 2f, bool guaranteedCritOnBackstab = false,
                     float statusEffectChance = 1f,
                     float bonusDamageVsGuardingMultiplier = 1f, int attackerAdvanceTiles = 0,
-                    bool consumesWeapon = false, bool hitsAllAdjacent = false)
+                    bool consumesWeapon = false, bool hitsAllAdjacent = false,
+                    int healFlat = 0, float healPercentMaxHP = 0f, int grantedAP = 0,
+                    int statusDurationTurns = 0, bool targetsAllies = false)
         {
             Name = name;
             Description = description;
@@ -75,6 +91,11 @@ namespace SagesOfOzvaram.Combat
             AttackerAdvanceTiles = attackerAdvanceTiles;
             ConsumesWeapon = consumesWeapon;
             HitsAllAdjacent = hitsAllAdjacent;
+            HealFlat = healFlat;
+            HealPercentMaxHP = healPercentMaxHP;
+            GrantedAP = grantedAP;
+            StatusDurationTurns = statusDurationTurns;
+            TargetsAllies = targetsAllies;
         }
 
         /// <summary>

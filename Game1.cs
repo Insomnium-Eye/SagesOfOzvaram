@@ -1539,9 +1539,49 @@ namespace SagesOfOzvaram
             DrawTextCentered(card.ClassLabel, FractionalRect(destRect, CardTypeBarRegion), Color.White);
             DrawWrappedText(card.Description, FractionalRect(destRect, CardDescriptionRegion), Color.Black);
 
-            Rectangle damageRect = FractionalRect(destRect, CardDamageCircleRegion);
-            DrawWandGlyph(damageRect);
-            DrawTextCentered(card.Effect.GetDamage(caster).ToString(), damageRect, Color.Black);
+            string headline = GetSpellHeadlineNumber(card.Effect, caster);
+            if (headline != null)
+            {
+                Rectangle damageRect = FractionalRect(destRect, CardDamageCircleRegion);
+                DrawWandGlyph(damageRect);
+                DrawTextCentered(headline, damageRect, Color.Black);
+            }
+        }
+
+        /// <summary>
+        /// The single "headline number" worth showing in a spell card's damage circle - damage
+        /// for an attack spell, otherwise whichever non-attack effect the move actually has
+        /// (heal amount, heal %, granted AP), checked in that priority order. Null (draw
+        /// nothing) for a spell with no single number to show, e.g. a pure status/utility
+        /// effect like Meditate or Conjure Potions - showing "0 damage" on those would read as
+        /// a bug rather than as "this spell doesn't deal damage."
+        /// </summary>
+        private string GetSpellHeadlineNumber(Move move, BaseUnit caster)
+        {
+            int damage = move.GetDamage(caster);
+            if (damage > 0)
+                return damage.ToString();
+            if (move.HealFlat > 0)
+                return move.HealFlat.ToString();
+            if (move.HealPercentMaxHP > 0f)
+                return $"{(int)(move.HealPercentMaxHP * 100f)}%";
+            if (move.GrantedAP > 0)
+                return $"+{move.GrantedAP}";
+            return null;
+        }
+
+        /// <summary>Tooltip text matching whichever field GetSpellHeadlineNumber pulled its number from - null if the card shows no number there (nothing to hover).</summary>
+        private string GetSpellHeadlineTooltip(Move move)
+        {
+            if (move.GetDamage(_playerUnit) > 0)
+                return "Damage: damage this spell deals, computed from the caster's stats.";
+            if (move.HealFlat > 0)
+                return "Heal: flat HP this spell restores.";
+            if (move.HealPercentMaxHP > 0f)
+                return "Heal: % of max HP restored per turn while active.";
+            if (move.GrantedAP > 0)
+                return "Bonus AP: extra AP this spell grants.";
+            return null;
         }
 
         // Dynamic regions on Content/imgs/Cards/Summons/SummonCard.png, as fractions of the
@@ -1696,12 +1736,12 @@ namespace SagesOfOzvaram
         /// </summary>
         private string GetHoveredCardTooltip(object card, Rectangle destRect, Point mousePos)
         {
-            if (card is SpellCard)
+            if (card is SpellCard spellCard)
             {
                 if (FractionalRect(destRect, CardCostCircleRegion).Contains(mousePos))
                     return "MP Cost: mana this spell costs to cast.";
                 if (FractionalRect(destRect, CardDamageCircleRegion).Contains(mousePos))
-                    return "Damage: magic damage this spell deals, computed from the caster's Intelligence.";
+                    return GetSpellHeadlineTooltip(spellCard.Effect);
             }
             else if (card is SummonCard)
             {

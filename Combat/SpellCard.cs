@@ -11,13 +11,15 @@ namespace SagesOfOzvaram.Combat
     {
         public string Name { get; }
         public string Description { get; }
-        public HeroClass RequiredClass { get; }
+
+        /// <summary>Null means Generic - any class can cast it (see GDD Generic Spells).</summary>
+        public HeroClass? RequiredClass { get; }
         public Move Effect { get; }
 
         /// <summary>Path under Content/, no extension - e.g. "imgs/Cards/Spells/ArcaneBolt_CardArt".</summary>
         public string ArtAssetPath { get; }
 
-        public SpellCard(string name, string description, HeroClass requiredClass, Move effect, string artAssetPath)
+        public SpellCard(string name, string description, HeroClass? requiredClass, Move effect, string artAssetPath)
         {
             Name = name;
             Description = description;
@@ -26,7 +28,7 @@ namespace SagesOfOzvaram.Combat
             ArtAssetPath = artAssetPath;
         }
 
-        /// <summary>The card's type line, e.g. "Spell - Sorcerer".</summary>
-        public string ClassLabel => $"Spell - {RequiredClass}";
+        /// <summary>The card's type line, e.g. "Spell - Sorcerer", or "Spell - Generic" for a class-less spell.</summary>
+        public string ClassLabel => $"Spell - {(RequiredClass.HasValue ? RequiredClass.Value.ToString() : "Generic")}";
     }
 }

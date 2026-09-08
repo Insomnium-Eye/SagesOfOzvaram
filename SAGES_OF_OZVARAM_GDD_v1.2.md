@@ -277,10 +277,38 @@ This approach creates a richer, more believable world where cultural misundersta
 
 #### Spell Cards
 - **Rendering**: cards are composited at runtime from `Content/imgs/Cards/Spells/SpellCard.png` (the shared template) plus the card's own art texture and its dynamic text/values - nothing about a specific card is a separate baked image, so any new `SpellCard` renders correctly through the same code
-- **Dynamic Fields**: name (top bar), MP cost (top-right circle), class line "Spell - <Class>" (bar under the art), description (teal box), and computed damage for the viewing unit (bottom-right circle, with a placeholder wand glyph behind it pending real iconography)
+- **Dynamic Fields**: name (top bar), MP cost (top-right circle), class line "Spell - <Class>" (bar under the art, or "Spell - Generic" for a class-less spell), description (teal box), and the card's "headline number" in the bottom-right circle (with a placeholder wand glyph behind it pending real iconography) - `GetSpellHeadlineNumber` shows whichever of the move's non-zero effects applies (damage, flat heal, heal %, or granted AP, checked in that priority order) and draws nothing at all for a pure status/utility spell with no single number to show (e.g. Meditate, Conjure Potions) rather than a misleading "0"
 - **Card Art**: the art window on `SpellCard.png` isn't a plain rectangle - it has a curved notch cut into its top-right corner (clearing the cost circle), which every fractional-rectangle measurement attempt missed, always leaving a seam somewhere along an edge. The fix (`BuildSpellCardArtMask`) flood-fills the template's actual near-white pixels outward from a seed point to capture the window's exact pixel shape (cached once), and `GetCardComposite` resamples the card's art directly into the template's own pixel buffer wherever that mask is true, producing one finished texture per card - not two layers drawn at runtime - so there's no draw-order, blend-state, or region-measurement step left that could reintroduce a gap
+- **Placeholder Art**: there's no image-generation model available in this environment, so every spell's art except Arcane Bolt's (`Content/imgs/Cards/Spells/*_CardArt.png` - the 10 Generic Spells plus 14 of the 15 Sorcerer Spells) is programmatically composed instead of illustrated - a gradient background, a simple geometric icon evoking the spell, and a name label, with a tiled "AI PLACEHOLDER" watermark - clearly not final art, swap out per card whenever real art arrives (only `ArtAssetPath` needs to change, nothing else)
 - **Current Cards** *(first-pass numbers, pending a balance pass)*:
-  - **Arcane Bolt** (Sorcerer): `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP
+  - **Sorcerer Spells** *(15 total - burst arcane/elemental damage plus magical utility, the class's stated identity)*:
+    - **Arcane Bolt**: `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP. The only card with real (non-placeholder) art
+    - **Magic Missile**: `3 + INT/4` Magical, range 4, 95% accuracy, 1 AP / 1 MP - cheap and reliable, rarely misses
+    - **Mana Burn**: `4 + INT/4` Magical, range 4, 85% accuracy, 2 AP / 3 MP - especially effective against other casters (fluff only, nothing currently reads a target's MP to bonus off it)
+    - **Ice Spike**: `7 + INT/2.5` Magical, range 4, 85% accuracy, 2 AP / 3 MP, 25% chance to inflict Frostbite
+    - **Teleport Strike**: `5 + INT/3` Magical, range 3, 85% accuracy, 2 AP / 4 MP, advances the caster 3 tiles toward the target on use
+    - **Curse**: range 4, 85% accuracy, 2 AP / 3 MP, 80% chance to inflict Cursed (lowers STR/ACC) for 3 turns - no damage
+    - **Frost Nova**: `5 + INT/3` Magical to every adjacent enemy, 90% accuracy, 3 AP / 4 MP, 30% chance to inflict Frostbite
+    - **Flames**: `6 + INT/3` Magical to every adjacent enemy (arc), 85% accuracy, 3 AP / 4 MP, 20% chance to inflict Burning
+    - **Chain Lightning**: `6 + INT/3` Magical, range 4, 80% accuracy, 3 AP / 5 MP, 15% chance to inflict Shocked - jumps to up to 2 more nearby enemies (fluff only, no multi-target chain resolution exists yet)
+    - **Fireball**: `12 + INT/2` Magical, range 5, 80% accuracy, 4 AP / 6 MP, 25% chance to inflict Burning - the signature nuke
+    - **Arcane Orb**: `16 + INT/1.5` Magical, range 5, 75% accuracy, 15% crit chance (2.5x), 4 AP / 7 MP - slow and expensive, hits hardest of any Sorcerer spell
+    - **Mana Shield**: 1 AP / 5 MP, self. Redirects incoming damage to MP instead of HP; toggled off on the caster's own turn, breaks automatically once MP is depleted
+    - **Arcane Shield**: 1 AP / 3 MP, self. +DEF/+RES for 2 turns - a stronger, Mana-costing cousin of the Generic Brace
+    - **Blink**: 1 AP / 3 MP, self, range 3 (teleport distance) - pure mobility, no attack
+    - **Enchant Weapon**: 1 AP / 4 MP, range 1 (self or adjacent ally) - grants the target's weapon bonus magic damage scaled to the wielder's INT (fluff only, nothing currently applies an enchant bonus to weapon damage rolls)
+  - **Generic Spells** *(RequiredClass null - every class gets these, see Card/Deck System above)*:
+    - **Meditate**: 2 AP / 3 MP. Each turn while active, gain a stack (up to 3) of +RES/+DEF/+INT/+ACC/+STR. Taking a single hit for 10%+ of max HP interrupts it and clears all stacks. Ending it voluntarily at the start of your turn locks in the current buff for 3 more turns
+    - **Forced Sleep**: 2 AP / 4 MP. Immobilized, heals 20% max HP each turn; any single hit of 10+ damage wakes the caster
+    - **Conjure Potions**: 3 AP / 5 MP. Adds 1 minor HP potion, 1 minor MP potion, and 1 minor AP potion to the caster's inventory
+    - **Bandage Wound**: 2 AP / 2 MP. Heals 8 flat HP and cures Bleeding
+    - **Second Wind**: 1 AP / 3 MP. Grants +2 AP on the caster's next turn
+    - **Throw Grit**: range 3, 1 AP / 1 MP, 85% accuracy. 75% chance to inflict Blinded (lowers Accuracy) for 2 turns
+    - **Brace**: 1 AP / 2 MP. +DEF/+RES for 1 turn
+    - **Rally Cry**: range 1 (all adjacent allies), 2 AP / 3 MP. +STR/+ACC for 2 turns to every adjacent ally
+    - **Trip**: range 1, 1 AP / 1 MP, 75% accuracy. 60% chance to inflict Stunned; deals no damage
+    - **Steady Hands**: 1 AP / 2 MP. +Accuracy for 2 turns
+  - Several of these describe mechanics with no execution system behind them yet (Meditate's stacking/interrupt, Forced Sleep's wake condition, Conjure Potions' item creation, ...) - `Move` gained a small set of non-attack fields (`HealFlat`, `HealPercentMaxHP`, `GrantedAP`, `StatusDurationTurns`, `TargetsAllies`) to carry each spell's headline number as real data, but the more elaborate per-spell state machines are still prose-only in each card's Description until a real status-effect system exists to run them
 
 #### Summon Cards
 - **Current Implementation**: `SummonCard` holds a creature's presentation data and full stat block (mana cost, unit type, description, ATT/INT/DEF/RES/Accuracy/Evasion/Speed, min-max damage, HP, art). Every card in `SummonCatalog` is included in the "Cards" hand (see Card/Deck System above) alongside spell cards, rendered dynamically through `DrawSummonCard` - same viewer-only stage the Spell cards started at: no deck/draw system and no actual summon-to-battlefield mechanics exist yet, and summons aren't class-gated the way spells are
@@ -518,7 +546,8 @@ SagesOfOzvaram/
 │   │   └── ApprenticeHunter_Avatar.png
 │   ├── imgs/Cards/Spells/
 │   │   ├── SpellCard.png       (shared template - see Spell Cards §4.1)
-│   │   └── ArcaneBolt_CardArt.png
+│   │   ├── ArcaneBolt_CardArt.png
+│   │   └── *_CardArt.png       (24x - one per Generic/Sorcerer spell except Arcane Bolt - programmatic "AI PLACEHOLDER"-watermarked art, see Spell Cards §4.1)
 │   ├── imgs/Cards/Summons/
 │   │   ├── SummonCard.png      (shared template - see Summon Cards §4.1)
 │   │   └── DuskRoachlin_CardArt1.png
