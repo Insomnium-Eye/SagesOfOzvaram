@@ -392,6 +392,148 @@ namespace SagesOfOzvaram.Combat
                 inflictsStatusEffect: "Iron Will", statusDurationTurns: 3),
             "imgs/Cards/Spells/IronWill_CardArt");
 
+        // --- Hunter Spells: ranged damage, traps, and beast-taming ---
+
+        public static readonly SpellCard PlaceTrap = new SpellCard(
+            "Place Trap",
+            "Places an invisible trap on a tile within 3 tiles. Triggers when any enemy or neutral unit passes "
+                + "through or lands on it, snaring and damaging them. Flying units are immune.",
+            HeroClass.Hunter,
+            new Move("Place Trap", "A trap only the one who set it will ever see.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
+                strengthDivisor: 4f, damageType: DamageType.Physical,
+                inflictsStatusEffect: "Snared", statusEffectChance: 0.85f, statusDurationTurns: 2),
+            "imgs/Cards/Spells/PlaceTrap_CardArt");
+
+        public static readonly SpellCard TameBeast = new SpellCard(
+            "Tame Beast",
+            "Attempts to tame a neutral beast of the hunter's level or lower, placing it under the hunter's control.",
+            HeroClass.Hunter,
+            new Move("Tame Beast", "Not every bond needs words.",
+                apCost: 3, mpCost: 5, range: 3, baseAccuracy: 0.70f, baseDamage: 0),
+            "imgs/Cards/Spells/TameBeast_CardArt");
+
+        public static readonly SpellCard EagleEye = new SpellCard(
+            "Eagle Eye",
+            "Sharpens focus to a hawk's precision: +10 Accuracy for 3 turns.",
+            HeroClass.Hunter,
+            new Move("Eagle Eye", "See the shot before you take it.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Eagle Eye", statusDurationTurns: 3),
+            "imgs/Cards/Spells/EagleEye_CardArt");
+
+        public static readonly SpellCard MultiShot = new SpellCard(
+            "Multi-Shot",
+            "Fires three arrows at once, striking the primary target plus up to 2 more enemies within range.",
+            HeroClass.Hunter,
+            new Move("Multi-Shot", "Why loose one arrow when you can loose three.",
+                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
+                strengthDivisor: 4f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/MultiShot_CardArt");
+
+        public static readonly SpellCard PiercingShot = new SpellCard(
+            "Piercing Shot",
+            "A single arrow shot hard enough to punch through the target and anyone standing behind them in a line.",
+            HeroClass.Hunter,
+            new Move("Piercing Shot", "One line, drawn straight through everything in it.",
+                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.85f, baseDamage: 8,
+                strengthDivisor: 3.5f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/PiercingShot_CardArt");
+
+        public static readonly SpellCard ExplosiveTrap = new SpellCard(
+            "Explosive Trap",
+            "Places a hidden trap within 3 tiles that detonates when triggered, dealing heavy damage to the "
+                + "triggering unit and anyone adjacent to it. No snare - it's built to hurt, not hold.",
+            HeroClass.Hunter,
+            new Move("Explosive Trap", "Not every trap needs to be subtle.",
+                apCost: 3, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 10,
+                strengthDivisor: 3f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/ExplosiveTrap_CardArt");
+
+        public static readonly SpellCard Camouflage = new SpellCard(
+            "Camouflage",
+            "Blend into the surroundings: +Evasion for 3 turns.",
+            HeroClass.Hunter,
+            new Move("Camouflage", "Become part of the terrain.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Camouflaged", statusDurationTurns: 3),
+            "imgs/Cards/Spells/Camouflage_CardArt");
+
+        public static readonly SpellCard HuntersMark = new SpellCard(
+            "Hunter's Mark",
+            "Marks a distant target - they take bonus damage from all sources for 3 turns.",
+            HeroClass.Hunter,
+            new Move("Hunter's Mark", "Once marked, there's nowhere left to hide.",
+                apCost: 1, mpCost: 2, range: 5, baseAccuracy: 0.90f, baseDamage: 0,
+                inflictsStatusEffect: "Marked", statusEffectChance: 0.90f, statusDurationTurns: 3),
+            "imgs/Cards/Spells/HuntersMark_CardArt");
+
+        public static readonly SpellCard Disengage = new SpellCard(
+            "Disengage",
+            "Leap backward out of melee range without provoking an opportunity attack.",
+            HeroClass.Hunter,
+            new Move("Disengage", "The best shot is the one you live to take.",
+                apCost: 1, mpCost: 2, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true),
+            "imgs/Cards/Spells/Disengage_CardArt");
+
+        public static readonly SpellCard BeastBond = new SpellCard(
+            "Beast Bond",
+            "Strengthens the bond with a tamed beast companion: +STR/+Speed for 3 turns. Requires an active Tame Beast.",
+            HeroClass.Hunter,
+            new Move("Beast Bond", "A word and a gesture your beast already knows.",
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Bonded", statusDurationTurns: 3),
+            "imgs/Cards/Spells/BeastBond_CardArt");
+
+        public static readonly SpellCard RainOfArrows = new SpellCard(
+            "Rain of Arrows",
+            "A volley of arrows arcs down over a target area, striking everyone caught beneath it.",
+            HeroClass.Hunter,
+            new Move("Rain of Arrows", "The sky itself turns hostile.",
+                apCost: 3, mpCost: 4, range: 5, baseAccuracy: 0.75f, baseDamage: 6,
+                strengthDivisor: 4f, damageType: DamageType.Physical),
+            "imgs/Cards/Spells/RainOfArrows_CardArt");
+
+        public static readonly SpellCard PoisonShot = new SpellCard(
+            "Poison Shot",
+            "A coated arrowhead - light damage on its own, but leaves a lingering Poison.",
+            HeroClass.Hunter,
+            new Move("Poison Shot", "The wound is the least of their worries.",
+                apCost: 2, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 4,
+                strengthDivisor: 5f, damageType: DamageType.Physical,
+                inflictsStatusEffect: "Poisoned", statusEffectChance: 0.65f, statusDurationTurns: 3),
+            "imgs/Cards/Spells/PoisonShot_CardArt");
+
+        public static readonly SpellCard NetShot = new SpellCard(
+            "Net Shot",
+            "Fires a weighted net instead of an arrowhead - minimal damage, but a strong chance to root the target in place.",
+            HeroClass.Hunter,
+            new Move("Net Shot", "Sometimes the point isn't to hurt them.",
+                apCost: 2, mpCost: 2, range: 4, baseAccuracy: 0.85f, baseDamage: 2,
+                strengthDivisor: 6f, damageType: DamageType.Physical,
+                inflictsStatusEffect: "Snared", statusEffectChance: 0.80f, statusDurationTurns: 2),
+            "imgs/Cards/Spells/NetShot_CardArt");
+
+        public static readonly SpellCard Track = new SpellCard(
+            "Track",
+            "Reveals every enemy within a wide radius for 3 turns, cutting through fog of war and camouflage alike.",
+            HeroClass.Hunter,
+            new Move("Track", "Every trail tells a story, if you know how to read it.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Tracking", statusDurationTurns: 3),
+            "imgs/Cards/Spells/Track_CardArt");
+
+        public static readonly SpellCard VitalShot = new SpellCard(
+            "Vital Shot",
+            "A called shot aimed at a vital point - unremarkable on a graze, brutal on a solid hit.",
+            HeroClass.Hunter,
+            new Move("Vital Shot", "One shot, exactly where it counts.",
+                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 6,
+                strengthDivisor: 3f, damageType: DamageType.Physical,
+                critChance: 0.30f, critMultiplier: 2.5f),
+            "imgs/Cards/Spells/VitalShot_CardArt");
+
         private static readonly List<SpellCard> AllCards = new List<SpellCard>
         {
             ArcaneBolt,
@@ -401,6 +543,8 @@ namespace SagesOfOzvaram.Combat
             Fireball, FrostNova, ArcaneShield, Curse, TeleportStrike, ManaBurn, MagicMissile, ArcaneOrb,
             Taunt, Bodyguard, Rage, MightySlash, SummonBlade, SummonShield, ConjureArmor,
             ShieldWall, Whirlwind, Execute, Charge, BattleCry, CounterStance, Disarm, IronWill,
+            PlaceTrap, TameBeast, EagleEye, MultiShot, PiercingShot, ExplosiveTrap, Camouflage,
+            HuntersMark, Disengage, BeastBond, RainOfArrows, PoisonShot, NetShot, Track, VitalShot,
         };
 
         /// <summary>Every spell card a given class currently has access to: its class-specific cards plus every Generic (RequiredClass null) card.</summary>

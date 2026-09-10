@@ -279,7 +279,7 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Rendering**: cards are composited at runtime from `Content/imgs/Cards/Spells/SpellCard.png` (the shared template) plus the card's own art texture and its dynamic text/values - nothing about a specific card is a separate baked image, so any new `SpellCard` renders correctly through the same code
 - **Dynamic Fields**: name (top bar), MP cost (top-right circle), class line "Spell - <Class>" (bar under the art, or "Spell - Generic" for a class-less spell), description (teal box), and the card's "headline number" in the bottom-right circle (with a placeholder wand glyph behind it pending real iconography) - `GetSpellHeadlineNumber` shows whichever of the move's non-zero effects applies (damage, flat heal, heal %, or granted AP, checked in that priority order) and draws nothing at all for a pure status/utility spell with no single number to show (e.g. Meditate, Conjure Potions) rather than a misleading "0"
 - **Card Art**: the art window on `SpellCard.png` isn't a plain rectangle - it has a curved notch cut into its top-right corner (clearing the cost circle), which every fractional-rectangle measurement attempt missed, always leaving a seam somewhere along an edge. The fix (`BuildSpellCardArtMask`) flood-fills the template's actual near-white pixels outward from a seed point to capture the window's exact pixel shape (cached once), and `GetCardComposite` resamples the card's art directly into the template's own pixel buffer wherever that mask is true, producing one finished texture per card - not two layers drawn at runtime - so there's no draw-order, blend-state, or region-measurement step left that could reintroduce a gap
-- **Placeholder Art**: there's no image-generation model available in this environment, so every spell's art except Arcane Bolt's (`Content/imgs/Cards/Spells/*_CardArt.png` - the 10 Generic Spells, 14 of the 15 Sorcerer Spells, and all 15 Warrior Spells) is programmatically composed instead of illustrated - a gradient background, a simple geometric icon evoking the spell, and a name label, with a tiled "AI PLACEHOLDER" watermark - clearly not final art, swap out per card whenever real art arrives (only `ArtAssetPath` needs to change, nothing else). Each class gets its own rough color palette (Sorcerer purples/blues, Warrior reds/steel) to stay visually distinct even as placeholders
+- **Placeholder Art**: there's no image-generation model available in this environment, so every spell's art except Arcane Bolt's (`Content/imgs/Cards/Spells/*_CardArt.png` - the 10 Generic Spells, 14 of the 15 Sorcerer Spells, and all 15 Warrior and Hunter Spells) is programmatically composed instead of illustrated - a gradient background, a simple geometric icon evoking the spell, and a name label, with a tiled "AI PLACEHOLDER" watermark - clearly not final art, swap out per card whenever real art arrives (only `ArtAssetPath` needs to change, nothing else). Each class gets its own rough color palette (Sorcerer purples/blues, Warrior reds/steel, Hunter forest greens/browns) to stay visually distinct even as placeholders
 - **Current Cards** *(first-pass numbers, pending a balance pass)*:
   - **Sorcerer Spells** *(15 total - burst arcane/elemental damage plus magical utility, the class's stated identity)*:
     - **Arcane Bolt**: `1 + INT/2` Magical damage, range 5, 85% accuracy, 2 AP / 2 MP. The only card with real (non-placeholder) art
@@ -313,6 +313,22 @@ This approach creates a richer, more believable world where cultural misundersta
     - **Summon Blade**: 2 AP / 4 MP, self - conjures a spectral blade for the encounter, granting a bonus STR-scaled attack even unarmed (fluff only, doesn't add a real Move to AvailableMoves yet)
     - **Summon Shield**: 2 AP / 4 MP, self - conjures a spectral shield, granting a Guard bonus as if wielding a real shield (fluff only, doesn't affect GetGuardBonusPercent yet)
     - **Conjure Armor**: 3 AP / 5 MP, self, 3 turns - +DEF/+RES; a placeholder for the real armor system planned later
+  - **Hunter Spells** *(15 total - ranged damage, traps, and beast-taming, the class's stated identity)*:
+    - **Place Trap**: range 3 (placement), `6 + STR/4` Physical, 85% chance to inflict Snared for 2 turns - invisible, triggers when any enemy/neutral unit passes through or lands on the tile; flying units immune (fluff only, no trap-placement/trigger system exists yet)
+    - **Tame Beast**: range 3, 70% accuracy, 3 AP / 5 MP - attempts to tame a neutral beast of the hunter's level or lower, placing it under the hunter's control (fluff only, no neutral-unit/taming system exists yet)
+    - **Eagle Eye**: 1 AP / 2 MP, self, 3 turns - +10 Accuracy
+    - **Multi-Shot**: `5 + STR/4` Physical, range 5, 80% accuracy, 2 AP / 3 MP - strikes the primary target plus up to 2 more nearby enemies (fluff only, no multi-target resolution exists yet)
+    - **Piercing Shot**: `8 + STR/3.5` Physical, range 5, 85% accuracy, 2 AP / 3 MP - punches through the target and anyone behind them in a line (fluff only, no line-piercing targeting exists yet)
+    - **Explosive Trap**: range 3 (placement), `10 + STR/3` Physical, 3 AP / 4 MP - detonates on trigger, damaging the triggering unit and anyone adjacent (fluff only, same caveat as Place Trap, no AoE-at-trigger-point resolution)
+    - **Camouflage**: 1 AP / 2 MP, self, 3 turns - +Evasion
+    - **Hunter's Mark**: range 5, 90% accuracy, 1 AP / 2 MP, 90% chance to inflict Marked for 3 turns - bonus damage taken from all sources (fluff only, nothing currently reads Marked to boost incoming damage)
+    - **Disengage**: 1 AP / 2 MP, self, range 3 (retreat distance) - leaps backward out of melee range without provoking (fluff only, no opportunity-attack system exists to avoid)
+    - **Beast Bond**: range 3, 1 AP / 3 MP, 3 turns - +STR/+Speed to a tamed beast companion; requires an active Tame Beast
+    - **Rain of Arrows**: `6 + STR/4` Physical, range 5, 75% accuracy, 3 AP / 4 MP - an arrow volley over a target area (fluff only, no AoE-at-range resolution exists yet)
+    - **Poison Shot**: `4 + STR/5` Physical, range 5, 85% accuracy, 2 AP / 2 MP, 65% chance to inflict Poisoned for 3 turns
+    - **Net Shot**: `2 + STR/6` Physical, range 4, 85% accuracy, 2 AP / 2 MP, 80% chance to inflict Snared for 2 turns - minimal damage, built to root instead
+    - **Track**: 1 AP / 2 MP, self, 3 turns - reveals every enemy within a wide radius, through fog of war and Camouflage alike (fluff only, no vision-reveal system exists yet - see Fog of War)
+    - **Vital Shot**: `6 + STR/3` Physical, range 5, 80% accuracy, 30% crit chance (2.5x), 2 AP / 3 MP - a called shot, unremarkable on a graze but brutal on a solid hit
   - **Generic Spells** *(RequiredClass null - every class gets these, see Card/Deck System above)*:
     - **Meditate**: 2 AP / 3 MP. Each turn while active, gain a stack (up to 3) of +RES/+DEF/+INT/+ACC/+STR. Taking a single hit for 10%+ of max HP interrupts it and clears all stacks. Ending it voluntarily at the start of your turn locks in the current buff for 3 more turns
     - **Forced Sleep**: 2 AP / 4 MP. Immobilized, heals 20% max HP each turn; any single hit of 10+ damage wakes the caster
@@ -563,7 +579,7 @@ SagesOfOzvaram/
 │   ├── imgs/Cards/Spells/
 │   │   ├── SpellCard.png       (shared template - see Spell Cards §4.1)
 │   │   ├── ArcaneBolt_CardArt.png
-│   │   └── *_CardArt.png       (39x - one per Generic/Sorcerer/Warrior spell except Arcane Bolt - programmatic "AI PLACEHOLDER"-watermarked art, see Spell Cards §4.1)
+│   │   └── *_CardArt.png       (54x - one per Generic/Sorcerer/Warrior/Hunter spell except Arcane Bolt - programmatic "AI PLACEHOLDER"-watermarked art, see Spell Cards §4.1)
 │   ├── imgs/Cards/Summons/
 │   │   ├── SummonCard.png      (shared template - see Summon Cards §4.1)
 │   │   └── DuskRoachlin_CardArt1.png
