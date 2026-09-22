@@ -90,6 +90,7 @@ namespace SagesOfOzvaram.Combat
             CurrentUnit.ApplyBleedTick();
             CurrentUnit.ResetAP();
             CurrentUnit.ClearGuard();
+            CurrentUnit.ResetCardDrawState();
         }
 
         /// <summary>

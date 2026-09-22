@@ -75,6 +75,10 @@ namespace SagesOfOzvaram
         private bool _cardMenuActive = false;
         private List<object> _availableHandCards = new List<object>();
         private int _handCardIndex = 0;
+        private int? _highlightedHandCardIndex;
+        private readonly Random _deckRandom = new Random();
+        private readonly Dictionary<HeroClass, List<object>> _classDecks = new Dictionary<HeroClass, List<object>>();
+        private readonly Dictionary<HeroClass, List<object>> _classHands = new Dictionary<HeroClass, List<object>>();
 
         private int _selectedCharacterIndex = 0;  // Sorcerer is the default selection
         private BaseUnit _playerUnit;
@@ -128,6 +132,8 @@ namespace SagesOfOzvaram
 
             // Spawn the 4 apprentice units in random corners
             SpawnUnits();
+
+            GenerateClassDecks();
 
             // Initialize turn system
             _turnSystem = new TurnSystem(_units);
@@ -683,7 +689,86 @@ namespace SagesOfOzvaram
         private void ConfirmCharacterSelection()
         {
             _playerUnit = _units[_selectedCharacterIndex];
+            EnsurePlayerHandInitialized();
             _gameState = GameState.Playing;
+        }
+
+        private void EnsurePlayerHandInitialized()
+        {
+            if (_playerUnit == null)
+                return;
+
+            if (!_classHands.TryGetValue(_playerUnit.Class, out var hand) || hand == null)
+            {
+                hand = new List<object>();
+                _classHands[_playerUnit.Class] = hand;
+            }
+
+            if (hand.Count == 0)
+            {
+                var startingHand = DrawCardsFromDeck(_playerUnit.Class, 3);
+                hand.AddRange(startingHand);
+                _classHands[_playerUnit.Class] = hand;
+            }
+
+            _availableHandCards = new List<object>(hand);
+            if (_availableHandCards.Count > 0)
+                _handCardIndex = Math.Clamp(_handCardIndex, 0, _availableHandCards.Count - 1);
+        }
+
+        private int GetDrawAPCost(BaseUnit unit)
+        {
+            if (unit == null)
+                return 1;
+
+            int drawCount = unit.CardsDrawnThisTurn;
+            return drawCount == 0 ? 1 : 1 << drawCount;
+        }
+
+        private List<object> DrawCardsFromDeck(HeroClass heroClass, int count)
+        {
+            if (!_classDecks.TryGetValue(heroClass, out var deck) || deck == null)
+                return new List<object>();
+
+            var drawn = new List<object>();
+            for (int i = 0; i < count && deck.Count > 0; i++)
+            {
+                int cardIndex = _deckRandom.Next(deck.Count);
+                drawn.Add(deck[cardIndex]);
+                deck.RemoveAt(cardIndex);
+            }
+
+            _classDecks[heroClass] = deck;
+            return drawn;
+        }
+
+        private void TryDrawCardFromDeck()
+        {
+            if (_playerUnit == null)
+                return;
+
+            int drawCost = GetDrawAPCost(_playerUnit);
+            if (_playerUnit.CurrentAP < drawCost)
+                return;
+
+            if (!_classDecks.TryGetValue(_playerUnit.Class, out var deck) || deck == null || deck.Count == 0)
+                return;
+
+            var drawnCard = DrawCardsFromDeck(_playerUnit.Class, 1);
+            if (drawnCard.Count == 0)
+                return;
+
+            if (!_classHands.TryGetValue(_playerUnit.Class, out var hand) || hand == null)
+                hand = new List<object>();
+
+            hand.Add(drawnCard[0]);
+            _classHands[_playerUnit.Class] = hand;
+            _playerUnit.CurrentAP -= drawCost;
+            _playerUnit.RecordCardDraw();
+
+            _availableHandCards = new List<object>(hand);
+            _handCardIndex = _availableHandCards.Count - 1;
+            _highlightedHandCardIndex = _handCardIndex;
         }
 
         /// <summary>
@@ -783,19 +868,64 @@ namespace SagesOfOzvaram
             }
         }
 
+        private void GenerateClassDecks()
+        {
+            foreach (HeroClass heroClass in Enum.GetValues(typeof(HeroClass)))
+            {
+                if (heroClass == HeroClass.None)
+                    continue;
+
+                var classSpells = SpellCatalog.GetSpellsForClass(heroClass);
+                var summonPool = SummonCatalog.AllSummons;
+                var deckPool = new List<object>();
+                deckPool.AddRange(classSpells);
+                deckPool.AddRange(summonPool);
+
+                if (deckPool.Count == 0)
+                    continue;
+
+                int totalCards = _deckRandom.Next(15, 31);
+                totalCards = Math.Min(totalCards, deckPool.Count);
+
+                // Keep the deck class-appropriate by always taking at least a few of that class's
+                // own spell cards first, then fill the rest from generic summons and any remaining
+                // class-eligible spells.
+                var shuffledClassSpells = classSpells.OrderBy(_ => _deckRandom.Next()).ToList();
+                var shuffledSummons = summonPool.OrderBy(_ => _deckRandom.Next()).ToList();
+
+                var classDeck = new List<object>();
+                int classSpellCount = Math.Min(shuffledClassSpells.Count, Math.Max(8, totalCards - 4));
+                classDeck.AddRange(shuffledClassSpells.Take(classSpellCount));
+
+                var remainingSlots = totalCards - classDeck.Count;
+                if (remainingSlots > 0)
+                {
+                    var filler = new List<object>();
+                    filler.AddRange(shuffledSummons);
+                    filler.AddRange(shuffledClassSpells.Skip(classSpellCount));
+                    filler = filler.OrderBy(_ => _deckRandom.Next()).ToList();
+                    classDeck.AddRange(filler.Take(remainingSlots));
+                }
+
+                classDeck = classDeck.OrderBy(_ => _deckRandom.Next()).ToList();
+                _classDecks[heroClass] = classDeck;
+            }
+        }
+
         /// <summary>
-        /// Open the card hand: every spell card the player unit's class has access to (via
-        /// SpellCatalog) plus every summon card (via SummonCatalog, not class-gated), combined
-        /// into one browsable hand of playing cards - A/D cycles through them, rendered
-        /// dynamically through DrawSpellCard/DrawSummonCard via DrawHandCard. Just a viewer for
-        /// now - no deck/draw system, spell-casting, or summon-to-battlefield mechanics exist yet.
+        /// Open the card hand using a random deck for the current class. The deck is built once
+        /// per new game and is then shuffled by class, with each class drawing from its own spell
+        /// pool plus generic summon cards while keeping non-matching class spells out entirely.
         /// </summary>
         private void OpenCardMenu()
         {
-            _availableHandCards = new List<object>();
-            _availableHandCards.AddRange(SpellCatalog.GetSpellsForClass(_playerUnit.Class));
-            _availableHandCards.AddRange(SummonCatalog.AllSummons);
+            EnsurePlayerHandInitialized();
+            _availableHandCards = _classHands.TryGetValue(_playerUnit.Class, out var hand) && hand != null
+                ? new List<object>(hand)
+                : new List<object>();
+
             _handCardIndex = 0;
+            _highlightedHandCardIndex = null;
             _cardMenuActive = true;
         }
 
@@ -804,9 +934,15 @@ namespace SagesOfOzvaram
             if (_availableHandCards.Count > 1)
             {
                 if (keyboardState.IsKeyDown(Keys.D) && !_previousKeyboardState.IsKeyDown(Keys.D))
+                {
                     _handCardIndex = (_handCardIndex + 1) % _availableHandCards.Count;
+                    _highlightedHandCardIndex = _handCardIndex;
+                }
                 if (keyboardState.IsKeyDown(Keys.A) && !_previousKeyboardState.IsKeyDown(Keys.A))
+                {
                     _handCardIndex = (_handCardIndex - 1 + _availableHandCards.Count) % _availableHandCards.Count;
+                    _highlightedHandCardIndex = _handCardIndex;
+                }
 
                 // Clicking a peeking side card highlights (selects) it, same as A/D.
                 if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
@@ -814,10 +950,15 @@ namespace SagesOfOzvaram
                     Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
                     var layout = GetHandCardLayout(viewportSize);
                     Point clickPos = new Point(mouseState.X, mouseState.Y);
-                    if (layout.prev.Contains(clickPos))
-                        _handCardIndex = (_handCardIndex - 1 + _availableHandCards.Count) % _availableHandCards.Count;
-                    else if (layout.next.Contains(clickPos))
-                        _handCardIndex = (_handCardIndex + 1) % _availableHandCards.Count;
+                    for (int i = layout.Count - 1; i >= 0; i--)
+                    {
+                        if (layout[i].Contains(clickPos))
+                        {
+                            _handCardIndex = i;
+                            _highlightedHandCardIndex = i;
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -826,6 +967,16 @@ namespace SagesOfOzvaram
                 _cardMenuActive = false;
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
+            }
+
+            if (keyboardState.IsKeyDown(Keys.F) && !_previousKeyboardState.IsKeyDown(Keys.F))
+            {
+                TryDrawCardFromDeck();
+                _availableHandCards = _classHands.TryGetValue(_playerUnit.Class, out var hand) && hand != null
+                    ? new List<object>(hand)
+                    : new List<object>();
+                if (_availableHandCards.Count > 0)
+                    _handCardIndex = _availableHandCards.Count - 1;
             }
         }
 
@@ -1662,18 +1813,49 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// The on-screen rects for the hand's previous/center/next cards - shared between
-        /// drawing and click hit-testing so they can never drift out of sync with each other.
+        /// The on-screen rect for every card in the hand. Cards overlap around the center like
+        /// a physical hand of cards; the focused card is enlarged during drawing.
         /// </summary>
-        private (Rectangle prev, Rectangle center, Rectangle next) GetHandCardLayout(Vector2 viewportSize)
+        private List<Rectangle> GetHandCardLayout(Vector2 viewportSize)
         {
-            float centerHeight = viewportSize.Y * 0.8f;
-            float sideHeight = centerHeight * 0.75f;
-            float sideOffsetX = viewportSize.X * 0.24f;
-            return (
-                CenteredCardRect(viewportSize, sideHeight, -sideOffsetX),
-                CenteredCardRect(viewportSize, centerHeight, 0f),
-                CenteredCardRect(viewportSize, sideHeight, sideOffsetX));
+            var layout = new List<Rectangle>(_availableHandCards.Count);
+            if (_availableHandCards.Count == 0)
+                return layout;
+
+            const float cardAspectRatio = 1500f / 2100f;
+            float sideMargin = viewportSize.X * 0.025f;
+            float availableWidth = viewportSize.X - sideMargin * 2f;
+            float cardWidth = Math.Min(150f, availableWidth / (_availableHandCards.Count + 0.35f * (_availableHandCards.Count - 1)));
+            float cardHeight = cardWidth / cardAspectRatio;
+            float overlapStep = cardWidth * 0.7f;
+            float spacing = _availableHandCards.Count == 1
+                ? 0f
+                : Math.Min(overlapStep, availableWidth / (_availableHandCards.Count - 1));
+            float handWidth = cardWidth + spacing * (_availableHandCards.Count - 1);
+            float startX = (viewportSize.X - handWidth) / 2f;
+            float bottom = viewportSize.Y - 58f;
+
+            for (int i = 0; i < _availableHandCards.Count; i++)
+            {
+                layout.Add(new Rectangle(
+                    (int)(startX + i * spacing),
+                    (int)(bottom - cardHeight),
+                    (int)cardWidth,
+                    (int)cardHeight));
+            }
+
+            return layout;
+        }
+
+        private Rectangle ScaleCardRect(Rectangle rect, float scale)
+        {
+            int width = (int)(rect.Width * scale);
+            int height = (int)(rect.Height * scale);
+            return new Rectangle(
+                rect.X - (width - rect.Width) / 2,
+                rect.Y - (height - rect.Height),
+                width,
+                height);
         }
 
         /// <summary>
@@ -1692,29 +1874,50 @@ namespace SagesOfOzvaram
             if (_availableHandCards.Count > 0)
             {
                 var layout = GetHandCardLayout(viewportSize);
-
-                if (_availableHandCards.Count > 1)
+                Point mousePos = Mouse.GetState().Position;
+                int hoveredCardIndex = -1;
+                for (int i = layout.Count - 1; i >= 0; i--)
                 {
-                    int prevIndex = (_handCardIndex - 1 + _availableHandCards.Count) % _availableHandCards.Count;
-                    int nextIndex = (_handCardIndex + 1) % _availableHandCards.Count;
-                    DrawHandCard(_availableHandCards[prevIndex], layout.prev);
-                    DrawHandCard(_availableHandCards[nextIndex], layout.next);
+                    if (layout[i].Contains(mousePos))
+                    {
+                        hoveredCardIndex = i;
+                        break;
+                    }
                 }
 
-                object centerCard = _availableHandCards[_handCardIndex];
-                DrawHandCard(centerCard, layout.center);
+                int? focusedCardIndex = hoveredCardIndex >= 0 ? hoveredCardIndex : _highlightedHandCardIndex;
+                for (int i = 0; i < _availableHandCards.Count; i++)
+                {
+                    if (i != focusedCardIndex)
+                        DrawHandCard(_availableHandCards[i], layout[i]);
+                }
+
+                Rectangle focusedRect = Rectangle.Empty;
+                if (focusedCardIndex.HasValue)
+                {
+                    focusedRect = ScaleCardRect(layout[focusedCardIndex.Value], 2.10f);
+                    DrawHandCard(_availableHandCards[focusedCardIndex.Value], focusedRect);
+                }
 
                 if (_font != null)
                 {
-                    string counter = $"{_handCardIndex + 1} / {_availableHandCards.Count}";
+                    string counter = _highlightedHandCardIndex.HasValue
+                        ? $"{_highlightedHandCardIndex.Value + 1} / {_availableHandCards.Count}"
+                        : $"{_availableHandCards.Count} cards";
                     Vector2 size = _font.MeasureString(counter);
                     _spriteBatch.DrawString(_font, counter, new Vector2((viewportSize.X - size.X) / 2f, viewportSize.Y * 0.04f), Color.White);
+
+                    int drawCost = GetDrawAPCost(_playerUnit);
+                    string drawText = $"Draw ({drawCost} AP)";
+                    Vector2 drawSize = _font.MeasureString(drawText);
+                    _spriteBatch.DrawString(_font, drawText,
+                        new Vector2((viewportSize.X - drawSize.X) / 2f, viewportSize.Y * 0.9f),
+                        _playerUnit.CurrentAP >= drawCost ? Color.Gold : Color.Gray);
                 }
 
-                Point mousePos = Mouse.GetState().Position;
-                if (layout.center.Contains(mousePos))
+                if (hoveredCardIndex >= 0)
                 {
-                    string tooltip = GetHoveredCardTooltip(centerCard, layout.center, mousePos);
+                    string tooltip = GetHoveredCardTooltip(_availableHandCards[hoveredCardIndex], focusedRect, mousePos);
                     if (tooltip != null)
                         DrawTooltip(tooltip, mousePos, viewportSize);
                 }
@@ -1726,7 +1929,10 @@ namespace SagesOfOzvaram
                 _spriteBatch.DrawString(_font, text, (viewportSize - size) / 2f, Color.White);
             }
 
-            DrawBottomHint(viewportSize, _availableHandCards.Count > 1 ? "A/D or click a side card to browse - E to close" : "E to close");
+            DrawBottomHint(viewportSize,
+                _availableHandCards.Count > 1
+                    ? "A/D or click a side card to browse - F to draw - E to close"
+                    : "F to draw - E to close");
         }
 
         /// <summary>

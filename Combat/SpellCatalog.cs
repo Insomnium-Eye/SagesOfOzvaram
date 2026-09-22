@@ -256,6 +256,155 @@ namespace SagesOfOzvaram.Combat
                 critChance: 0.15f, critMultiplier: 2.5f),
             "imgs/Cards/Spells/ArcaneOrb_CardArt");
 
+        // --- Cleric Spells: healing, cleansing, warding, and divine light damage ---
+
+        public static readonly SpellCard TezsMercy = new SpellCard(
+            "Tez's Mercy",
+            "A prayer to Tez, the god of light: restore 15% of the target's maximum HP.",
+            HeroClass.Cleric,
+            new Move("Tez's Mercy", "A quiet blessing from the god of light.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                healPercentMaxHP: 0.15f, targetsAllies: true),
+            "imgs/Cards/Spells/TezsMercy_CardArt");
+
+        public static readonly SpellCard ClearMind = new SpellCard(
+            "Clear Mind",
+            "A measured breath and a prayer to still the soul: reduce an ally's aggression toward the caster by 5 for 2 turns.",
+            HeroClass.Cleric,
+            new Move("Clear Mind", "Still the heart so the mind may focus.",
+                apCost: 1, mpCost: 2, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Calmed", statusDurationTurns: 2),
+            "imgs/Cards/Spells/ClearMind_CardArt");
+
+        public static readonly SpellCard MinorCleanse = new SpellCard(
+            "Minor Cleanse",
+            "Purify the target of a single affliction, expending MP equal to the removed affliction's cost.",
+            HeroClass.Cleric,
+            new Move("Minor Cleanse", "Wash away the rot within the spirit.",
+                apCost: 1, mpCost: 2, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true),
+            "imgs/Cards/Spells/MinorCleanse_CardArt");
+
+        public static readonly SpellCard RadiantBolt = new SpellCard(
+            "Radiant Bolt",
+            "A disciplined beam of holy light: deals 5 + INT/5 LIGHT damage to a target.",
+            HeroClass.Cleric,
+            new Move("Radiant Bolt", "A narrow shaft of pure, sacred light.",
+                apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 5,
+                intelligenceDivisor: 5f, damageType: DamageType.Magical),
+            "imgs/Cards/Spells/RadiantBolt_CardArt");
+
+        public static readonly SpellCard BlessingOfLight = new SpellCard(
+            "Blessing of Light",
+            "A radiant sanctification: grant the target +5 DEF and +5 RES, and imbue their weapon with +5 light damage per hit for 2 turns.",
+            HeroClass.Cleric,
+            new Move("Blessing of Light", "Set the beloved in a holy glow.",
+                apCost: 2, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Blessed", statusDurationTurns: 2),
+            "imgs/Cards/Spells/BlessingOfLight_CardArt");
+
+        public static readonly SpellCard HallowedWard = new SpellCard(
+            "Hallowed Ward",
+            "Shroud the caster in a soft halo of protection: +DEF/+RES for 2 turns.",
+            HeroClass.Cleric,
+            new Move("Hallowed Ward", "A quiet shield woven from faith.",
+                apCost: 1, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                inflictsStatusEffect: "Ward", statusDurationTurns: 2),
+            "imgs/Cards/Spells/HallowedWard_CardArt");
+
+        public static readonly SpellCard TezsVigil = new SpellCard(
+            "Tez's Vigil",
+            "Stand in prayer through the next heartbeat: the caster gains 2 AP on their next turn.",
+            HeroClass.Cleric,
+            new Move("Tez's Vigil", "A faithful watch against the dark.",
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                grantedAP: 2),
+            "imgs/Cards/Spells/TezsVigil_CardArt");
+
+        public static readonly SpellCard DawnfireSmite = new SpellCard(
+            "Dawnfire Smite",
+            "A focused blast of divine flame: deal 7 + INT/4 LIGHT damage to a target.",
+            HeroClass.Cleric,
+            new Move("Dawnfire Smite", "A crack of sunrise, forged into judgment.",
+                apCost: 2, mpCost: 4, range: 4, baseAccuracy: 0.82f, baseDamage: 7,
+                intelligenceDivisor: 4f, damageType: DamageType.Magical),
+            "imgs/Cards/Spells/DawnfireSmite_CardArt");
+
+        public static readonly SpellCard MercyReach = new SpellCard(
+            "Mercy Reach",
+            "Extend Tez's hand across a short distance: heal an ally within 3 tiles for 10% of their max HP.",
+            HeroClass.Cleric,
+            new Move("Mercy Reach", "Faith carries farther than the hand can reach.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                healPercentMaxHP: 0.10f, targetsAllies: true),
+            "imgs/Cards/Spells/MercyReach_CardArt");
+
+        public static readonly SpellCard Purify = new SpellCard(
+            "Purify",
+            "A sweeping prayer that strips a single harmful effect from the target, leaving only the strength of their will.",
+            HeroClass.Cleric,
+            new Move("Purify", "Cleanse the stain of pain and fear.",
+                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true),
+            "imgs/Cards/Spells/Purify_CardArt");
+
+        public static readonly SpellCard Consecration = new SpellCard(
+            "Consecration",
+            "Sanctify nearby allies: all adjacent allies gain +5 DEF and +5 RES for 2 turns.",
+            HeroClass.Cleric,
+            new Move("Consecration", "The ground itself is blessed by the faithful.",
+                apCost: 2, mpCost: 4, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                hitsAllAdjacent: true, targetsAllies: true,
+                inflictsStatusEffect: "Consecrated", statusDurationTurns: 2),
+            "imgs/Cards/Spells/Consecration_CardArt");
+
+        public static readonly SpellCard GuardianStep = new SpellCard(
+            "Guardian Step",
+            "The cleric steps into a protective stance and moves to guard a nearby ally, reducing incoming harm to them for 1 turn.",
+            HeroClass.Cleric,
+            new Move("Guardian Step", "Stand where the blow was meant to fall.",
+                apCost: 2, mpCost: 3, range: 2, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Guarded", statusDurationTurns: 1),
+            "imgs/Cards/Spells/GuardianStep_CardArt");
+
+        public static readonly SpellCard DivineRebuke = new SpellCard(
+            "Divine Rebuke",
+            "A harsh flash of light punishes an enemy for their sins: deal 8 + INT/4 LIGHT damage and 25% chance to Stun.",
+            HeroClass.Cleric,
+            new Move("Divine Rebuke", "The heavens answer with stern, burning judgment.",
+                apCost: 3, mpCost: 4, range: 3, baseAccuracy: 0.80f, baseDamage: 8,
+                intelligenceDivisor: 4f, damageType: DamageType.Magical,
+                inflictsStatusEffect: "Stunned", statusEffectChance: 0.25f),
+            "imgs/Cards/Spells/DivineRebuke_CardArt");
+
+        public static readonly SpellCard HaloOfTez = new SpellCard(
+            "Halo of Tez",
+            "A ring of divine light surrounds the target, granting +10 Accuracy and +2 RES for 3 turns.",
+            HeroClass.Cleric,
+            new Move("Halo of Tez", "A circle of radiant calm.",
+                apCost: 2, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                targetsAllies: true, inflictsStatusEffect: "Haloed", statusDurationTurns: 3),
+            "imgs/Cards/Spells/HaloOfTez_CardArt");
+
+        public static readonly SpellCard SanctifiedStrike = new SpellCard(
+            "Sanctified Strike",
+            "A righteous melee blow empowered by faith: deal 6 + STR/3 + INT/6 LIGHT damage to a target.",
+            HeroClass.Cleric,
+            new Move("Sanctified Strike", "Steel and faith, bound together in one blow.",
+                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.88f, baseDamage: 6,
+                strengthDivisor: 3f, intelligenceDivisor: 6f, damageType: DamageType.Magical),
+            "imgs/Cards/Spells/SanctifiedStrike_CardArt");
+
+        public static readonly SpellCard SunflareTouch = new SpellCard(
+            "Sunflare Touch",
+            "A gentle touch that warms the soul and scorches the body: heal an ally for 8 HP and deal 4 + INT/5 LIGHT damage to a nearby enemy.",
+            HeroClass.Cleric,
+            new Move("Sunflare Touch", "Light that heals the faithful and burns the impure.",
+                apCost: 3, mpCost: 4, range: 2, baseAccuracy: 0.80f, baseDamage: 4,
+                intelligenceDivisor: 5f, damageType: DamageType.Magical,
+                healFlat: 8, targetsAllies: true),
+            "imgs/Cards/Spells/SunflareTouch_CardArt");
+
         // --- Warrior Spells: buffs (self/allies), summoned weapons/shields/armor, weapon techniques ---
 
         public static readonly SpellCard Taunt = new SpellCard(
@@ -541,6 +690,9 @@ namespace SagesOfOzvaram.Combat
             ThrowGrit, Brace, RallyCry, Trip, SteadyHands,
             ManaShield, Blink, Flames, IceSpike, ChainLightning, EnchantWeapon,
             Fireball, FrostNova, ArcaneShield, Curse, TeleportStrike, ManaBurn, MagicMissile, ArcaneOrb,
+            TezsMercy, ClearMind, MinorCleanse, RadiantBolt, BlessingOfLight, HallowedWard, TezsVigil,
+            DawnfireSmite, MercyReach, Purify, Consecration, GuardianStep, DivineRebuke, HaloOfTez,
+            SanctifiedStrike, SunflareTouch,
             Taunt, Bodyguard, Rage, MightySlash, SummonBlade, SummonShield, ConjureArmor,
             ShieldWall, Whirlwind, Execute, Charge, BattleCry, CounterStance, Disarm, IronWill,
             PlaceTrap, TameBeast, EagleEye, MultiShot, PiercingShot, ExplosiveTrap, Camouflage,

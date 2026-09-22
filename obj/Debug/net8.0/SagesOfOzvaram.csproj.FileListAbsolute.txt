@@ -36,3 +36,41 @@
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/Debug/net8.0/ref/SagesOfOzvaram.dll
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/bin/Debug/net8.0/Content/Fonts/DefaultFont.xnb
 /home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/Debug/net8.0/SagesOfOzvaram.sourcelink.json
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\mgcb.tool.restore
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\refint\SagesOfOzvaram.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.pdb
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\Content\Fonts\DefaultFont.xnb
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\SagesOfOzvaram.exe
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\SagesOfOzvaram.deps.json
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\SagesOfOzvaram.runtimeconfig.json
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\SagesOfOzvaram.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\SagesOfOzvaram.pdb
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\MonoGame.Framework.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\NVorbis.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\android-arm\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\android-arm64\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\android-x64\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\android-x86\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\ios-arm64\native\libopenal.a
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\iossimulator-arm64\native\libopenal.a
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\iossimulator-x64\native\libopenal.a
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\linux-arm64\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\linux-x64\native\libopenal.so
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\osx\native\libopenal.dylib
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\win-arm64\native\openal.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\win-x64\native\openal.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\linux-arm64\native\libSDL2-2.0.so.0
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\linux-x64\native\libSDL2-2.0.so.0
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\osx\native\libSDL2-2.0.0.dylib
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\win-arm64\native\SDL2.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\bin\Debug\net8.0\runtimes\win-x64\native\SDL2.dll
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.csproj.AssemblyReference.cache
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.AssemblyInfoInputs.cache
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.AssemblyInfo.cs
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.csproj.CoreCompileInputs.cache
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.sourcelink.json
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfO.9A307F41.Up2Date
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\SagesOfOzvaram.genruntimeconfig.cache
+C:\Users\ebm22\Desktop\SagesOfOzvaram\SagesOfOzvaram\obj\Debug\net8.0\ref\SagesOfOzvaram.dll

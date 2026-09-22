@@ -66,6 +66,13 @@ namespace SagesOfOzvaram.Units
         public int MaxAP { get; set; } = 5;
         public int CurrentAP { get; set; } = 5;
 
+        /// <summary>How many cards this unit has drawn this turn. The AP cost doubles each time (1, 2, 4, 8...). Reset at the start of a new turn.</summary>
+        public int CardsDrawnThisTurn { get; private set; }
+
+        public void RecordCardDraw() => CardsDrawnThisTurn++;
+
+        public void ResetCardDrawState() => CardsDrawnThisTurn = 0;
+
         /// <summary>Refill AP to MaxAP. Called automatically when this unit's turn starts.</summary>
         public void ResetAP() => CurrentAP = MaxAP;
 
