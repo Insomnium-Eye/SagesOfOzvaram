@@ -56,10 +56,85 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public HeroClass Class { get; }
 
-        /// <summary>Bleed magnitude as a % of CURRENT HP lost when this unit's turn starts. 0 = not bleeding.</summary>
+        /// <summary>Bleed magnitude as a % of MAX HP lost when this unit's turn starts. 0 = not bleeding.</summary>
         public float BleedPercentPerTurn { get; set; } = 0f;
 
-        /// <summary>True once HP drops to 5% of MaxHP or below; a fainted unit is unable to move.</summary>
+        /// <summary>
+        /// How many of this unit's own upcoming turns are still skipped due to Stun - its
+        /// "length" is set by whatever inflicted it (Move.StatusDurationTurns), not a severity
+        /// rank. Decremented by one each time a turn is skipped - see TurnSystem.OnUnitTurnStart.
+        /// </summary>
+        public int StunTurnsRemaining { get; private set; }
+
+        public bool IsStunned => StunTurnsRemaining > 0;
+
+        /// <summary>Stun for `turns` of this unit's own turns - takes the longer of this and any Stun already active, rather than shortening an existing one.</summary>
+        public void ApplyStun(int turns) => StunTurnsRemaining = Math.Max(StunTurnsRemaining, turns);
+
+        /// <summary>Consume one turn of Stun (called when this unit's turn is skipped because of it).</summary>
+        public void ConsumeStunTurn() => StunTurnsRemaining = Math.Max(0, StunTurnsRemaining - 1);
+
+        /// <summary>AP cost to Break Stun (see TryBreakStun).</summary>
+        public const int StunBreakAPCost = 3;
+
+        /// <summary>How many of this unit's own turns remain before Break Stun is off cooldown again. Ticks down once per turn regardless of whether this unit is currently stunned - see TurnSystem.OnUnitTurnStart.</summary>
+        public int StunBreakCooldownRemaining { get; private set; }
+
+        /// <summary>
+        /// True for a "Summoner" unit (has a real HeroClass) - only these can attempt to Break
+        /// Stun; summoned creatures (HeroClass.None) can't. Faint bypasses this entirely too
+        /// (see IsFainted) - it's a forced, unbreakable version of Stun with no escape at all.
+        /// </summary>
+        public bool CanBreakStun => Class != HeroClass.None;
+
+        public void TickStunBreakCooldown() => StunBreakCooldownRemaining = Math.Max(0, StunBreakCooldownRemaining - 1);
+
+        /// <summary>
+        /// Attempt to Break Stun: spends StunBreakAPCost AP, clears Stun entirely, and starts a
+        /// 5-turn cooldown. No-op (returns false, nothing spent) if not stunned, not a Summoner
+        /// unit, still on cooldown, or the AP can't be afforded.
+        /// </summary>
+        public bool TryBreakStun()
+        {
+            if (!IsStunned || !CanBreakStun || StunBreakCooldownRemaining > 0 || CurrentAP < StunBreakAPCost)
+                return false;
+
+            CurrentAP -= StunBreakAPCost;
+            StunTurnsRemaining = 0;
+            StunBreakCooldownRemaining = 5;
+            return true;
+        }
+
+        /// <summary>True while Knocked Down (prone): cannot move, and this unit's own accuracy is cut by 75% on any move it attempts (see Move.GetHitChance). Cleared by spending KnockdownStandUpAPCost AP - see TryStandUp.</summary>
+        public bool IsKnockedDown { get; private set; }
+
+        /// <summary>AP cost to stand back up, set by whichever hit knocked this unit down (Move.KnockdownStandUpAPCost) rather than a fixed global cost.</summary>
+        public int KnockdownStandUpAPCost { get; private set; }
+
+        public void ApplyKnockdown(int standUpApCost)
+        {
+            IsKnockedDown = true;
+            KnockdownStandUpAPCost = standUpApCost;
+        }
+
+        /// <summary>Spend KnockdownStandUpAPCost AP to clear Knocked Down. No-op (returns false) if not knocked down or the AP can't be afforded.</summary>
+        public bool TryStandUp()
+        {
+            if (!IsKnockedDown || CurrentAP < KnockdownStandUpAPCost)
+                return false;
+
+            CurrentAP -= KnockdownStandUpAPCost;
+            IsKnockedDown = false;
+            KnockdownStandUpAPCost = 0;
+            return true;
+        }
+
+        /// <summary>
+        /// True once HP drops to 5% of MaxHP or below (recomputed on every HP change, so it
+        /// clears again if healed back above the threshold). A forced, unbreakable version of
+        /// Stun - unlike Stun, there's no AP granted and no Break Stun option; the unit's turn
+        /// is skipped outright every time until HP recovers - see TurnSystem.OnUnitTurnStart.
+        /// </summary>
         public bool IsFainted { get; private set; }
 
         // Action Points
@@ -117,11 +192,55 @@ namespace SagesOfOzvaram.Units
         /// <summary>Resistance including the Guard bonus, if currently guarding.</summary>
         public float EffectiveResistance => Resistance + (IsGuarding ? GetGuardBonusPercent() : 0f);
 
+        private readonly List<Weapon> _inventory = new List<Weapon>();
+
         /// <summary>
         /// Weapons this unit is carrying. Each weapon's attacks are folded into
-        /// AvailableMoves alongside the unit's racial move.
+        /// AvailableMoves alongside the unit's racial move. Add/remove via TryAddToInventory /
+        /// RemoveFromInventory so InventoryWeightCapacity is respected and EquippedWeapon stays valid.
         /// </summary>
-        public List<Weapon> Inventory { get; } = new List<Weapon>();
+        public IReadOnlyList<Weapon> Inventory => _inventory;
+
+        /// <summary>Total inventory space every unit has for carrying weapons (GDD-pending; first-pass flat value for every class).</summary>
+        public int InventoryWeightCapacity { get; set; } = 20;
+
+        /// <summary>Sum of Weight across everything currently in Inventory.</summary>
+        public int CurrentInventoryWeight => Inventory.Sum(w => w.Weight);
+
+        /// <summary>Free inventory space left before hitting InventoryWeightCapacity.</summary>
+        public int RemainingInventoryWeight => InventoryWeightCapacity - CurrentInventoryWeight;
+
+        /// <summary>True if this unit has enough remaining capacity to carry the given weapon.</summary>
+        public bool CanCarry(Weapon weapon) => weapon != null && weapon.Weight <= RemainingInventoryWeight;
+
+        /// <summary>
+        /// Add a weapon to Inventory if there's enough remaining weight capacity for it. Equips
+        /// it automatically if this is the unit's first weapon. Returns false (and leaves
+        /// Inventory unchanged) if the weapon is too heavy to carry.
+        /// </summary>
+        public bool TryAddToInventory(Weapon weapon)
+        {
+            if (!CanCarry(weapon))
+                return false;
+
+            _inventory.Add(weapon);
+            EquippedWeapon ??= weapon;
+            return true;
+        }
+
+        /// <summary>
+        /// Remove a weapon from Inventory (e.g. Throw Dagger consuming the Dagger). If it was the
+        /// EquippedWeapon, falls back to the first remaining weapon, or null if Inventory is now empty.
+        /// </summary>
+        public bool RemoveFromInventory(Weapon weapon)
+        {
+            if (!_inventory.Remove(weapon))
+                return false;
+
+            if (EquippedWeapon == weapon)
+                EquippedWeapon = _inventory.Count > 0 ? _inventory[0] : null;
+            return true;
+        }
 
         /// <summary>
         /// The weapon currently in-hand. Attacks from this weapon cost their listed AP; attacks
@@ -290,16 +409,16 @@ namespace SagesOfOzvaram.Units
         }
 
         /// <summary>
-        /// Apply this turn's bleed damage (a % of current HP), if bleeding. Called
-        /// automatically when this unit's turn starts (see TurnSystem). Bypasses
-        /// Defense/Resistance - bleed is true damage.
+        /// Apply this turn's bleed damage (a % of MAX HP), if bleeding. Called automatically
+        /// when this unit's turn starts (see TurnSystem). Bypasses Defense/Resistance - bleed
+        /// is true damage.
         /// </summary>
         public void ApplyBleedTick()
         {
             if (BleedPercentPerTurn <= 0f)
                 return;
 
-            int bleedDamage = (int)Math.Round(HP * BleedPercentPerTurn);
+            int bleedDamage = (int)Math.Round(MaxHP * BleedPercentPerTurn);
             ApplyTrueDamage(bleedDamage);
         }
 

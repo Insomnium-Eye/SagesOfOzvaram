@@ -22,10 +22,9 @@ namespace SagesOfOzvaram.Units.Heroes
             MaxMP = 5;       // not a caster
             CurrentMP = 5;
 
-            Inventory.Add(WeaponCatalog.IronSword);
-            Inventory.Add(WeaponCatalog.IronShield);
-            Inventory.Add(WeaponCatalog.Dagger);
-            EquippedWeapon = Inventory[0];
+            TryAddToInventory(WeaponCatalog.IronSword);
+            TryAddToInventory(WeaponCatalog.IronShield);
+            TryAddToInventory(WeaponCatalog.Dagger);
         }
     }
 }

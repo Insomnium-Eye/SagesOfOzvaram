@@ -22,11 +22,10 @@ namespace SagesOfOzvaram.Units.Heroes
             MaxMP = 20;       // primary spellcaster
             CurrentMP = 20;
 
-            Inventory.Add(WeaponCatalog.RhinewoodStaff);
-            Inventory.Add(WeaponCatalog.Crossbow);
-            Inventory.Add(WeaponCatalog.Dagger);
-            Inventory.Add(WeaponCatalog.GlassShield); // Glass Shield is the Sorcerer's shield for now
-            EquippedWeapon = Inventory[0];
+            TryAddToInventory(WeaponCatalog.RhinewoodStaff);
+            TryAddToInventory(WeaponCatalog.Crossbow);
+            TryAddToInventory(WeaponCatalog.Dagger);
+            TryAddToInventory(WeaponCatalog.GlassShield); // Glass Shield is the Sorcerer's shield for now
         }
     }
 }

@@ -142,6 +142,38 @@ namespace SagesOfOzvaram.Maps
         }
 
         /// <summary>
+        /// The hex direction pointing most directly from (fromCol,fromRow) toward
+        /// (toCol,toRow) - exact for an adjacent tile (agrees with GetDirectionToNeighbor),
+        /// nearest-of-6 approximation otherwise (compared via cube-coordinate dot product, so
+        /// it's a fair angular comparison rather than biased toward any particular direction).
+        /// Used to push/advance a unit in a straight line for knockback and thrust moves (e.g.
+        /// Sword Pierce, Pistol Shot), which aren't necessarily aimed at an exact neighbor.
+        /// </summary>
+        public HexDirection GetDirectionTo(int fromCol, int fromRow, int toCol, int toRow)
+        {
+            var (fq, fr) = OddRToCube(fromCol, fromRow);
+            var (tq, tr) = OddRToCube(toCol, toRow);
+            int dq = tq - fq;
+            int dr = tr - fr;
+            int ds = -dq - dr;
+
+            int bestIndex = 0;
+            int bestDot = int.MinValue;
+            for (int i = 0; i < DirectionVectors.Length; i++)
+            {
+                var (vq, vr) = DirectionVectors[i];
+                int vs = -vq - vr;
+                int dot = dq * vq + dr * vr + ds * vs;
+                if (dot > bestDot)
+                {
+                    bestDot = dot;
+                    bestIndex = i;
+                }
+            }
+            return (HexDirection)bestIndex;
+        }
+
+        /// <summary>
         /// The tile one step away from (col, row) in the given direction (not bounds-checked).
         /// </summary>
         public (int col, int row) GetNeighborCoords(int col, int row, HexDirection direction)

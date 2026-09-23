@@ -26,6 +26,7 @@ namespace SagesOfOzvaram.Combat
         public bool HitsAllAdjacent { get; }          // true = hits every adjacent enemy instead of one chosen target (e.g. Sword Spin)
 
         public float BaseAccuracy { get; }            // 0-1 hit chance before the attacker's Accuracy stat is applied
+        public float AccuracyFalloffPerTile { get; }  // accuracy lost per tile of distance beyond range 1 (e.g. Throw Dagger); 0 = no falloff, accuracy is flat regardless of how far within Range the target is
 
         public int KnockbackBase { get; }             // tiles pushed back on hit, 0 = none
         public int KnockbackDamagePerTile { get; }    // +1 extra tile per this many damage dealt; 0 = no scaling
@@ -41,7 +42,12 @@ namespace SagesOfOzvaram.Combat
         public float BonusDamageVsGuardingMultiplier { get; } // damage multiplier when the target is Guarding; 1 = no bonus
         public int AttackerAdvanceTiles { get; }              // tiles the ATTACKER moves toward the target on use (e.g. a thrust); 0 = none.
                                                                // Blocked if an enemy already occupies the tile - not enforced yet, no targeting/movement engine exists.
-        public bool ConsumesWeapon { get; }                   // true for thrown/single-use attacks (e.g. Throw Knife) that remove the weapon from Inventory on use
+        public bool ConsumesWeapon { get; }                   // true for thrown/single-use attacks (e.g. Throw Dagger) that remove the weapon from Inventory on use
+
+        public bool CanInflictKnockdown { get; }               // true if this move can inflict Knocked Down (see GetKnockdownChance)
+        public float KnockdownChanceIfStrongerSTR { get; }     // chance (0-1) when attacker.Strength > target.Strength + target.Defense (Defense stands in for Armor - no separate Armor stat exists yet)
+        public float KnockdownChanceOtherwise { get; }         // chance (0-1) otherwise
+        public int KnockdownStandUpAPCost { get; }              // AP the target must spend to stand back up, if this move knocks it down
 
         // Non-attack effect fields, added for the generic support/utility spells (GDD §4.1
         // Generic Spells) - a Move's damage-formula fields above stay 0/unset for these, since
@@ -67,7 +73,9 @@ namespace SagesOfOzvaram.Combat
                     float bonusDamageVsGuardingMultiplier = 1f, int attackerAdvanceTiles = 0,
                     bool consumesWeapon = false, bool hitsAllAdjacent = false,
                     int healFlat = 0, float healPercentMaxHP = 0f, int grantedAP = 0,
-                    int statusDurationTurns = 0, bool targetsAllies = false)
+                    int statusDurationTurns = 0, bool targetsAllies = false,
+                    bool canInflictKnockdown = false, float knockdownChanceIfStrongerStr = 0f, float knockdownChanceOtherwise = 0f,
+                    int knockdownStandUpApCost = 1, float accuracyFalloffPerTile = 0f)
         {
             Name = name;
             Description = description;
@@ -75,6 +83,7 @@ namespace SagesOfOzvaram.Combat
             MPCost = mpCost;
             Range = range;
             BaseAccuracy = baseAccuracy;
+            AccuracyFalloffPerTile = accuracyFalloffPerTile;
             BaseDamage = baseDamage;
             StrengthDivisor = strengthDivisor;
             IntelligenceDivisor = intelligenceDivisor;
@@ -96,13 +105,21 @@ namespace SagesOfOzvaram.Combat
             GrantedAP = grantedAP;
             StatusDurationTurns = statusDurationTurns;
             TargetsAllies = targetsAllies;
+            CanInflictKnockdown = canInflictKnockdown;
+            KnockdownChanceIfStrongerSTR = knockdownChanceIfStrongerStr;
+            KnockdownChanceOtherwise = knockdownChanceOtherwise;
+            KnockdownStandUpAPCost = knockdownStandUpApCost;
         }
 
         /// <summary>
-        /// Damage this move deals when used by the given attacker: BaseDamage + Strength/StrengthDivisor
+        /// Damage this move deals when used by the given attacker: a flat base + Strength/StrengthDivisor
         /// + Intelligence/IntelligenceDivisor, multiplied if the target is Guarding and this move has a
         /// bonus for that, plus a weapon specialist's bonus INT damage if sourceWeapon grants one (e.g.
-        /// the Cleric's Mace bonus). Does NOT apply crits or the target's DEF/RES - see GetHitChance and
+        /// the Cleric's Mace bonus). The flat base is sourceWeapon.AttackPower if that weapon has been
+        /// migrated to the per-weapon power system (see Weapon.AttackPower) - different weapons of the
+        /// same kind (a Rusty vs. a Steel Dagger) hit differently despite sharing the same move - and
+        /// falls back to this move's own BaseDamage otherwise (racial moves always use BaseDamage, since
+        /// they have no weapon). Does NOT apply crits or the target's DEF/RES - see GetHitChance and
         /// BaseUnit.TakeDamage for those.
         /// </summary>
         public int GetDamage(BaseUnit attacker, BaseUnit target = null, Weapon sourceWeapon = null)
@@ -111,7 +128,8 @@ namespace SagesOfOzvaram.Combat
             if (StrengthDivisor > 0f) bonus += attacker.Strength / StrengthDivisor;
             if (IntelligenceDivisor > 0f) bonus += attacker.Intelligence / IntelligenceDivisor;
 
-            float total = BaseDamage + bonus;
+            float flatBase = sourceWeapon?.AttackPower ?? BaseDamage;
+            float total = flatBase + bonus;
 
             if (target != null && target.IsGuarding && BonusDamageVsGuardingMultiplier > 1f)
                 total *= BonusDamageVsGuardingMultiplier;
@@ -127,16 +145,54 @@ namespace SagesOfOzvaram.Combat
         /// weapon specialist's flat accuracy bonus if sourceWeapon grants one (e.g. the Hunter's Bow
         /// bonus or the Cleric's Mace bonus).
         /// </summary>
-        public float GetHitChance(BaseUnit attacker, Weapon sourceWeapon = null)
+        /// <summary>distanceTiles is the actual hex distance to the target this use (0/unknown = no falloff applied) - only matters for a move with AccuracyFalloffPerTile set (e.g. Throw Dagger).</summary>
+        public float GetHitChance(BaseUnit attacker, Weapon sourceWeapon = null, int distanceTiles = 0)
         {
             float chance = BaseAccuracy + attacker.Accuracy * 0.001f;
 
             if (IsSpecialist(attacker, sourceWeapon))
                 chance += sourceWeapon.SpecialistAccuracyBonus;
 
+            // Falls off the further the target actually is, beyond the first (adjacent) tile.
+            if (AccuracyFalloffPerTile > 0f && distanceTiles > 1)
+                chance -= AccuracyFalloffPerTile * (distanceTiles - 1);
+
+            // Knocked Down: -75% accuracy on anything the attacker attempts while prone.
+            if (attacker.IsKnockedDown)
+                chance *= 0.25f;
+
             // No upper clamp - accuracy is allowed to exceed 100%, giving buffer room before
             // accuracy-lowering effects (e.g. Blind) actually bring a hit below guaranteed.
             return Math.Max(chance, 0f);
+        }
+
+        /// <summary>
+        /// Chance (0-1) this hit's InflictsStatusEffect actually lands: StatusEffectChance
+        /// normally, but Bleeding specifically is blocked outright (0%) if the target's Defense
+        /// beats the attacker's Strength - tough enough armor/hide shrugs off a hit that would
+        /// otherwise draw blood. Doesn't affect other statuses (e.g. Stunned).
+        /// </summary>
+        public float GetStatusEffectChance(BaseUnit attacker, BaseUnit target)
+        {
+            if (InflictsStatusEffect == "Bleeding" && target.Defense > attacker.Strength)
+                return 0f;
+
+            return StatusEffectChance;
+        }
+
+        /// <summary>
+        /// Chance (0-1) this hit knocks the target down: KnockdownChanceIfStrongerSTR if the
+        /// attacker's Strength beats the target's Strength + Defense (Defense standing in for
+        /// Armor), KnockdownChanceOtherwise if not. 0 if this move can't inflict Knockdown at all.
+        /// </summary>
+        public float GetKnockdownChance(BaseUnit attacker, BaseUnit target)
+        {
+            if (!CanInflictKnockdown)
+                return 0f;
+
+            return attacker.Strength > target.Strength + target.Defense
+                ? KnockdownChanceIfStrongerSTR
+                : KnockdownChanceOtherwise;
         }
 
         private static bool IsSpecialist(BaseUnit attacker, Weapon sourceWeapon)

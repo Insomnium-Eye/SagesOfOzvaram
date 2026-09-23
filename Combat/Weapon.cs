@@ -12,6 +12,24 @@ namespace SagesOfOzvaram.Combat
         public List<Move> Attacks { get; }
 
         /// <summary>
+        /// This specific weapon's flat power - e.g. a Rusty Dagger and a Steel Dagger both grant
+        /// the same Stab move but hit for different amounts, because THEY (not the move) carry
+        /// this number. Replaces the move's own BaseDamage for every attack this weapon grants
+        /// (see Move.GetDamage); the wielder's Strength/Intelligence still adds on top via the
+        /// move's own StrengthDivisor/IntelligenceDivisor, same as before. Null means this
+        /// weapon hasn't been migrated to the per-weapon power system yet, so its moves fall
+        /// back to their own BaseDamage in the meantime.
+        /// </summary>
+        public int? AttackPower { get; set; }
+
+        /// <summary>
+        /// Inventory space this weapon takes up (see BaseUnit.InventoryWeightCapacity). Small
+        /// one-handed weapons (Dagger, Pistol) are 2; larger one-handed weapons (Sword, Mace,
+        /// Staff, Bow, Shield) are 3.
+        /// </summary>
+        public int Weight { get; set; }
+
+        /// <summary>
         /// This weapon's broad category, if a specialization cares about it (e.g. Dagger).
         /// Null for weapons no class specializes in yet.
         /// </summary>
@@ -19,7 +37,7 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>
         /// Bonus attacks only available to a unit specialized in this weapon's Type (see
-        /// BaseUnit.WeaponSpecializations) - e.g. only a Dagger specialist gets Throw Knife,
+        /// BaseUnit.WeaponSpecializations) - e.g. only a Dagger specialist gets Throw Dagger,
         /// even though anyone can carry a Dagger and Stab with it.
         /// </summary>
         public List<Move> SpecialistAttacks { get; } = new List<Move>();

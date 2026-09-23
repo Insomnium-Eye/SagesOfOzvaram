@@ -17,7 +17,8 @@ namespace SagesOfOzvaram
         private enum GameState
         {
             CharacterSelect,
-            Playing
+            Playing,
+            MatchOver
         }
 
         private GraphicsDeviceManager _graphics;
@@ -36,6 +37,7 @@ namespace SagesOfOzvaram
         private Vector2 _cameraTarget;
         private float _cameraZoomTarget = 1f;
         private bool _hasAutoAdvancedThisTurn = false;
+        private bool _hasAiActedThisTurn = false;
 
         // UI
         private SpriteFont _font;
@@ -89,10 +91,30 @@ namespace SagesOfOzvaram
         private bool _turnMenuActive = false;
         private bool _viewingMap = false;
 
+        // Stunned turn (replaces the normal turn menu entirely while _playerUnit.IsStunned - see
+        // HandleStunnedTurnInput). Not shown at all while Fainted - that's a forced, no-choice skip.
+        private static readonly string[] StunnedMenuOptions = { "Break Stun", "End Turn" };
+        private int _stunnedMenuIndex = 0;
+
+        // Match end (FFA - each player is a "team" of one; last unit not Fainted wins)
+        private BaseUnit _matchWinner;
+
         // Attack submenu (opened from the "Attack" turn-menu option)
         private List<string> _attackMenuLabels = new List<string>();
+        private List<(Move Move, Weapon SourceWeapon)> _attackMenuMoves = new List<(Move, Weapon)>();
         private int _attackMenuIndex = 0;
         private bool _attackMenuActive = false;
+
+        // Target selection (opened after confirming a single-target move in the attack submenu -
+        // a HitsAllAdjacent move like Sword Spin skips this and resolves immediately)
+        private bool _targetingModeActive = false;
+        private Move _pendingMove;
+        private Weapon _pendingSourceWeapon;
+        private List<BaseUnit> _targetCandidates = new List<BaseUnit>();
+
+        // Combat log - a short-lived line summarizing the last attack's outcome
+        private string _combatLogMessage = "";
+        private float _combatLogTimer = 0f;
 
         // Movement mode (opened from the "Move" turn-menu option)
         private bool _movementModeActive = false;
@@ -140,6 +162,7 @@ namespace SagesOfOzvaram
             _cameraTarget = _turnSystem.CurrentUnit.Position;
             _cameraZoomTarget = 2.5f;  // Zoom in on units
             _hasAutoAdvancedThisTurn = false;
+            _hasAiActedThisTurn = false;
 
             // Renderer
             _renderer = new HexGridRenderer(_hexGrid, _spriteBatch, GraphicsDevice);
@@ -528,8 +551,25 @@ namespace SagesOfOzvaram
             {
                 HandleCharacterSelectInput(keyboardState, mouseState);
             }
+            else if (_gameState == GameState.MatchOver)
+            {
+                // Nothing to update - just showing the result screen (see Draw).
+            }
             else
             {
+                // FFA win check - each player is a "team" of one; the moment only one unit is
+                // left not Fainted, the match is over (GDD-pending: revisit once real teams exist).
+                var stillStanding = _units.Where(u => !u.IsFainted).ToList();
+                if (stillStanding.Count <= 1)
+                {
+                    _matchWinner = stillStanding.Count == 1 ? stillStanding[0] : null;
+                    _gameState = GameState.MatchOver;
+                    _previousKeyboardState = keyboardState;
+                    _previousMouseState = mouseState;
+                    base.Update(gameTime);
+                    return;
+                }
+
                 // Toggle console with grave key (~)
                 if (keyboardState.IsKeyDown(Keys.OemTilde) && !_previousKeyboardState.IsKeyDown(Keys.OemTilde))
                 {
@@ -546,6 +586,9 @@ namespace SagesOfOzvaram
                     // Update turn system
                     _turnSystem.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
 
+                    if (_combatLogTimer > 0f)
+                        _combatLogTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
+
                     // Smooth camera pan to current unit
                     if (_turnSystem.TransitioningCamera)
                     {
@@ -560,15 +603,22 @@ namespace SagesOfOzvaram
                     }
                     else
                     {
-                        // Camera transition complete, allow next auto-advance
+                        // Camera transition complete, allow this unit's one AI move + the auto-advance that ends its turn
                         _hasAutoAdvancedThisTurn = false;
+                        _hasAiActedThisTurn = false;
                     }
 
                     bool isPlayerTurn = _turnSystem.CurrentUnit == _playerUnit;
 
                     if (isPlayerTurn && !_turnSystem.TransitioningCamera)
                     {
-                        if (_viewingMap)
+                        if (_playerUnit.IsStunned)
+                        {
+                            // Stunned overrides everything else - the only choices are trying to
+                            // Break Stun or ending the turn without acting (see HandleStunnedTurnInput).
+                            HandleStunnedTurnInput(keyboardState, mouseState);
+                        }
+                        else if (_viewingMap)
                         {
                             // Free-look mode: WASD panning happens below in HandleMapControls.
                             // E snaps the camera back and reopens the menu.
@@ -578,6 +628,10 @@ namespace SagesOfOzvaram
                         else if (_attackMenuActive)
                         {
                             HandleAttackMenuInput(keyboardState, mouseState);
+                        }
+                        else if (_targetingModeActive)
+                        {
+                            HandleTargetingInput(keyboardState, mouseState);
                         }
                         else if (_movementModeActive)
                         {
@@ -603,8 +657,19 @@ namespace SagesOfOzvaram
                         _turnMenuActive = false;
                         _viewingMap = false;
                         _attackMenuActive = false;
+                        _targetingModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
+
+                        // Simple placeholder AI (GDD-pending): walk toward the player once per
+                        // turn, so there's something in range to test attacks/spells against.
+                        // Runs as soon as the camera transition settles, well before the
+                        // 3-second auto-advance below ends the turn.
+                        if (!isPlayerTurn && !_hasAiActedThisTurn)
+                        {
+                            _hasAiActedThisTurn = true;
+                            RunSimpleAI(_turnSystem.CurrentUnit);
+                        }
 
                         // Auto-advance to next unit after 3 seconds (once per unit, non-player units only)
                         if (!isPlayerTurn && _turnSystem.UnitTurnElapsed > 3f && !_hasAutoAdvancedThisTurn)
@@ -859,12 +924,77 @@ namespace SagesOfOzvaram
             else if (option == "Move")
             {
                 _turnMenuActive = false;
-                OpenMovementMode();
+
+                // The slot displays as "Stand Up" (see DrawTurnMenu) while Knocked Down, since
+                // movement is disabled until the unit spends the AP to get back up.
+                if (_playerUnit.IsKnockedDown)
+                {
+                    _playerUnit.TryStandUp();
+                    _turnMenuIndex = 0;
+                    _turnMenuActive = true;
+                }
+                else
+                {
+                    OpenMovementMode();
+                }
             }
             else if (option == "Cards")
             {
                 _turnMenuActive = false;
                 OpenCardMenu();
+            }
+        }
+
+        /// <summary>
+        /// Handle input while the player's unit is Stunned (but not Fainted): W/S or mouse-hover
+        /// to highlight "Break Stun" / "End Turn", click or E to confirm. No other menu is
+        /// reachable from here - see the isPlayerTurn dispatch in Update.
+        /// </summary>
+        private void HandleStunnedTurnInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
+                _stunnedMenuIndex = (_stunnedMenuIndex + 1) % StunnedMenuOptions.Length;
+            if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
+                _stunnedMenuIndex = (_stunnedMenuIndex - 1 + StunnedMenuOptions.Length) % StunnedMenuOptions.Length;
+
+            Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, StunnedMenuOptions.Length);
+
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                if (optionRects[i].Contains(mouseState.X, mouseState.Y))
+                {
+                    _stunnedMenuIndex = i;
+                    if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+                        ConfirmStunnedMenuSelection();
+                }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+                ConfirmStunnedMenuSelection();
+        }
+
+        private void ConfirmStunnedMenuSelection()
+        {
+            string option = StunnedMenuOptions[_stunnedMenuIndex];
+
+            if (option == "Break Stun")
+            {
+                // No-op (stays on this menu) if unaffordable, on cooldown, or not a Summoner
+                // unit - TryBreakStun reports which via its own bool, nothing more to show yet.
+                if (_playerUnit.TryBreakStun())
+                {
+                    _stunnedMenuIndex = 0;
+                    _turnMenuIndex = 0;
+                    _turnMenuActive = true; // free to act normally with whatever AP remains
+                }
+            }
+            else if (option == "End Turn")
+            {
+                _playerUnit.ConsumeStunTurn();
+                _stunnedMenuIndex = 0;
+                _turnSystem.NextUnit();
+                _cameraTarget = _turnSystem.CurrentUnit.Position;
             }
         }
 
@@ -1032,14 +1162,29 @@ namespace SagesOfOzvaram
         /// </summary>
         private void TryMoveTowards((int col, int row) destination)
         {
-            var start = _hexGrid.WorldToHex(_playerUnit.Position);
-            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, _playerUnit.TilesPerAP, GetOccupiedTiles(_playerUnit));
+            MoveUnitTowards(_playerUnit, destination);
+
+            _movementModeActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        /// <summary>
+        /// Move `unit` toward `destination` as far as its current AP affords along the
+        /// shortest path (see Pathfinder.FindPath) - stops as far along the path as it can
+        /// still pay for, using the exact integer charge formula rather than Dijkstra's float
+        /// approximation. No-op if there's no path at all (impassable/occupied/unreachable) or
+        /// the unit can't afford even the first step. Shared by the player's click-to-move
+        /// (TryMoveTowards) and the placeholder AI (RunSimpleAI).
+        /// </summary>
+        private void MoveUnitTowards(BaseUnit unit, (int col, int row) destination)
+        {
+            var start = _hexGrid.WorldToHex(unit.Position);
+            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, unit.TilesPerAP, GetOccupiedTiles(unit));
             if (path == null || path.Count == 0)
                 return;
 
-            // Walk the path tile by tile, stopping at the last one the unit can still afford
-            // (using the exact integer charge formula, not Dijkstra's float approximation).
-            int tilesPerAP = _playerUnit.TilesPerAP;
+            int tilesPerAP = unit.TilesPerAP;
             int tiles = 0, water = 0, lastAffordableIndex = -1;
             for (int i = 0; i < path.Count; i++)
             {
@@ -1048,7 +1193,7 @@ namespace SagesOfOzvaram
                 int candidateTiles = tiles + 1;
                 int candidateWater = water + (isWater ? 1 : 0);
                 int candidateApCost = (int)Math.Ceiling(candidateTiles / (float)tilesPerAP) + candidateWater;
-                if (candidateApCost > _playerUnit.CurrentAP)
+                if (candidateApCost > unit.CurrentAP)
                     break;
 
                 tiles = candidateTiles;
@@ -1062,12 +1207,64 @@ namespace SagesOfOzvaram
             var actualDestination = path[lastAffordableIndex];
             int apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
 
-            _playerUnit.Position = _hexGrid.HexToWorld(actualDestination.col, actualDestination.row);
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - apCost);
+            unit.Position = _hexGrid.HexToWorld(actualDestination.col, actualDestination.row);
+            unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
+        }
 
-            _movementModeActive = false;
-            _turnMenuIndex = 0;
-            _turnMenuActive = true;
+        /// <summary>
+        /// Placeholder AI (GDD-pending - no real decision-making yet): walk as close to the
+        /// player as this turn's AP allows, so melee/ranged moves have something to hit while
+        /// the attack system is being tested. Picks whichever tile adjacent to the player is
+        /// reachable with the shortest path, and moves toward it; doesn't attack yet. Also
+        /// handles Stun (always attempts Break Stun) and Knockdown (always stands back up).
+        /// </summary>
+        private void RunSimpleAI(BaseUnit aiUnit)
+        {
+            if (aiUnit == _playerUnit || !aiUnit.IsAlive)
+                return;
+
+            // Stunned: always attempt to Break Stun. If it fails (unaffordable/on cooldown),
+            // that's this turn's one action - nothing else to try. If it succeeds, fall through
+            // and still use whatever AP remains to move, same as a normal turn would.
+            if (aiUnit.IsStunned)
+            {
+                if (!aiUnit.TryBreakStun())
+                {
+                    aiUnit.ConsumeStunTurn();
+                    return;
+                }
+            }
+
+            // Knocked Down: stand up instead of trying (and failing) to move this turn.
+            if (aiUnit.IsKnockedDown)
+            {
+                aiUnit.TryStandUp();
+                return;
+            }
+
+            var playerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var start = _hexGrid.WorldToHex(aiUnit.Position);
+            var occupied = GetOccupiedTiles(aiUnit);
+
+            (int col, int row)? bestTile = null;
+            int bestPathLength = int.MaxValue;
+
+            foreach (var tile in _hexGrid.GetNeighbors(playerHex.col, playerHex.row))
+            {
+                var path = Pathfinder.FindPath(_hexGrid, _map, start, tile, aiUnit.TilesPerAP, occupied);
+                if (path == null)
+                    continue;
+
+                if (path.Count < bestPathLength)
+                {
+                    bestPathLength = path.Count;
+                    bestTile = tile;
+                }
+            }
+
+            // No reachable tile next to the player (e.g. boxed in) - just sit tight this turn.
+            if (bestTile.HasValue)
+                MoveUnitTowards(aiUnit, bestTile.Value);
         }
 
         private void CancelMovementMode()
@@ -1085,7 +1282,8 @@ namespace SagesOfOzvaram
         /// </summary>
         private void OpenAttackMenu()
         {
-            _attackMenuLabels = _playerUnit.AvailableMovesWithSource
+            _attackMenuMoves = _playerUnit.AvailableMovesWithSource.ToList();
+            _attackMenuLabels = _attackMenuMoves
                 .Select(entry => FormatAttackLabel(entry.Move, entry.SourceWeapon))
                 .ToList();
             _attackMenuLabels.Add("Back");
@@ -1145,9 +1343,109 @@ namespace SagesOfOzvaram
                 _attackMenuActive = false;
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
+                return;
             }
-            // Actual moves: no targeting/damage-resolution system exists yet, so picking one
-            // is currently a no-op (the submenu just stays open).
+
+            var (move, sourceWeapon) = _attackMenuMoves[_attackMenuIndex];
+
+            int apCost = _playerUnit.GetEffectiveAPCost(move, sourceWeapon);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+                return; // can't afford it - stay on the submenu
+
+            var validTargets = GetValidAttackTargets(move);
+            if (validTargets.Count == 0)
+                return; // nothing alive in range to hit
+
+            _pendingMove = move;
+            _pendingSourceWeapon = sourceWeapon;
+
+            if (move.HitsAllAdjacent)
+            {
+                // Hits everyone adjacent automatically - no target to pick.
+                ExecutePendingAttack(null);
+                return;
+            }
+
+            _targetCandidates = validTargets;
+            _attackMenuActive = false;
+            _targetingModeActive = true;
+        }
+
+        /// <summary>Every living unit other than the player's, within the move's Range of the player's current position.</summary>
+        private List<BaseUnit> GetValidAttackTargets(Move move)
+        {
+            var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            return _units.Where(u => u != _playerUnit && u.IsAlive
+                    && _hexGrid.GetDistance(attackerHex.col, attackerHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= move.Range)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Resolve _pendingMove against the given target (null only for a HitsAllAdjacent move,
+        /// which ignores it) via AttackResolver, log the outcome, and return to the turn menu.
+        /// </summary>
+        private void ExecutePendingAttack(BaseUnit target)
+        {
+            var outcomes = AttackResolver.Resolve(_playerUnit, target, _pendingMove, _pendingSourceWeapon, _hexGrid, _map, _units);
+            _combatLogMessage = BuildCombatLogMessage(_pendingMove, outcomes);
+            _combatLogTimer = 4f;
+
+            _targetingModeActive = false;
+            _attackMenuActive = false;
+            _pendingMove = null;
+            _pendingSourceWeapon = null;
+            _targetCandidates.Clear();
+
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        private string BuildCombatLogMessage(Move move, List<AttackOutcome> outcomes)
+        {
+            if (outcomes.Count == 0)
+                return $"{_playerUnit.Name} used {move.Name}, but there was nothing to hit.";
+
+            var parts = outcomes.Select(o =>
+            {
+                if (!o.Hit)
+                    return $"missed {o.Target.Name}";
+
+                string crit = o.Crit ? " (crit!)" : "";
+                string status = o.StatusApplied != null ? $", inflicting {o.StatusApplied}" : "";
+                string fainted = o.TargetFainted ? " - fainted!" : "";
+                return $"hit {o.Target.Name} for {o.Damage}{crit}{status}{fainted}";
+            });
+
+            return $"{_playerUnit.Name} used {move.Name}: {string.Join("; ", parts)}";
+        }
+
+        /// <summary>Handle input while picking a target for _pendingMove: click a highlighted unit to attack it, E to cancel back to the attack submenu.</summary>
+        private void HandleTargetingInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelTargeting();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                var target = _targetCandidates.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == clickedHex);
+                if (target != null)
+                    ExecutePendingAttack(target);
+            }
+        }
+
+        private void CancelTargeting()
+        {
+            _targetingModeActive = false;
+            _pendingMove = null;
+            _pendingSourceWeapon = null;
+            _targetCandidates.Clear();
+            _attackMenuIndex = 0;
+            _attackMenuActive = true;
         }
 
         /// <summary>
@@ -1257,6 +1555,16 @@ namespace SagesOfOzvaram
                 return;
             }
 
+            if (_gameState == GameState.MatchOver)
+            {
+                _spriteBatch.Begin();
+                DrawMatchOver(viewportSize);
+                _spriteBatch.End();
+
+                base.Draw(gameTime);
+                return;
+            }
+
             // Draw grid with camera transform
             _spriteBatch.Begin(transformMatrix: _renderer.GetCameraMatrixPublic(viewportSize));
 
@@ -1278,6 +1586,13 @@ namespace SagesOfOzvaram
             {
                 DrawMovementRange();
                 DrawMovementPathPreview(viewportSize);
+            }
+
+            // Highlight every valid target for the pending move - click one to attack it
+            if (_targetingModeActive)
+            {
+                foreach (var candidate in _targetCandidates)
+                    DrawHexFilled(candidate.Position, new Color(220, 40, 40, 140), Color.Red);
             }
 
             // Draw hover hex
@@ -1317,6 +1632,15 @@ namespace SagesOfOzvaram
                 }
 
                 DrawFacingIndicator(unit);
+
+                if (_font != null)
+                {
+                    string hpText = $"{unit.Name}: {unit.HP}/{unit.MaxHP}";
+                    Vector2 textSize = _font.MeasureString(hpText) * 0.4f;
+                    Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 40f);
+                    Color hpColor = unit.IsFainted ? Color.Gray : Color.White;
+                    _spriteBatch.DrawString(_font, hpText, textPos, hpColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+                }
             }
 
             _spriteBatch.End();
@@ -1337,6 +1661,9 @@ namespace SagesOfOzvaram
                 if (_turnMenuActive)
                     DrawTurnMenu(viewportSize);
 
+                if (_turnSystem.CurrentUnit == _playerUnit && _playerUnit.IsStunned)
+                    DrawStunnedMenu(viewportSize);
+
                 if (_attackMenuActive)
                     DrawAttackMenu(viewportSize);
 
@@ -1345,6 +1672,11 @@ namespace SagesOfOzvaram
 
                 if (_movementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to move - E to cancel");
+
+                if (_targetingModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted target to attack - E to cancel");
+                else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
+                    DrawBottomHint(viewportSize, _combatLogMessage);
 
                 if (_cardMenuActive)
                     DrawCardMenuOverlay(viewportSize);
@@ -1404,15 +1736,41 @@ namespace SagesOfOzvaram
                 Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
                 Color textColor = selected ? Color.Black : Color.White;
 
-                // The "End" slot displays as "Guard" whenever the unit can afford to use it
+                // The "End" slot displays as "Guard" whenever the unit can afford to use it;
+                // "Move" displays as "Stand Up" while Knocked Down, since movement is disabled.
                 string label = TurnMenuOptions[i] == "End" && _playerUnit.CurrentAP >= _playerUnit.GuardAPCost
                     ? "Guard"
-                    : TurnMenuOptions[i];
+                    : TurnMenuOptions[i] == "Move" && _playerUnit.IsKnockedDown
+                        ? "Stand Up"
+                        : TurnMenuOptions[i];
 
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
                 _spriteBatch.DrawString(_font, label,
                     new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
             }
+        }
+
+        /// <summary>The restricted menu shown while the player's unit is Stunned - "Break Stun" (3 AP, off cooldown, Summoner units only) or ending the turn without acting.</summary>
+        private void DrawStunnedMenu(Vector2 viewportSize)
+        {
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, StunnedMenuOptions.Length);
+
+            for (int i = 0; i < StunnedMenuOptions.Length; i++)
+            {
+                bool selected = i == _stunnedMenuIndex;
+                Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
+                Color textColor = selected ? Color.Black : Color.White;
+
+                string label = StunnedMenuOptions[i];
+                if (label == "Break Stun")
+                    label += $" ({BaseUnit.StunBreakAPCost} AP)";
+
+                _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
+                _spriteBatch.DrawString(_font, label,
+                    new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
+            }
+
+            DrawBottomHint(viewportSize, "Stunned!");
         }
 
         private void DrawAttackMenu(Vector2 viewportSize)
@@ -2121,6 +2479,16 @@ namespace SagesOfOzvaram
             _spriteBatch.Draw(_whitePixel, boxRect, new Color(0, 0, 0, (int)(180 * alpha)));
 
             _spriteBatch.DrawString(_font, text, textPos, Color.White * alpha);
+        }
+
+        /// <summary>FFA result screen - the last unit standing (not Fainted) wins, or a draw if everyone faints on the same check.</summary>
+        private void DrawMatchOver(Vector2 viewportSize)
+        {
+            string text = _matchWinner != null ? $"{_matchWinner.Name} Wins!" : "Draw!";
+            Vector2 textSize = _font.MeasureString(text) * 2f;
+            Vector2 textPos = (viewportSize - textSize) / 2f;
+
+            _spriteBatch.DrawString(_font, text, textPos, Color.Gold, 0f, Vector2.Zero, 2f, SpriteEffects.None, 0f);
         }
 
         private void DrawConsole()

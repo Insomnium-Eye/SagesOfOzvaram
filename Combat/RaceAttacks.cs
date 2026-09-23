@@ -12,21 +12,26 @@ namespace SagesOfOzvaram.Combat
         private static readonly Dictionary<Race, Move> InnateMoves = new Dictionary<Race, Move>
         {
             [Race.Human] = new Move(
-                "Punch", "A quick jab that knocks the target back further the harder it lands.",
+                "Punch", "A quick jab - very little behind it, but reliable, and a strong enough puncher can put the target flat on their back.",
                 apCost: 2, mpCost: 0, range: 1,
                 baseAccuracy: 0.95f, baseDamage: 1, strengthDivisor: 5f,
-                knockbackBase: 1, knockbackDamagePerTile: 5),
+                critChance: 0.01f, critMultiplier: 3f,
+                knockbackBase: 1, knockbackDamagePerTile: 5,
+                canInflictKnockdown: true, knockdownChanceIfStrongerStr: 0.80f, knockdownChanceOtherwise: 0.02f,
+                knockdownStandUpApCost: 1),
 
             [Race.Lethios] = new Move(
-                "Bite", "A vicious bite - easy to miss, but hits hard and causes heavy bleeding.",
+                "Bite", "A vicious, hard-to-land bite - but when it connects, it's devastating and draws heavy blood.",
                 apCost: 2, mpCost: 0, range: 1,
-                baseAccuracy: 0.40f, baseDamage: 5, strengthDivisor: 3f,
+                baseAccuracy: 0.40f, baseDamage: 12, strengthDivisor: 2f,
+                critChance: 0.25f, critMultiplier: 3f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Moderate),
 
             [Race.Vectium] = new Move(
-                "Swipe", "A precise claw strike - more reliable than a bite, still draws blood.",
+                "Swipe", "A precise claw strike - far more reliable than a bite and quicker to find a vital spot, though it draws less blood.",
                 apCost: 2, mpCost: 0, range: 1,
                 baseAccuracy: 0.80f, baseDamage: 3, strengthDivisor: 1.5f,
+                critChance: 0.40f, critMultiplier: 3f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Minor),
 
             // Summoned-creature races (not playable heroes) get their attack list the same way -

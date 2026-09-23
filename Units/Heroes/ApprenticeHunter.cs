@@ -22,11 +22,10 @@ namespace SagesOfOzvaram.Units.Heroes
             MaxMP = 8;       // skill-based, not a caster
             CurrentMP = 8;
 
-            Inventory.Add(WeaponCatalog.Longbow);
-            Inventory.Add(WeaponCatalog.FlintlockPistol);
-            Inventory.Add(WeaponCatalog.Dagger);
-            EquippedWeapon = Inventory[0];
-            // Dagger specialization (unlocking Throw Knife) comes from HeroClass.Hunter via
+            TryAddToInventory(WeaponCatalog.Longbow);
+            TryAddToInventory(WeaponCatalog.FlintlockPistol);
+            TryAddToInventory(WeaponCatalog.Dagger);
+            // Dagger specialization (unlocking Throw Dagger) comes from HeroClass.Hunter via
             // ClassCatalog - shared by every Hunter, not set per-instance here.
         }
     }

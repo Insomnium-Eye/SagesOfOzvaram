@@ -83,11 +83,25 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>
         /// Runs whenever a unit's turn starts (a normal advance or the first unit of a fresh
-        /// Turn): ticks bleed, refills AP, and clears any Guard stance from their last turn.
+        /// Turn): ticks bleed, ticks the Break Stun cooldown, refills AP, and clears any Guard
+        /// stance from their last turn. A Fainted unit skips its turn outright instead - no AP,
+        /// no choices, forced every time until HP recovers (see BaseUnit.IsFainted). A Stunned
+        /// (but not Fainted) unit still gets AP like normal - its turn is limited to just
+        /// attempting to Break Stun or ending without acting, which Game1 enforces; if it
+        /// doesn't break free, whoever ends that turn calls ConsumeStunTurn to use up one of
+        /// StunTurnsRemaining.
         /// </summary>
         private void OnUnitTurnStart()
         {
             CurrentUnit.ApplyBleedTick();
+            CurrentUnit.TickStunBreakCooldown();
+
+            if (CurrentUnit.IsFainted)
+            {
+                NextUnit();
+                return;
+            }
+
             CurrentUnit.ResetAP();
             CurrentUnit.ClearGuard();
             CurrentUnit.ResetCardDrawState();
