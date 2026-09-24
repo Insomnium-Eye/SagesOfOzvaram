@@ -11,16 +11,25 @@ namespace SagesOfOzvaram.Combat
     ///
     /// Flat damage is moving from each Move's own BaseDamage to a per-Weapon AttackPower (see
     /// Weapon.AttackPower) - the point being multiple weapons of the same kind (e.g. several
-    /// daggers) can share identical moves but hit for different amounts. Dagger has been
-    /// migrated (its moves' baseDamage is 0, unused); everything else here still carries its
-    /// damage on the move itself until each one gets revisited.
+    /// daggers, or several swords) can share identical moves but hit for different amounts.
+    /// Dagger and Iron Sword have been migrated (their moves' baseDamage is 0, unused); Staff,
+    /// Mace, Bow, Pistol and Shield still carry their damage on the move itself until each one
+    /// gets revisited. Dagger vs. Sword is intentionally asymmetric - Dagger's AttackPower (7)
+    /// and every one of its StrengthDivisors are lower/weaker than Sword's (AttackPower 9,
+    /// divisors 4-5) - daggers should always hit for less and benefit less from Strength than
+    /// swords do, as a rule for every future weapon added to either classification.
     /// </summary>
     public static class WeaponCatalog
     {
         /// <summary>
         /// Sword Slash/Pierce are available to anyone carrying an Iron Sword; Sword Spin is a
         /// SpecialistAttack - only a WeaponType.OneHandedSword specialist (currently just the Warrior)
-        /// can spin and hit everything adjacent.
+        /// can spin and hit everything adjacent. Migrated to Weapon.AttackPower (9 - clearly above
+        /// Dagger's 7) so a future better/worse sword can share these same moves. Slash keeps the
+        /// best StrengthDivisor (the "optimized" single-target technique); Pierce and Spin are both
+        /// a notch behind on raw scaling (their value is in the guard-punish/advance and AOE
+        /// utility respectively) - all three are still clearly stronger STR scaling than any Dagger
+        /// move, per the "dagger < sword in both base damage and STR scaling" rule.
         /// </summary>
         public static Weapon IronSword
         {
@@ -28,18 +37,18 @@ namespace SagesOfOzvaram.Combat
             {
                 var sword = new Weapon("One-Handed Iron Sword",
                     new Move("Sword Slash", "Slashes with the blade - a small chance to miss, an even smaller chance to crit for 3x damage, and a small chance to draw blood.",
-                        apCost: 2, mpCost: 0, range: 1, baseAccuracy: 0.88f, baseDamage: 8, strengthDivisor: 4f,
+                        apCost: 2, mpCost: 0, range: 1, baseAccuracy: 0.88f, baseDamage: 0, strengthDivisor: 4f,
                         critChance: 0.06f, critMultiplier: 3f,
                         inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.15f),
-                    new Move("Sword Pierce", "A forward thrust that advances the attacker a tile - deals less damage than Sword Slash but punishes a Guarding target.",
-                        apCost: 2, mpCost: 0, range: 2, baseAccuracy: 0.88f, baseDamage: 5, strengthDivisor: 5f,
+                    new Move("Sword Pierce", "A forward thrust that advances the attacker a tile - hits a little less hard than Sword Slash but punishes a Guarding target.",
+                        apCost: 2, mpCost: 0, range: 2, baseAccuracy: 0.88f, baseDamage: 0, strengthDivisor: 5f,
                         inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.15f,
                         bonusDamageVsGuardingMultiplier: 1.5f, attackerAdvanceTiles: 1))
-                { Type = WeaponType.OneHandedSword, Weight = 3 };
+                { Type = WeaponType.OneHandedSword, Weight = 3, AttackPower = 9 };
 
                 sword.SpecialistAttacks.Add(new Move("Sword Spin",
-                    "Spins the sword in a full circle, striking everything adjacent at once.",
-                    apCost: 3, mpCost: 0, range: 1, baseAccuracy: 0.85f, baseDamage: 6, strengthDivisor: 3f,
+                    "Spins the sword in a full circle, striking everything adjacent at once - hits a little less hard per target than a focused Slash, but that's the price of hitting everyone.",
+                    apCost: 3, mpCost: 0, range: 1, baseAccuracy: 0.85f, baseDamage: 0, strengthDivisor: 5f,
                     hitsAllAdjacent: true));
 
                 return sword;
