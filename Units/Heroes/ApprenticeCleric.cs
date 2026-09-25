@@ -16,9 +16,10 @@ namespace SagesOfOzvaram.Units.Heroes
             Scale = 0.65f;
             Strength = 6;    // Human: balanced support, per GDD's Cleric flavor
             Accuracy = 8;
+            Evasion = 4;
             Defense = 10;
             Resistance = 12;
-            Intelligence = 12; // Mace specialist - the extra INT-based damage on Mace Bash draws on this
+            Intelligence = 12; // support caster stat - not currently tied to her Mace's flat +3 Light bonus, just her spellcasting
             MaxMP = 15;       // support caster
             CurrentMP = 15;
 

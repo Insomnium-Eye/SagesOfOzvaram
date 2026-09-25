@@ -19,9 +19,80 @@ namespace SagesOfOzvaram.Units
         public int MaxHP { get; set; }
         public int Speed { get; set; }  // Determines turn order
 
-        /// <summary>Tiles this unit can move per AP spent: 1 by default, +1 for every 15 Speed.</summary>
-        public int TilesPerAP => 1 + Speed / 15;
+        /// <summary>% Speed lost to a Slowed effect (e.g. Frost Blast), 0-1. Only meaningful while SpeedReductionTurnsRemaining > 0.</summary>
+        public float SpeedReductionPercent { get; private set; }
+
+        /// <summary>How many of this unit's own upcoming turns the Slowed effect still applies for - ticks down once per turn regardless of anything else, same pattern as StunBreakCooldownRemaining.</summary>
+        public int SpeedReductionTurnsRemaining { get; private set; }
+
+        /// <summary>Speed after any active Slowed reduction - this is what actually drives turn order and TilesPerAP.</summary>
+        public int EffectiveSpeed => SpeedReductionTurnsRemaining > 0
+            ? (int)Math.Round(Speed * (1f - SpeedReductionPercent))
+            : Speed;
+
+        /// <summary>Apply a Slowed effect: takes the stronger of any existing reduction% and the longer of any existing duration, rather than either shortening or weakening one already active.</summary>
+        public void ApplySpeedReduction(float percent, int turns)
+        {
+            SpeedReductionPercent = Math.Max(SpeedReductionPercent, percent);
+            SpeedReductionTurnsRemaining = Math.Max(SpeedReductionTurnsRemaining, turns);
+        }
+
+        public void TickSpeedReduction()
+        {
+            SpeedReductionTurnsRemaining = Math.Max(0, SpeedReductionTurnsRemaining - 1);
+            if (SpeedReductionTurnsRemaining == 0)
+                SpeedReductionPercent = 0f;
+        }
+
+        /// <summary>Tiles this unit can move per AP spent: 1 by default, +1 for every 15 (effective) Speed.</summary>
+        public int TilesPerAP => 1 + EffectiveSpeed / 15;
+
+        /// <summary>Current world position - jumps instantly when set directly. To animate a walk across several tiles instead, use SetMovementPath.</summary>
         public Vector2 Position { get; set; }
+
+        private readonly Queue<Vector2> _movementWaypoints = new Queue<Vector2>();
+        private Vector2 _currentWaypointStart;
+        private float _currentWaypointElapsed;
+        private const float SecondsPerTileMove = 0.2f;
+
+        /// <summary>True while this unit is mid-walk (Position is animating toward SetMovementPath's waypoints).</summary>
+        public bool IsMoving => _movementWaypoints.Count > 0;
+
+        /// <summary>
+        /// Walk toward each of `waypoints` (one world position per tile) in order, animating
+        /// Position smoothly instead of jumping - call UpdateMovementAnimation every frame to
+        /// advance it. Replaces any walk already in progress.
+        /// </summary>
+        public void SetMovementPath(IEnumerable<Vector2> waypoints)
+        {
+            _movementWaypoints.Clear();
+            foreach (var waypoint in waypoints)
+                _movementWaypoints.Enqueue(waypoint);
+
+            _currentWaypointStart = Position;
+            _currentWaypointElapsed = 0f;
+        }
+
+        /// <summary>Advance the current walk animation, if any (no-op otherwise). Call once per frame for every unit.</summary>
+        public void UpdateMovementAnimation(float deltaTime)
+        {
+            if (_movementWaypoints.Count == 0)
+                return;
+
+            _currentWaypointElapsed += deltaTime;
+            float t = Math.Clamp(_currentWaypointElapsed / SecondsPerTileMove, 0f, 1f);
+            Vector2 target = _movementWaypoints.Peek();
+            Position = Vector2.Lerp(_currentWaypointStart, target, t);
+
+            if (t >= 1f)
+            {
+                Position = target;
+                _movementWaypoints.Dequeue();
+                _currentWaypointStart = Position;
+                _currentWaypointElapsed = 0f;
+            }
+        }
+
         public float Scale { get; set; } = 1.0f;  // Per-unit scale multiplier
 
         /// <summary>
@@ -33,18 +104,25 @@ namespace SagesOfOzvaram.Units
 
         // Combat stats (first-pass placeholder defaults; each hero overrides these)
         public int Strength { get; set; } = 10;
+
+        /// <summary>Strength including this unit's racial bonus, if its Race grants one (e.g. Lethios +2) - combat formulas (damage, Knockdown, the Bleeding DEF-gate) read this, not raw Strength.</summary>
+        public int EffectiveStrength => Strength + RaceCatalog.GetModifiers(Race).StrengthBonus;
+
         public int Accuracy { get; set; } = 10;
 
-        /// <summary>Placeholder stat pending a dodge/hit-chance formula that factors in the target's evasion - Move.GetHitChance currently only considers the attacker's Accuracy.</summary>
+        /// <summary>Dodge stat - reduces an incoming attack's hit chance by 0.1%/point, the mirror of Accuracy's own +0.1%/point (see Move.GetHitChance).</summary>
         public int Evasion { get; set; } = 10;
+
+        /// <summary>Evasion including this unit's racial bonus, if its Race grants one (e.g. Vectium +5) - Move.GetHitChance reads this, not raw Evasion.</summary>
+        public int EffectiveEvasion => Evasion + RaceCatalog.GetModifiers(Race).EvasionBonus;
 
         /// <summary>Magic damage stat - magical weapon moves (e.g. the Sorcerer's Arcane Missile) scale with this instead of Strength.</summary>
         public int Intelligence { get; set; } = 10;
 
-        /// <summary>Physical damage reduction, in percentage points (e.g. 20 = -20% physical damage).</summary>
+        /// <summary>Physical damage reduction - raw armor rating, not a direct percentage; see DefenseMitigationPercent for the diminishing-returns curve that converts it.</summary>
         public int Defense { get; set; } = 10;
 
-        /// <summary>Magic damage reduction, in percentage points (e.g. 20 = -20% magic damage).</summary>
+        /// <summary>Magic damage reduction - raw armor rating, not a direct percentage; see ResistanceMitigationPercent for the diminishing-returns curve that converts it.</summary>
         public int Resistance { get; set; } = 10;
 
         public Race Race { get; }
@@ -171,9 +249,26 @@ namespace SagesOfOzvaram.Units
         public void ClearGuard() => IsGuarding = false;
 
         /// <summary>
-        /// The DEF/RES bonus (percentage points) Guard grants right now: the base 20%, or a
-        /// shield's own total if a shield is equipped (shields replace the base amount rather
-        /// than stacking with it - e.g. an Iron Shield makes Guard worth 40% instead of 20%).
+        /// Passive DEF/RES bonus (percentage points) from any shield in Inventory - applies
+        /// always, not just while Guarding (e.g. an Iron Shield's own 15%). Takes the best if
+        /// somehow carrying more than one. 0 if carrying no shield.
+        /// </summary>
+        public float GetPassiveShieldBonusPercent()
+        {
+            float best = 0f;
+            foreach (var weapon in Inventory)
+            {
+                if (weapon.ShieldPassiveDefResBonusPercent.HasValue)
+                    best = Math.Max(best, weapon.ShieldPassiveDefResBonusPercent.Value * 100f);
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// The ADDITIONAL DEF/RES bonus (percentage points) Guard grants right now, on top of
+        /// any passive shield bonus: the base 20%, or a shield's own additional Guard bonus if
+        /// one is carried (shields replace the base amount rather than stacking with it - e.g.
+        /// an Iron Shield's Guard adds 25% on top of its own 15% passive, for 40% total).
         /// </summary>
         public float GetGuardBonusPercent()
         {
@@ -186,11 +281,31 @@ namespace SagesOfOzvaram.Units
             return best;
         }
 
-        /// <summary>Defense including the Guard bonus, if currently guarding.</summary>
-        public float EffectiveDefense => Defense + (IsGuarding ? GetGuardBonusPercent() : 0f);
+        /// <summary>
+        /// Diminishing-returns constant for DEF/RES, same "asymptotic armor" family WoW and
+        /// Skyrim use: mitigation% = 100 * stat / (stat + K). At stat == K, mitigation is
+        /// exactly 50%; no amount of DEF/RES alone ever reaches 100% (unlike a flat clamped
+        /// percentage), so stacking it keeps paying off but with steadily smaller returns.
+        /// </summary>
+        private const float ArmorDiminishingReturnsConstant = 100f;
 
-        /// <summary>Resistance including the Guard bonus, if currently guarding.</summary>
-        public float EffectiveResistance => Resistance + (IsGuarding ? GetGuardBonusPercent() : 0f);
+        /// <summary>Defense including this unit's racial bonus, if its Race grants one (e.g. Lethios +2) - raw armor rating, not yet run through the diminishing curve. Also what the Knockdown formula and Bleeding's DEF-gate read as "Armor."</summary>
+        public int TotalDefense => Defense + RaceCatalog.GetModifiers(Race).DefenseBonus;
+
+        /// <summary>Resistance including this unit's racial bonus, if its Race grants one (e.g. Human +7) - raw, not yet run through the diminishing curve.</summary>
+        public int TotalResistance => Resistance + RaceCatalog.GetModifiers(Race).ResistanceBonus;
+
+        /// <summary>Physical mitigation % from TotalDefense (raw Defense + racial bonus, diminishing returns) - before any shield/Guard bonus, which are still flat adds layered on top.</summary>
+        public float DefenseMitigationPercent => 100f * TotalDefense / (TotalDefense + ArmorDiminishingReturnsConstant);
+
+        /// <summary>Magical mitigation % from TotalResistance (raw Resistance + racial bonus, diminishing returns) - before any shield/Guard bonus, which are still flat adds layered on top.</summary>
+        public float ResistanceMitigationPercent => 100f * TotalResistance / (TotalResistance + ArmorDiminishingReturnsConstant);
+
+        /// <summary>Total physical mitigation %: diminishing-returns Defense, plus any passive shield bonus (always), plus the Guard bonus (only while Guarding) - the shield/Guard layers are still flat percentage-point adds, clamped 0-100 overall.</summary>
+        public float EffectiveDefense => Math.Clamp(DefenseMitigationPercent + GetPassiveShieldBonusPercent() + (IsGuarding ? GetGuardBonusPercent() : 0f), 0f, 100f);
+
+        /// <summary>Total magical mitigation %: diminishing-returns Resistance, plus any passive shield bonus (always), plus the Guard bonus (only while Guarding) - the shield/Guard layers are still flat percentage-point adds, clamped 0-100 overall.</summary>
+        public float EffectiveResistance => Math.Clamp(ResistanceMitigationPercent + GetPassiveShieldBonusPercent() + (IsGuarding ? GetGuardBonusPercent() : 0f), 0f, 100f);
 
         private readonly List<Weapon> _inventory = new List<Weapon>();
 
@@ -248,6 +363,23 @@ namespace SagesOfOzvaram.Units
         /// GetEffectiveAPCost). Null means no weapon is equipped (only the racial move is "free").
         /// </summary>
         public Weapon EquippedWeapon { get; set; }
+
+        private readonly Dictionary<AmmoType, int> _ammo = new Dictionary<AmmoType, int>();
+
+        /// <summary>How many of `type` this unit is carrying. 0 if none.</summary>
+        public int GetAmmo(AmmoType type) => _ammo.TryGetValue(type, out int count) ? count : 0;
+
+        public void AddAmmo(AmmoType type, int amount) => _ammo[type] = GetAmmo(type) + amount;
+
+        /// <summary>Spend `amount` of `type` if there's enough. No-op (returns false) otherwise - a Move requiring ammo it doesn't have is simply unusable, same as unaffordable AP/MP.</summary>
+        public bool TryConsumeAmmo(AmmoType type, int amount = 1)
+        {
+            if (GetAmmo(type) < amount)
+                return false;
+
+            _ammo[type] -= amount;
+            return true;
+        }
 
         /// <summary>
         /// Weapon types this unit is a specialist in, derived from its Class (e.g. any Hunter
@@ -375,13 +507,22 @@ namespace SagesOfOzvaram.Units
         }
  
         /// <summary>
-        /// Take damage, mitigated by Defense (Physical) or Resistance (Magical) - formula is a
-        /// first-pass flat percentage reduction, to be tuned once real combat exists.
+        /// Take damage, mitigated by Defense (Sharp/Blunt) or Resistance (Magical/Light) - see
+        /// EffectiveDefense/EffectiveResistance for the diminishing-returns formula. Applied
+        /// BEFORE that mitigation: a racial vulnerability bonus (see RaceCatalog), if this
+        /// unit's Race is vulnerable to damageType specifically (e.g. Lethios + Frost) - so DEF/RES
+        /// still mitigates a portion of the inflated amount, rather than being tacked on after.
         /// </summary>
-        public virtual void TakeDamage(int damage, DamageType damageType = DamageType.Physical)
+        public virtual void TakeDamage(int damage, DamageType damageType = DamageType.Sharp)
         {
-            float mitigation = damageType == DamageType.Physical ? EffectiveDefense : EffectiveResistance;
-            float mitigated = damage * (1f - Math.Clamp(mitigation, 0f, 100f) / 100f);
+            var racialMods = RaceCatalog.GetModifiers(Race);
+            float rawDamage = damage;
+            if (racialMods.VulnerableTo == damageType)
+                rawDamage *= 1f + racialMods.VulnerabilityBonusPercent;
+
+            float mitigation = damageType.IsPhysical() ? EffectiveDefense : EffectiveResistance;
+            float mitigated = rawDamage * (1f - mitigation / 100f);
+
             ApplyRawDamage((int)Math.Round(mitigated));
         }
 

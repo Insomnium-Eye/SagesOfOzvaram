@@ -95,6 +95,7 @@ namespace SagesOfOzvaram.Combat
         {
             CurrentUnit.ApplyBleedTick();
             CurrentUnit.TickStunBreakCooldown();
+            CurrentUnit.TickSpeedReduction();
 
             if (CurrentUnit.IsFainted)
             {
@@ -108,11 +109,12 @@ namespace SagesOfOzvaram.Combat
         }
 
         /// <summary>
-        /// Rebuild the turn order from currently-alive units, sorted by SPEED (descending).
+        /// Rebuild the turn order from currently-alive units, sorted by effective SPEED
+        /// (descending) - a Slowed unit (see BaseUnit.EffectiveSpeed) acts later starting next Turn.
         /// </summary>
         private void StartNewTurn()
         {
-            _turnOrder = _allUnits.Where(u => u.IsAlive).OrderByDescending(u => u.Speed).ToList();
+            _turnOrder = _allUnits.Where(u => u.IsAlive).OrderByDescending(u => u.EffectiveSpeed).ToList();
             _currentIndex = 0;
             TurnAnnouncementElapsed = 0f;
             UnitTurnElapsed = 0f;

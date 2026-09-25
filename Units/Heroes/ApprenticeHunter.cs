@@ -16,6 +16,7 @@ namespace SagesOfOzvaram.Units.Heroes
             Scale = 0.65f;
             Strength = 8;    // Human: ranged marksman, precision over raw power
             Accuracy = 15;
+            Evasion = 6;
             Defense = 8;
             Resistance = 8;
             Intelligence = 6;
@@ -27,6 +28,9 @@ namespace SagesOfOzvaram.Units.Heroes
             TryAddToInventory(WeaponCatalog.Dagger);
             // Dagger specialization (unlocking Throw Dagger) comes from HeroClass.Hunter via
             // ClassCatalog - shared by every Hunter, not set per-instance here.
+
+            AddAmmo(AmmoType.Arrow, 10);
+            AddAmmo(AmmoType.Bullet, 10);
         }
     }
 }

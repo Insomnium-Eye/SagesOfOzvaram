@@ -16,6 +16,7 @@ namespace SagesOfOzvaram.Units.Heroes
             Scale = 0.65f;
             Strength = 15;   // Lethios: physically powerful, per GDD flavor
             Accuracy = 5;
+            Evasion = 1;
             Defense = 20;    // Lethios: durable tank
             Resistance = 5;
             Intelligence = 4; // brawn over brains

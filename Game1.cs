@@ -112,6 +112,13 @@ namespace SagesOfOzvaram
         private Weapon _pendingSourceWeapon;
         private List<BaseUnit> _targetCandidates = new List<BaseUnit>();
 
+        /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
+        private BaseUnit _hoveredAttackTarget;
+
+        // Cone aiming (opened instead of _targetingModeActive for a HitsCone move, e.g. Frost
+        // Blast) - aimed by clicking any hex to set a direction, not by picking a unit.
+        private bool _coneAimingModeActive = false;
+
         // Combat log - a short-lived line summarizing the last attack's outcome
         private string _combatLogMessage = "";
         private float _combatLogTimer = 0f;
@@ -584,13 +591,37 @@ namespace SagesOfOzvaram
                 else
                 {
                     // Update turn system
-                    _turnSystem.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
+                    float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
+                    _turnSystem.Update(deltaTime);
+
+                    // Advance every unit's walk animation (see BaseUnit.SetMovementPath) - a
+                    // no-op for anyone not currently mid-move.
+                    foreach (var unit in _units)
+                        unit.UpdateMovementAnimation(deltaTime);
 
                     if (_combatLogTimer > 0f)
-                        _combatLogTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
+                        _combatLogTimer -= deltaTime;
 
-                    // Smooth camera pan to current unit
-                    if (_turnSystem.TransitioningCamera)
+                    // Camera continuously tracks whichever unit is acting, so it follows
+                    // smoothly even as that unit walks tile-by-tile mid-turn (its Position
+                    // animates via UpdateMovementAnimation above) instead of only snapping once
+                    // when the turn starts. Suppressed while free-looking the map (_viewingMap) -
+                    // that mode hands the camera entirely to WASD/scroll panning (see
+                    // HandleMapControls); ResumeFromMapView snaps it back on exit.
+                    _cameraTarget = _turnSystem.CurrentUnit.Position;
+
+                    // While picking a destination tile, follow whatever hex the mouse is over
+                    // instead - lets you scout the full reachable range without needing to pan
+                    // separately (WASD's free panning is suppressed during this mode below, so
+                    // hover is the only thing driving the camera here).
+                    if (_movementModeActive)
+                    {
+                        var viewportSizeForHover = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                        var hoveredMovementHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSizeForHover);
+                        _cameraTarget = _hexGrid.HexToWorld(hoveredMovementHex.col, hoveredMovementHex.row);
+                    }
+
+                    if (!_viewingMap && _turnSystem.TransitioningCamera)
                     {
                         float progress = _turnSystem.CameraTransitionElapsed / 1.5f;  // Normalize to 0-1
                         progress = MathHelper.Clamp(progress, 0f, 1f);
@@ -601,9 +632,14 @@ namespace SagesOfOzvaram
                         _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, easeProgress);
                         _renderer.ZoomLevel = MathHelper.Lerp(_renderer.ZoomLevel, _cameraZoomTarget, easeProgress);
                     }
-                    else
+                    else if (!_viewingMap)
                     {
-                        // Camera transition complete, allow this unit's one AI move + the auto-advance that ends its turn
+                        // Initial swoop-in is done - lock on exactly from here so the camera
+                        // can never lag behind a unit mid-walk.
+                        _renderer.CameraPosition = _cameraTarget;
+                        _renderer.ZoomLevel = _cameraZoomTarget;
+
+                        // Allow this unit's one AI move + the auto-advance that ends its turn
                         _hasAutoAdvancedThisTurn = false;
                         _hasAiActedThisTurn = false;
                     }
@@ -633,6 +669,10 @@ namespace SagesOfOzvaram
                         {
                             HandleTargetingInput(keyboardState, mouseState);
                         }
+                        else if (_coneAimingModeActive)
+                        {
+                            HandleConeAimingInput(keyboardState, mouseState);
+                        }
                         else if (_movementModeActive)
                         {
                             HandleMovementInput(keyboardState, mouseState);
@@ -658,6 +698,7 @@ namespace SagesOfOzvaram
                         _viewingMap = false;
                         _attackMenuActive = false;
                         _targetingModeActive = false;
+                        _coneAimingModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
 
@@ -676,12 +717,11 @@ namespace SagesOfOzvaram
                         {
                             _hasAutoAdvancedThisTurn = true;
                             _turnSystem.NextUnit();
-                            _cameraTarget = _turnSystem.CurrentUnit.Position;
                         }
                     }
 
                     // Map editor controls
-                    HandleMapControls(keyboardState, mouseState);
+                    HandleMapControls(keyboardState, mouseState, deltaTime);
                 }
             }
 
@@ -909,7 +949,6 @@ namespace SagesOfOzvaram
                 }
 
                 _turnSystem.NextUnit();
-                _cameraTarget = _turnSystem.CurrentUnit.Position;
             }
             else if (option == "View Map")
             {
@@ -994,7 +1033,6 @@ namespace SagesOfOzvaram
                 _playerUnit.ConsumeStunTurn();
                 _stunnedMenuIndex = 0;
                 _turnSystem.NextUnit();
-                _cameraTarget = _turnSystem.CurrentUnit.Position;
             }
         }
 
@@ -1175,7 +1213,9 @@ namespace SagesOfOzvaram
         /// still pay for, using the exact integer charge formula rather than Dijkstra's float
         /// approximation. No-op if there's no path at all (impassable/occupied/unreachable) or
         /// the unit can't afford even the first step. Shared by the player's click-to-move
-        /// (TryMoveTowards) and the placeholder AI (RunSimpleAI).
+        /// (TryMoveTowards) and the placeholder AI (RunSimpleAI). AP is spent immediately, but
+        /// Position animates tile-by-tile over the next several frames (see
+        /// BaseUnit.SetMovementPath) rather than jumping straight to the destination.
         /// </summary>
         private void MoveUnitTowards(BaseUnit unit, (int col, int row) destination)
         {
@@ -1204,10 +1244,10 @@ namespace SagesOfOzvaram
             if (lastAffordableIndex < 0)
                 return; // can't afford even the first step
 
-            var actualDestination = path[lastAffordableIndex];
             int apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
 
-            unit.Position = _hexGrid.HexToWorld(actualDestination.col, actualDestination.row);
+            var affordablePath = path.Take(lastAffordableIndex + 1);
+            unit.SetMovementPath(affordablePath.Select(hex => _hexGrid.HexToWorld(hex.col, hex.row)));
             unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
         }
 
@@ -1294,7 +1334,9 @@ namespace SagesOfOzvaram
         /// <summary>
         /// Build a move's submenu label, e.g. "Sword Slash (2 AP)" or "Stab (3 AP)" if its
         /// weapon isn't the one currently equipped. MP cost (or other non-AP costs) is
-        /// appended too when present.
+        /// appended too when present, and a move requiring ammo (e.g. Arrow Shot) shows how
+        /// many are left, so running out reads as an obvious reason it can't be selected rather
+        /// than a silent no-op.
         /// </summary>
         private string FormatAttackLabel(Move move, Weapon sourceWeapon)
         {
@@ -1302,6 +1344,8 @@ namespace SagesOfOzvaram
             string cost = $"{apCost} AP";
             if (move.MPCost > 0)
                 cost += $", {move.MPCost} MP";
+            if (move.RequiredAmmoType.HasValue)
+                cost += $", {_playerUnit.GetAmmo(move.RequiredAmmoType.Value)} {move.RequiredAmmoType.Value}s";
 
             return $"{move.Name} ({cost})";
         }
@@ -1350,14 +1394,35 @@ namespace SagesOfOzvaram
 
             int apCost = _playerUnit.GetEffectiveAPCost(move, sourceWeapon);
             if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
                 return; // can't afford it - stay on the submenu
+            }
 
-            var validTargets = GetValidAttackTargets(move);
-            if (validTargets.Count == 0)
-                return; // nothing alive in range to hit
+            if (move.RequiredAmmoType.HasValue && _playerUnit.GetAmmo(move.RequiredAmmoType.Value) < 1)
+            {
+                ShowCombatMessage($"Out of {move.RequiredAmmoType.Value}s.");
+                return; // out of ammo - stay on the submenu, same treatment as unaffordable AP/MP
+            }
 
             _pendingMove = move;
             _pendingSourceWeapon = sourceWeapon;
+
+            if (move.HitsCone)
+            {
+                // Aimed at a direction (see HandleConeAimingInput), not a specific unit - no
+                // target list to check, just needs somewhere to click.
+                _attackMenuActive = false;
+                _coneAimingModeActive = true;
+                return;
+            }
+
+            var validTargets = GetValidAttackTargets(move, sourceWeapon);
+            if (validTargets.Count == 0)
+            {
+                ShowCombatMessage($"Nothing in range for {move.Name}.");
+                return; // nothing alive in range to hit
+            }
 
             if (move.HitsAllAdjacent)
             {
@@ -1371,26 +1436,28 @@ namespace SagesOfOzvaram
             _targetingModeActive = true;
         }
 
-        /// <summary>Every living unit other than the player's, within the move's Range of the player's current position.</summary>
-        private List<BaseUnit> GetValidAttackTargets(Move move)
+        /// <summary>Every living unit other than the player's, within the move's effective Range (see Move.GetEffectiveRange) of the player's current position.</summary>
+        private List<BaseUnit> GetValidAttackTargets(Move move, Weapon sourceWeapon)
         {
             var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int range = move.GetEffectiveRange(_playerUnit, sourceWeapon);
             return _units.Where(u => u != _playerUnit && u.IsAlive
-                    && _hexGrid.GetDistance(attackerHex.col, attackerHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= move.Range)
+                    && _hexGrid.GetDistance(attackerHex.col, attackerHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= range)
                 .ToList();
         }
 
         /// <summary>
-        /// Resolve _pendingMove against the given target (null only for a HitsAllAdjacent move,
-        /// which ignores it) via AttackResolver, log the outcome, and return to the turn menu.
+        /// Resolve _pendingMove against the given target (null for a HitsAllAdjacent move, which
+        /// ignores it) or aimDirection (for a HitsCone move) via AttackResolver, log the
+        /// outcome, and return to the turn menu.
         /// </summary>
-        private void ExecutePendingAttack(BaseUnit target)
+        private void ExecutePendingAttack(BaseUnit target, HexDirection? aimDirection = null)
         {
-            var outcomes = AttackResolver.Resolve(_playerUnit, target, _pendingMove, _pendingSourceWeapon, _hexGrid, _map, _units);
-            _combatLogMessage = BuildCombatLogMessage(_pendingMove, outcomes);
-            _combatLogTimer = 4f;
+            var outcomes = AttackResolver.Resolve(_playerUnit, target, _pendingMove, _pendingSourceWeapon, _hexGrid, _map, _units, aimDirection);
+            ShowCombatMessage(BuildCombatLogMessage(_pendingMove, outcomes));
 
             _targetingModeActive = false;
+            _coneAimingModeActive = false;
             _attackMenuActive = false;
             _pendingMove = null;
             _pendingSourceWeapon = null;
@@ -1419,6 +1486,13 @@ namespace SagesOfOzvaram
             return $"{_playerUnit.Name} used {move.Name}: {string.Join("; ", parts)}";
         }
 
+        /// <summary>Show a short-lived line at the bottom of the screen - both the actual combat log and "why didn't that work" feedback (unaffordable AP/MP, out of ammo, nothing in range) go through here so nothing is ever a silent no-op.</summary>
+        private void ShowCombatMessage(string message)
+        {
+            _combatLogMessage = message;
+            _combatLogTimer = 4f;
+        }
+
         /// <summary>Handle input while picking a target for _pendingMove: click a highlighted unit to attack it, E to cancel back to the attack submenu.</summary>
         private void HandleTargetingInput(KeyboardState keyboardState, MouseState mouseState)
         {
@@ -1444,6 +1518,37 @@ namespace SagesOfOzvaram
             _pendingMove = null;
             _pendingSourceWeapon = null;
             _targetCandidates.Clear();
+            _attackMenuIndex = 0;
+            _attackMenuActive = true;
+        }
+
+        /// <summary>Handle input while aiming _pendingMove's cone: click any hex to set the direction and fire, E to cancel back to the attack submenu.</summary>
+        private void HandleConeAimingInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelConeAiming();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+                if (clickedHex == attackerHex)
+                    return; // aiming at your own tile doesn't define a direction
+
+                var direction = _hexGrid.GetDirectionTo(attackerHex.col, attackerHex.row, clickedHex.col, clickedHex.row);
+                ExecutePendingAttack(null, direction);
+            }
+        }
+
+        private void CancelConeAiming()
+        {
+            _coneAimingModeActive = false;
+            _pendingMove = null;
+            _pendingSourceWeapon = null;
             _attackMenuIndex = 0;
             _attackMenuActive = true;
         }
@@ -1487,21 +1592,25 @@ namespace SagesOfOzvaram
             return rects;
         }
 
-        private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState)
+        private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState, float deltaTime)
         {
-            // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
-            // since W/S there navigate the menu instead
-            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive)
+            // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open
+            // (W/S there navigate the menu instead), and while picking a move destination
+            // (Update's camera block follows the mouse hover there instead - free panning would
+            // just fight that). Scaled by deltaTime (not a flat per-frame step) so it's smooth
+            // and frame-rate-independent instead of speeding up or stuttering with the frame
+            // rate - this was the actual cause of View Map feeling laggy/jittery.
+            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive && !_movementModeActive)
             {
-                float panSpeed = 5f;
+                float panSpeed = 400f; // pixels/second
                 if (keyboardState.IsKeyDown(Keys.W))
-                    _renderer.PanCamera(-Vector2.UnitY * panSpeed);  // W = up (negative Y)
+                    _renderer.PanCamera(-Vector2.UnitY * panSpeed * deltaTime);  // W = up (negative Y)
                 if (keyboardState.IsKeyDown(Keys.S))
-                    _renderer.PanCamera(Vector2.UnitY * panSpeed);   // S = down (positive Y)
+                    _renderer.PanCamera(Vector2.UnitY * panSpeed * deltaTime);   // S = down (positive Y)
                 if (keyboardState.IsKeyDown(Keys.A))
-                    _renderer.PanCamera(-Vector2.UnitX * panSpeed);  // A = left (negative X)
+                    _renderer.PanCamera(-Vector2.UnitX * panSpeed * deltaTime);  // A = left (negative X)
                 if (keyboardState.IsKeyDown(Keys.D))
-                    _renderer.PanCamera(Vector2.UnitX * panSpeed);   // D = right (positive X)
+                    _renderer.PanCamera(Vector2.UnitX * panSpeed * deltaTime);   // D = right (positive X)
             }
 
             // Zoom (mouse wheel)
@@ -1588,15 +1697,42 @@ namespace SagesOfOzvaram
                 DrawMovementPathPreview(viewportSize);
             }
 
-            // Highlight every valid target for the pending move - click one to attack it
+            var mouseState = Mouse.GetState();
+
+            // Targeting mode: show the move's full range (dim), every actual valid target on
+            // top of that (red), and track which one (if any) the mouse is over so the UI layer
+            // can show a damage/hit%/crit/affliction preview for it.
+            _hoveredAttackTarget = null;
             if (_targetingModeActive)
             {
+                var attackerHexForRange = _hexGrid.WorldToHex(_playerUnit.Position);
+                int rangeForIndicator = _pendingMove.GetEffectiveRange(_playerUnit, _pendingSourceWeapon);
+                foreach (var (col, row) in _hexGrid.GetHexesInRadius(attackerHexForRange.col, attackerHexForRange.row, rangeForIndicator))
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), new Color(255, 255, 255, 40), new Color(255, 255, 255, 90));
+
                 foreach (var candidate in _targetCandidates)
                     DrawHexFilled(candidate.Position, new Color(220, 40, 40, 140), Color.Red);
+
+                var hoveredHexForTargeting = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                _hoveredAttackTarget = _targetCandidates.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == hoveredHexForTargeting);
+            }
+
+            // Live cone preview - highlights the exact hexes _pendingMove would hit if fired
+            // toward wherever the mouse is right now.
+            if (_coneAimingModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+                if (hoveredHex != attackerHex)
+                {
+                    var direction = _hexGrid.GetDirectionTo(attackerHex.col, attackerHex.row, hoveredHex.col, hoveredHex.row);
+                    int range = _pendingMove.GetEffectiveRange(_playerUnit, _pendingSourceWeapon);
+                    foreach (var (col, row) in _hexGrid.GetHexesInCone(attackerHex.col, attackerHex.row, direction, range))
+                        DrawHexFilled(_hexGrid.HexToWorld(col, row), new Color(120, 220, 255, 140), Color.CornflowerBlue);
+                }
             }
 
             // Draw hover hex
-            var mouseState = Mouse.GetState();
             if (!_consoleOpen)
             {
                 var hoverHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
@@ -1674,7 +1810,13 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Click a highlighted tile to move - E to cancel");
 
                 if (_targetingModeActive)
-                    DrawBottomHint(viewportSize, "Click a highlighted target to attack - E to cancel");
+                {
+                    DrawBottomHint(viewportSize, "Select a target, or press E to return");
+                    if (_hoveredAttackTarget != null)
+                        DrawAttackPreview(_hoveredAttackTarget, viewportSize);
+                }
+                else if (_coneAimingModeActive)
+                    DrawBottomHint(viewportSize, "Click anywhere to aim the cone and fire - E to cancel");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 
@@ -1801,6 +1943,55 @@ namespace SagesOfOzvaram
                                         (int)(textSize.X + 32), (int)(textSize.Y + 16));
             _spriteBatch.Draw(_whitePixel, boxRect, new Color(0, 0, 0, 200));
             _spriteBatch.DrawString(_font, text, textPos, Color.Yellow);
+        }
+
+        /// <summary>
+        /// Damage/crit/hit%/affliction preview for _pendingMove against `target`, shown while
+        /// targeting mode has it hovered - everything here reuses the exact same Move/AttackResolver
+        /// formulas the actual attack resolves with, just without rolling or spending anything.
+        /// </summary>
+        private void DrawAttackPreview(BaseUnit target, Vector2 viewportSize)
+        {
+            var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var targetHex = _hexGrid.WorldToHex(target.Position);
+            int distance = _hexGrid.GetDistance(attackerHex.col, attackerHex.row, targetHex.col, targetHex.row);
+
+            int damage = _pendingMove.GetDamage(_playerUnit, target, _pendingSourceWeapon);
+            float hitChance = _pendingMove.GetHitChance(_playerUnit, target, _pendingSourceWeapon, distance);
+
+            bool isBackstab = Move.IsBackstab(_hexGrid, _playerUnit, target);
+            string critLine = _pendingMove.IsGuaranteedCrit(isBackstab)
+                ? "Crit: 100% (backstab)"
+                : $"Crit: {_pendingMove.CritChance * 100f:0}%";
+
+            var lines = new List<string>
+            {
+                $"Target: {target.Name}",
+                $"Damage: {damage}",
+                $"Hit: {hitChance * 100f:0}%",
+                critLine,
+            };
+
+            if (_pendingMove.InflictsStatusEffect != null)
+            {
+                float statusChance = _pendingMove.GetStatusEffectChance(_playerUnit, target) * 100f;
+                lines.Add($"{_pendingMove.InflictsStatusEffect}: {statusChance:0}%");
+            }
+
+            if (_pendingMove.CanInflictKnockdown)
+            {
+                float knockdownChance = _pendingMove.GetKnockdownChance(_playerUnit, target) * 100f;
+                lines.Add($"Knocked Down: {knockdownChance:0}%");
+            }
+
+            string text = string.Join("\n", lines);
+            Vector2 textSize = _font.MeasureString(text);
+            Vector2 textPos = new Vector2(viewportSize.X - textSize.X - 24f, 16f);
+
+            var boxRect = new Rectangle((int)(textPos.X - 12), (int)(textPos.Y - 8),
+                                        (int)(textSize.X + 24), (int)(textSize.Y + 16));
+            _spriteBatch.Draw(_whitePixel, boxRect, new Color(0, 0, 0, 200));
+            _spriteBatch.DrawString(_font, text, textPos, Color.White);
         }
 
         private Color GetTileColor(string tileType)

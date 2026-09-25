@@ -14,8 +14,8 @@ namespace SagesOfOzvaram.Combat
         private static readonly Dictionary<HeroClass, HashSet<WeaponType>> Specializations = new Dictionary<HeroClass, HashSet<WeaponType>>
         {
             [HeroClass.Hunter] = new HashSet<WeaponType> { WeaponType.Dagger, WeaponType.Bow },
-            [HeroClass.Warrior] = new HashSet<WeaponType> { WeaponType.OneHandedSword },
-            [HeroClass.Sorcerer] = new HashSet<WeaponType> { WeaponType.Staff },
+            [HeroClass.Warrior] = new HashSet<WeaponType> { WeaponType.OneHandedSword, WeaponType.Shield },
+            [HeroClass.Sorcerer] = new HashSet<WeaponType> { WeaponType.Staff, WeaponType.Wand },
             [HeroClass.Cleric] = new HashSet<WeaponType> { WeaponType.Mace },
             [HeroClass.None] = new HashSet<WeaponType>(),
         };

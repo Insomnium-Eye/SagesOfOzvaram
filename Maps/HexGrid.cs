@@ -174,6 +174,33 @@ namespace SagesOfOzvaram.Maps
         }
 
         /// <summary>
+        /// Every hex within `range` of (originCol,originRow) that falls in the 60-degree sector
+        /// pointing toward `direction` (i.e. GetDirectionTo(origin, hex) == direction) - a
+        /// single hex at distance 1, naturally widening as distance grows, since hex space
+        /// splits cleanly into 6 such sectors. Excludes the origin itself. Used for cone AOE
+        /// moves (e.g. Frost Blast) aimed by clicking any hex, not just a unit.
+        /// </summary>
+        public List<(int col, int row)> GetHexesInCone(int originCol, int originRow, HexDirection direction, int range)
+        {
+            var hexes = new List<(int, int)>();
+
+            for (int col = originCol - range; col <= originCol + range; col++)
+            {
+                for (int row = originRow - range; row <= originRow + range; row++)
+                {
+                    int distance = GetDistance(originCol, originRow, col, row);
+                    if (distance == 0 || distance > range)
+                        continue;
+
+                    if (GetDirectionTo(originCol, originRow, col, row) == direction)
+                        hexes.Add((col, row));
+                }
+            }
+
+            return hexes;
+        }
+
+        /// <summary>
         /// The tile one step away from (col, row) in the given direction (not bounds-checked).
         /// </summary>
         public (int col, int row) GetNeighborCoords(int col, int row, HexDirection direction)
@@ -215,23 +242,24 @@ namespace SagesOfOzvaram.Maps
         }
  
         /// <summary>
-        /// Get all hexes within a certain distance (radius).
+        /// Get all hexes within a certain distance (radius) of (centerCol, centerRow), the
+        /// center included.
         /// </summary>
         public List<(int col, int row)> GetHexesInRadius(int centerCol, int centerRow, int radius)
         {
             var hexes = new List<(int, int)>();
- 
-            for (int x = -radius; x <= radius; x++)
+
+            for (int col = centerCol - radius; col <= centerCol + radius; col++)
             {
-                for (int y = -radius; y <= radius; y++)
+                for (int row = centerRow - radius; row <= centerRow + radius; row++)
                 {
-                    if (GetDistance(centerCol, centerRow, x, y) <= radius)
+                    if (GetDistance(centerCol, centerRow, col, row) <= radius)
                     {
-                        hexes.Add((x, y));
+                        hexes.Add((col, row));
                     }
                 }
             }
- 
+
             return hexes;
         }
  

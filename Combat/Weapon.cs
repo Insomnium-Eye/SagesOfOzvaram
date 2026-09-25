@@ -43,8 +43,16 @@ namespace SagesOfOzvaram.Combat
         public List<Move> SpecialistAttacks { get; } = new List<Move>();
 
         /// <summary>
-        /// If this is a shield, the total DEF/RES bonus (0-1) Guard grants while it's equipped -
-        /// replaces the base 20% rather than stacking with it. Null if this isn't a shield.
+        /// If this is a shield, the passive DEF/RES bonus (0-1) it grants just by being carried -
+        /// applies always, not just while Guarding. Null if this isn't a shield. See
+        /// BaseUnit.GetPassiveShieldBonusPercent.
+        /// </summary>
+        public float? ShieldPassiveDefResBonusPercent { get; set; }
+
+        /// <summary>
+        /// If this is a shield, the ADDITIONAL DEF/RES bonus (0-1) Guard grants on top of
+        /// ShieldPassiveDefResBonusPercent while actively Guarding - replaces the base 20%
+        /// Guard bonus rather than stacking with it. Null if this isn't a shield.
         /// </summary>
         public float? ShieldGuardBonusPercent { get; set; }
 
@@ -57,10 +65,19 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>
         /// Extra damage bonus (Intelligence / this divisor) a specialist gets on top of a move's
-        /// normal damage using THIS weapon (e.g. the Cleric's INT-based bonus on maces). 0 = no
-        /// bonus. Only applies if the attacker's WeaponSpecializations contains this weapon's Type.
+        /// normal damage using THIS weapon. 0 = no bonus. Only applies if the attacker's
+        /// WeaponSpecializations contains this weapon's Type.
         /// </summary>
         public float SpecialistIntDamageBonusDivisor { get; set; } = 0f;
+
+        /// <summary>Extra Range a specialist gets on THIS weapon's moves (e.g. the Cleric's mace head extending on a chain). 0 = no bonus. See Move.GetEffectiveRange.</summary>
+        public int SpecialistRangeBonus { get; set; } = 0;
+
+        /// <summary>Extra flat damage (of SpecialistFlatDamageBonusType, possibly different from the move's own DamageType) a specialist deals on top of a normal hit - e.g. the Cleric's +3 Light damage on Mace Bash. 0 = no bonus. See Move.GetSpecialistBonusDamage.</summary>
+        public int SpecialistFlatDamageBonus { get; set; } = 0;
+
+        /// <summary>The DamageType of SpecialistFlatDamageBonus - null if SpecialistFlatDamageBonus is 0.</summary>
+        public DamageType? SpecialistFlatDamageBonusType { get; set; }
 
         public Weapon(string name, params Move[] attacks)
         {

@@ -170,7 +170,9 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Range Display**: selecting "Move" overlays every nearby tile's AP cost as text - tiles keep their normal terrain color (no fill/tint), white text if affordable with current AP, red text (shown beyond the affordable range too, so the "just out of reach" area is visible) if not
 - **Live Path Preview**: hovering a tile draws a line from the unit through the path to it, growing/shrinking as the cursor moves, ending in an arrowhead; hovering an unreachable tile (off-grid, blocked, occupied) instead draws the trail to the nearest tile that IS reachable and marks the hovered tile with a red X instead of an arrowhead
 - **Clicking Moves Toward, Not Just To**: clicking any tile - even one further than the unit can currently afford - moves it as far along that path as its AP allows, rather than refusing the click outright. A tile with no path at all (impassable/occupied/unreachable) is simply ignored
-- **Current Implementation**: this is the first fully functional (not just data-modeled) action - Move actually relocates the unit and spends AP; Attack/Spell/Items still don't do anything when selected
+- **Animated Movement**: a unit no longer jumps straight to its destination - it visibly walks the path tile-by-tile, animating smoothly through each hex in turn (0.2s per tile) rather than teleporting
+- **Camera Follows the Mover**: the camera continuously tracks whichever unit is acting (not just once when its turn starts), so it stays locked on as that unit walks mid-turn; while picking a destination tile in Move mode, it instead follows whichever tile the mouse is hovering, so you can scout the full reachable range without needing to pan separately (WASD's free panning is suppressed during that mode for the same reason). Free-look ("View Map") hands the camera entirely back to WASD/scroll panning and snaps back to the acting unit on exit
+- **Current Implementation**: Move and Attack are both fully functional (targeting, resolution, everything below); Spells/Items are still unimplemented when selected
 
 #### Elevation Tiers & Height Mechanics
 - **Tier System**: Ground(0), Elevated(1), High(2), Extreme(3)
@@ -198,56 +200,62 @@ This approach creates a richer, more believable world where cultural misundersta
   - Knockback effects can combine with height for dramatic damage/positioning
 
 #### Turn Order
-- **Mechanic**: Based on SPEED stat
-- **Current Order**: Hunter (8) → Sorcerer (6) → Cleric (5) → Warrior (4)
+- **Mechanic**: Based on EFFECTIVE Speed (raw Speed, minus any active Slowed reduction - see Status Effects) - rebuilt fresh at the start of every Turn, so a unit that got Slowed mid-Turn acts later starting the next one
+- **Base Order** *(unmodified Speed)*: Hunter (8) → Sorcerer (6) → Cleric (5) → Warrior (4)
 - **Cycling**: After all units act, turn increments; cycle repeats
 - **UI**: Turn number displayed; "TURN X START" announcement at turn begins
+- **Match Format**: currently a 4-player free-for-all - all 4 units are mutually hostile (no parties/teams yet); the player controls one, the other three are AI-controlled (see AI below)
 
 #### Action Points (AP)
 - **Per Turn**: 5 AP
 - **Actions**: Movement, attacks, spells, summons, items, guard, card draw
-- **Cost Examples** *(future target design - see "Current Implementation" for what's actually built)*:
-  - Move 1 tile: 1 AP
-  - Basic attack: 2 AP
-  - Spell cast: 2-4 AP (varies by spell)
-  - Item use: 1 AP
-  - Guard stance: 2 AP (boosts DEF/RES until the unit's next turn - see Guard Command below)
-- **Current Implementation**: every attack costs a flat 2 AP for now (simplification); Guard also costs 2 AP; Movement is fully implemented (see Grid & Movement above) - the only action that actually does something when used, beyond Guard/End
+- **Current Implementation**: every attack (racial or weapon) costs a flat 1 AP, regardless of the move - switching to a weapon that isn't currently equipped costs +1 AP on top to cover the draw (so 2 AP total for a switch); Guard costs 2 AP; standing up from Knocked Down and breaking Stun have their own separate AP costs (see Status Effects); Movement is fully implemented (see Grid & Movement above). Move, Attack, and Guard/End are all live; Spells/Items are not
+- **Mana (MP)**: doesn't auto-refill each turn. Nothing costs MP except the Sorcerer's Staff and Wand attacks (Bonk, Frost Blast, Whack, Arcane Missile), which each cost 10 MP in addition to their 1 AP - every other move in the game is MP-free
 - **UI**: the player's current AP is displayed on-screen during their unit's turn
 
 #### Race-Based Attacks
 - **Innate Move**: Every unit has at least one attack, granted for free based on their race - always available regardless of equipment
 - **Weapon Attacks**: Equipped weapons grant additional attacks on top of the racial one
 - **Cost Variance**: Attacks can vary in AP cost, MP cost, and other costs
-- **Accuracy Stat Formula**: A unit's Accuracy stat adds +0.1% hit chance per point, on top of a move's base accuracy
-- **Current Race Moves** *(range 1, 2 AP; damage/accuracy formulas, pending a balance pass)*:
-  - **Human - Punch**: `1 + STR/5` damage, 95% base accuracy, knocks the target back 1 tile (+1 tile per 5 damage dealt)
-  - **Lethios - Bite**: `5 + STR/3` damage, 40% base accuracy, inflicts Bleeding (Moderate rank: 3% of current HP per turn)
-  - **Vectium - Swipe**: `3 + STR/1.5` damage, 80% base accuracy, inflicts Bleeding (Minor rank: 2% of current HP per turn)
-  - **Roachlin - Roachlin Slash** *(summoned creature, not a playable race)*: `3 + STR/5` damage, 85% base accuracy
-- **Damage Scaling**: physical weapon moves scale with STR; magical ones (the Sorcerer's Staff) scale with INT instead - see each move below. Flintlock Pistol is the exception: no specialization exists for it, so it doesn't scale with either stat (see Weapon Specialization)
-- **Notable Weapon Moves** *(range 1 unless noted, 2 AP; pending a balance pass)*:
-  - **One-Handed Iron Sword - Sword Slash**: `8 + STR/4` damage, 88% accuracy, small (6%) crit chance for 3x damage, small (15%) chance to inflict Bleeding (Weak rank)
-  - **One-Handed Iron Sword - Sword Pierce**: range 2; thrusts the attacker 1 tile toward the target (blocked if an enemy already occupies that tile); `5 + STR/5` damage (less than Slash), same accuracy/Bleed chance as Slash, deals 1.5x damage against a Guarding target
-  - **One-Handed Iron Sword - Sword Spin** *(Warrior only - see Weapon Specialization)*: 3 AP; `6 + STR/3` damage to every adjacent enemy at once, 85% accuracy
-  - **Dagger - Stab**: 100% accuracy, `4 + STR/6` damage (lower than the swords), high (35%) chance to inflict Bleeding (Weak rank), guaranteed critical hit (3x) on a backstab (see Facing below)
-  - **Dagger - Throw Knife** *(Hunter only - see Weapon Specialization below)*: range 3; `2 + STR*2/3` damage (60% of Stab's base damage), 80% accuracy, consumes the dagger (removed from inventory on use)
-  - **Rhinewood Staff - Bonk**: available to anyone with a Staff; `2 + STR/4` damage (Physical), low (55%) accuracy, moderate (20%) chance to inflict Stunned
-  - **Rhinewood Staff - Arcane Missile** *(Sorcerer only - see Weapon Specialization below)*: range 3; `14 + INT/3` damage (Magical), 80% accuracy, small (8%) crit chance for 3x damage
-  - **Crossbow - Bolt Shot**: range 4; `10 + STR/5` damage, very low (40%) base accuracy - unreliable without training (see Weapon Specialization), small (10%) chance to inflict Bleeding (Weak rank)
-  - **Longbow - Arrow Shot**: range 5; `9 + STR/5` damage, very low (35%) base accuracy - unreliable without training, small (10%) chance to inflict Bleeding (Weak rank)
-  - **Flintlock Pistol - Pistol Shot**: range 3; 16 flat damage (no STR/INT scaling - no one specializes in guns), 65% accuracy (unreliable), real (12%) crit chance for 3x damage, knocks back 1 tile
-  - **Light Mace - Mace Bash**: `11 + STR/4` damage (+ Cleric's INT bonus - see Weapon Specialization), 80% base accuracy, moderate (20%) chance to inflict Stunned
-  - **Iron Shield / Glass Shield - Shield Bash**: `4 + STR/6` damage, 90% accuracy, moderate (30%) chance to inflict Stunned (shields are primarily for their Guard bonus - see Guard Command; Glass Shield has no attack, just a Guard bonus - it's the Sorcerer's shield for now)
+- **Accuracy Stat Formula**: A unit's Accuracy stat adds +0.1% hit chance per point, on top of a move's base accuracy; the target's Evasion stat then subtracts at the same rate (+0.1%/point) - the mirror of Accuracy, working the other way (see Stats below)
+- **Damage Types**: every move deals one of 7 types - **Sharp** and **Blunt** are the two physical flavors (mitigated by DEF); **Magical**, **Light**, **Electric**, **Poison**, and **Frost** are magical/elemental (mitigated by RES). The last three currently exist specifically as racial vulnerability targets (see Race Perks below) - nothing deals them yet. Purely a label for now beyond mitigation and vulnerability - nothing gates which status effects a given type can inflict, though every move so far happens to follow a natural pattern (Sharp things draw blood, Blunt things Stun/Knock Down)
+- **Current Race Moves** *(range 1, 1 AP; damage/accuracy formulas, pending a further balance pass)*:
+  - **Human - Punch**: `1 + STR/5` Blunt damage, 95% base accuracy, 1% crit chance (3x damage), knocks the target back 1 tile (+1 tile per 5 damage dealt), and can inflict Knocked Down (see Status Effects) - 80% chance if the attacker's Strength beats the target's Strength + Defense, 2% otherwise
+  - **Lethios - Bite**: `12 + STR/2` Sharp damage, 40% base accuracy (hard to land), 25% crit chance (3x damage), inflicts Bleeding (Moderate rank: 3% of MAX HP per turn) - devastating when it connects, unreliable otherwise
+  - **Vectium - Swipe**: `3 + STR/1.5` Sharp damage, 80% base accuracy (far more reliable than a Bite), 40% crit chance (3x damage), inflicts Bleeding (Minor rank: 2% of MAX HP per turn) - trades raw damage for precision and crit
+  - **Roachlin - Roachlin Slash** *(summoned creature, not a playable race)*: `3 + STR/5` Sharp damage, 85% base accuracy - summon attacks are scoped for a separate design pass (every one of a summon's moves counts as an "attack," even spell-like ones, unlike a hero's kit)
+- **Bleeding's Armor Gate**: a Sharp move's Bleeding chance drops to 0% outright if the target's (Total, racial-bonus-inclusive) Defense beats the attacker's (Effective, racial-bonus-inclusive) Strength - tough enough hide/armor shrugs off a hit that would otherwise draw blood. Doesn't affect other statuses
+- **Damage Scaling**: physical (Sharp/Blunt) weapon moves scale with STR; magical (Magical/Light) ones scale with INT instead. Flintlock Pistol and Crossbow's Bolt Shot are the physical exception on guns specifically - no specialization exists for them, so Pistol Shot doesn't scale with either stat
+- **Per-Weapon Power (AttackPower)**: flat damage is moving from being baked into each Move to living on the Weapon instead - the point being multiple weapons of the same kind (e.g. a future Rusty vs. Steel Dagger) can share identical moves but hit for different amounts. Migrated so far: Dagger (7), Iron Sword (9), Iron Shield (4), Light Mace (8) - Staff, Wand, Bow, and Pistol still carry damage on the move itself until each is revisited. Dagger vs. Sword is deliberately asymmetric: Dagger's AttackPower and every one of its STR divisors are lower/weaker than Sword's - daggers should always hit for less and benefit less from Strength than swords, as a standing rule for any future weapon in either classification
+- **Notable Weapon Moves** *(range 1 unless noted, 1 AP; pending a further balance pass)*:
+  - **Iron Sword - Sword Slash**: `9(AttackPower) + STR/4` Sharp, 88% accuracy, 6% crit (3x), 15% chance to inflict Bleeding (Weak) - the "optimized" single-target technique, best STR scaling of the sword's three moves
+  - **Iron Sword - Sword Pierce**: range 2; `9 + STR/5` Sharp, same accuracy/Bleed as Slash, deals 1.5x damage against a Guarding target, advances the attacker 1 tile toward the target on use (blocked if occupied)
+  - **Iron Sword - Sword Spin** *(Warrior specialist only)*: `9 + STR/5` Sharp to every adjacent enemy at once, 85% accuracy - a notch behind Slash on raw scaling; its value is hitting everyone, not out-damaging the focused technique too
+  - **Dagger - Stab**: 100% accuracy, `7(AttackPower) + STR/6` Sharp (slightly more than Swipe, clearly less than Sword Slash), 5% crit chance (3x) plus a guaranteed critical on a backstab (see Facing below), 35% chance to inflict Bleeding (Weak)
+  - **Dagger - Throw Dagger** *(Hunter specialist only)*: range 8; `7 + STR/10` Sharp (slightly less than Stab - a thrown strike doesn't harness Strength as efficiently as a direct thrust), decent (80%) accuracy up close that falls off 8%/tile beyond range 1 (~24% by range 8), consumes the dagger on use, requires no ammo
+  - **Rhinewood Staff - Bonk**: available to anyone with a Staff; `2 + STR/4` Blunt, low (55%) accuracy, 20% chance to inflict Stunned for 1 turn. Costs 10 MP (see Action Points)
+  - **Rhinewood Staff - Frost Blast** *(Sorcerer specialist only)*: a cone-shaped ice blast (see Skill Shots), range 4; `5 + INT/5` Magical, 75% accuracy, low damage but always inflicts Slowed (-40% Speed, 2 turns) on a hit. Costs 10 MP
+  - **Willow Wand - Whack**: available to anyone with a Wand; `1 + STR/6` Blunt, high (95%) accuracy, very little damage. Costs 10 MP
+  - **Willow Wand - Arcane Missile** *(Sorcerer specialist only)*: range 3; `14 + INT/3` Magical, 80% accuracy, 8% crit chance (3x damage). Costs 10 MP - the Sorcerer's actual spellcasting tool (not the Staff)
+  - **Iron Shield - Shield Bash** *(Warrior specialist only)*: `4(AttackPower) + STR/6` Blunt, 90% accuracy (decent), low damage, but a guaranteed (100%) chance to inflict Stunned for 1 turn. Non-specialists (e.g. the Cleric) carrying an Iron Shield get no attack from it at all, just its passive/Guard DEF+RES bonus (see Guard Command)
+  - **Light Mace - Mace Bash**: `8(AttackPower) + STR/4` Blunt, 70% accuracy (mediocre), 15% crit chance (3x, decent), 20% chance to inflict Stunned for 1 turn. A Cleric specialist gets +20% accuracy, +1 Range (the head detaches on a chain), and an additional +3 Light damage on every hit - mitigated separately by RES, since it's a different damage type than the mace's own Blunt hit
+  - **Longbow - Arrow Shot**: range 6; `9 + STR/5` Sharp, a non-monotonic accuracy curve rather than a flat falloff - 20% at range 1-2 (too close to draw properly), 65% at range 3-4 (its intended range), 45% at range 5-6 (falls off again, but less severely than up close) - 10% chance to inflict Bleeding (Weak), requires an Arrow
+  - **Longbow - Bow Whack**: available to anyone with a Longbow; `1 + STR/6` Blunt, 85% accuracy, very little damage, no ammo required - a melee fallback with the bow itself
+  - **Flintlock Pistol - Pistol Shot**: range 3; `12` Sharp (flat, no STR/INT scaling - nobody specializes in guns), low (35%) accuracy point-blank then a flat, reliable 75% beyond that, 8% crit (3x), 10% chance to inflict Bleeding (Weak), knocks back 1 tile, requires a Bullet - the more accurate, weaker-hitting of the two guns
+  - **Crossbow - Bolt Shot**: range 4; `13 + STR/5` Sharp, low (30%) accuracy point-blank then a flat 55% beyond that, 20% crit (3x, higher than the Pistol's), 10% chance to inflict Bleeding (Weak), requires a Bolt - less accurate but hits harder and crits more than the Pistol; a generalist weapon, gives no one a bonus
+- **Ammo**: Longbow, Flintlock Pistol, and Crossbow each require a specific ammo type (Arrow/Bullet/Bolt respectively), tracked as separate per-unit counts, 1 consumed per use. Out of ammo = the move is simply unselectable, same treatment as unaffordable AP/MP
 
 #### Weapon Specialization
-- **Concept**: certain classes are specialists in a weapon type and get bonuses/bonus attacks for it that non-specialists can't use, even if they carry the same weapon
+- **Concept**: certain classes are specialists in a weapon type and get bonuses/bonus attacks for it that non-specialists can't use, even if they carry the same weapon - every weapon that HAS a specialist follows the same base+specialist pattern (a base Attack anyone can use, plus a stronger SpecialistAttack gated to the specialist class)
 - **Tied to Class, not Tier**: specializations (and eventually spells) come from a unit's Class (Sorcerer/Warrior/Cleric/Hunter - see Class System §4.2), not hardcoded per unit - any unit whose Class is Hunter gets every Hunter specialization and spell automatically, including as it evolves through the Journeyman/Expert/Master/Transcendent tiers, and any future non-Apprentice Hunter would too
 - **One-Handed Sword - Warrior**: unlocks Sword Spin (see above); no accuracy/damage bonus on the base Sword Slash/Pierce. Distinct type from a future Two-Handed Sword - being a one-handed specialist wouldn't automatically extend to two-handed weapons
-- **Bow - Hunter**: no bonus attack, but +15% accuracy on Bolt Shot/Arrow Shot (bows are otherwise very inaccurate for anyone else)
-- **Staff - Sorcerer**: only a Sorcerer can channel Arcane Missile - everyone else with a Staff is limited to Bonk
-- **Mace - Cleric**: +20% accuracy on Mace Bash, plus bonus damage equal to Intelligence/5 on top of the normal STR-scaled hit
-- **Pistol - none**: nobody specializes in guns; Pistol Shot's damage never scales with STR or INT for anyone
+- **Shield - Warrior**: unlocks Shield Bash; a non-specialist carrying a shield (e.g. the Cleric) gets only its passive/Guard bonus, no attack at all
+- **Dagger - Hunter**: unlocks Throw Dagger; no bonus on the base Stab
+- **Bow - Hunter**: no bonus attack, but +15% accuracy on Arrow Shot (bows are otherwise unreliable for anyone else); does NOT extend to the Crossbow, which is its own distinct, generalist weapon type
+- **Staff - Sorcerer**: unlocks Frost Blast; no bonus on the base Bonk
+- **Wand - Sorcerer**: unlocks Arcane Missile; no bonus on the base Whack. The Sorcerer specializes in both Staff and Wand
+- **Mace - Cleric**: +20% accuracy, +1 Range, and +3 flat Light damage on every hit of Mace Bash
+- **Pistol/Crossbow - none**: both are deliberately generalist weapons; nobody specializes in either, and Pistol Shot's damage never scales with STR or INT for anyone
 
 #### Facing & Backstabs
 - **Facing**: every unit faces one of the 6 hex directions (matches the grid's cube-coordinate axes); all units currently spawn facing right (East) and nothing yet rotates a unit to face the direction it moves
@@ -258,13 +266,18 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Access**: the turn menu's "End" option relabels itself to "Guard" whenever the unit can afford its Guard AP cost (2 by default); selecting it spends that AP, applies the Guard bonus, and still ends the turn. If the unit can't afford it, the slot just shows "End" and ends the turn with no bonus
 - **Adjustable Cost**: Guard's AP cost isn't fixed at 2 - it's a per-unit value some future abilities/weapons can raise or lower
 - **Base Bonus**: +20% DEF and RES until the start of the unit's next turn
-- **Shields Change the Total**: a shield replaces the base 20% with its own total rather than stacking - Iron Shield -> 40%, Glass Shield -> 25%
+- **Shields Split Into Two Layers**: a shield now grants a passive DEF/RES bonus that applies always, just from being carried, PLUS an additional bonus on top of that specifically while Guarding (replacing the base 20% rather than stacking with it) - Iron Shield: 15% passive, +25% more while Guarding, 40% total; Glass Shield: 10% passive, +15% more while Guarding, 25% total
 - **Status Effect Ranks**: general 5-step severity scale (Weak, Minor, Moderate, Major, Severe) used to grade status effects like Bleeding by strength - see Status Effects below
 
 #### Equipped Weapon & Switching
-- **One Active Weapon**: a unit has a single EquippedWeapon at a time (defaults to the first weapon in its inventory, e.g. the Hunter starts with her Longbow equipped)
-- **Switch Cost**: attacking with a weapon that isn't equipped costs its listed AP +1, covering the switch (put away the old weapon, draw the new one); the racial move never carries this surcharge
-- **Display**: the attack menu shows each move's actual AP cost live - e.g. with the Longbow equipped, Arrow Shot shows its normal cost while Pistol Shot and Stab (Dagger) show +1, until the Hunter switches to them
+- **One Active Weapon**: a unit has a single EquippedWeapon at a time (defaults to the first weapon added to its inventory, e.g. the Hunter starts with her Longbow equipped)
+- **Switch Cost**: attacking with a weapon that isn't equipped costs its listed AP +1 (so 2 AP total, since every move now costs 1 AP on its own), covering the switch (put away the old weapon, draw the new one); the racial move never carries this surcharge
+- **Display**: the attack menu shows each move's actual AP cost live, and its remaining ammo count if it requires any - e.g. "Arrow Shot (1 AP, 7 Arrows)"
+
+#### Inventory & Weight
+- **Capacity**: every unit has 20 units of inventory weight to carry weapons in (flat for now across all classes - GDD-pending a per-class or per-level variant)
+- **Per-Weapon Weight**: small one-handed weapons (Dagger, Flintlock Pistol) weigh 2; everything larger (Sword, Mace, Staff, Wand, Bow, Crossbow, Shield) weighs 3
+- **Adding a Weapon**: fails (and leaves the inventory unchanged) if it would exceed the remaining capacity; the first weapon successfully added becomes the unit's EquippedWeapon automatically
 
 #### Card/Deck System
 - **Deck Size**: 15-30 cards per class deck, randomized for each hero
@@ -361,24 +374,31 @@ This approach creates a richer, more believable world where cultural misundersta
 
 #### Stats
 - **HP**: Health points
-- **MP**: Mana/magic points; implemented on BaseUnit (MaxMP/CurrentMP) as a placeholder pool per class - unlike AP, it does not auto-refill each turn, since nothing spends it yet (no Spell/card execution exists)
+- **MP**: Mana/magic points; implemented on BaseUnit (MaxMP/CurrentMP) as a pool per class - unlike AP, it does not auto-refill each turn. Currently only the Sorcerer's Staff/Wand attacks spend it (10 MP each - see Action Points); nothing else in the game costs MP yet
 - **AP**: Action points per turn
-- **Speed**: Turn order priority (higher = earlier)
-- **Strength**: Adds to physical attack damage (additive per-move bonus, e.g. Punch = 1 + STR/5 - see Race-Based Attacks)
+- **Speed**: Turn order priority (higher = earlier) - see EFFECTIVE Speed under Turn Order; a Slowed unit's effective Speed is reduced
+- **Strength**: Adds to physical attack damage (additive per-move bonus, e.g. Punch = 1 + STR/5 - see Race-Based Attacks). What combat math actually reads is EFFECTIVE Strength - raw Strength plus this unit's racial bonus, if its Race grants one (see Race Perks)
 - **Intelligence**: Adds to magic attack damage (additive per-move bonus, e.g. Arcane Missile = 14 + INT/3 - see Race-Based Attacks); magical weapon moves scale with this instead of Strength
-- **Defense (DEF)**: Physical damage reduction, in percentage points (formula TBD - currently a flat % reduction, pending a balance pass)
-- **Resistance (RES)**: Magic damage reduction, in percentage points (same formula as DEF, applied to magic damage)
+- **Defense (DEF) / Resistance (RES)**: physical/magical damage reduction. Both now use a diminishing-returns curve - the same "asymptotic armor" family World of Warcraft and Skyrim use - rather than a flat clamped percentage: `Mitigation% = 100 * Stat / (Stat + 100)`. At Stat == 100, mitigation is exactly 50%; no amount of DEF/RES alone ever reaches 100% (unlike the old flat-percentage system), so stacking it keeps paying off but with steadily smaller returns, and there's real headroom for gear/leveling to grow into later. The raw stat fed into this curve already includes this unit's racial DEF/RES bonus, if its Race grants one (see Race Perks). A shield's passive/Guard bonus (see Guard Command) is a separate, flat percentage-point layer added AFTER this curve, not run through it
 - **Aggression**: How easily unit draws enemy attention
 - **Accuracy**: Adds +0.1% hit chance per point, on top of a move's base accuracy; total hit chance is allowed to exceed 100% (no upper cap) - that headroom is intentional, since accuracy-lowering effects (e.g. Blind) are planned
-- **Evasion**: Dodge chance modifier; implemented on BaseUnit as a placeholder stat - not yet factored into any hit-chance formula (Move.GetHitChance currently only accounts for the attacker's Accuracy, not the target's Evasion)
+- **Evasion**: fully wired in now - subtracts 0.1% from the attacker's hit chance per point, the exact mirror of Accuracy. What combat math reads is EFFECTIVE Evasion - raw Evasion plus this unit's racial bonus, if any. Current per-hero values: Sorcerer 4, Warrior 1, Hunter 6, Cleric 4
 - **Vision Range**: How far unit can see (5-7 tiles typical)
 
+#### Race Perks
+- **Concept**: each playable race grants a small stat bonus (or two) alongside a specific elemental vulnerability - applied automatically to EVERY unit of that race, not hand-set per hero, so a future unit of the same race inherits both without extra work
+- **Vectium**: +5 Evasion; takes +2% more damage from Electric attacks
+- **Human**: +7 Resistance; takes +4% more damage from Poison
+- **Lethios**: +2 Strength, +2 Defense; takes +10% more damage from Frost
+- **Vulnerability Timing**: the bonus damage is applied BEFORE normal DEF/RES mitigation - so a vulnerable unit's own armor still mitigates a portion of the inflated amount, rather than the bonus being tacked on untouched after
+
 #### Status Effects
-- **Ranks**: Every status effect is graded on a 5-step severity scale: Weak, Minor, Moderate, Major, Severe
-- **Bleeding**: Damage over time as a % of current HP, scaling with rank (Weak 1% -> Severe 5%); inflicted by Bite (Moderate), Swipe (Minor), and Sword Slash/Pierce (Weak, small chance)
-- **Faint**: Triggered automatically once HP drops to 5% of max HP or below; unable to move
-- **Stunned**: Skip next turn
-- **Knocked Down**: Prone; reduced accuracy
+- **Ranks**: Every status effect is graded on a 5-step severity scale: Weak, Minor, Moderate, Major, Severe - currently only Bleeding actually uses this; Stun/Knockdown/Slowed have their own "length" set by whatever inflicted them instead (see below), not a severity rank
+- **Bleeding**: Damage over time as a % of MAX HP (changed from current HP), scaling with rank (Weak 1% -> Severe 5%); inflicted by Bite (Moderate), Swipe (Minor), and most Sharp weapon moves (Weak, small chance). Blocked outright (0% chance) if the target's Defense beats the attacker's Strength - see Race-Based Attacks
+- **Faint**: Triggered automatically once HP drops to 5% of max HP or below (clears again if healed back above it). A forced, unbreakable version of Stun - no AP is granted and there's no way to break out of it; the unit's turn is skipped outright every time until HP recovers. If all of a player's units are Fainted, that player is eliminated (see Victory Condition)
+- **Stunned**: skips the unit's own upcoming turns - how many is set by whatever inflicted it (e.g. Shield Bash: 1 turn), not a severity rank. Unlike Faint, a Stunned (not Fainted) unit still gets AP on its turn, but the only choices available are attempting to **Break Stun** (3 AP, clears it early and lets the unit act normally with whatever AP remains) or ending the turn without acting. Break Stun is restricted to "Summoner" units (anyone with a real Class - the 4 hero classes today, more later) and has its own 5-turn cooldown after use; summoned creatures can't break out at all
+- **Knocked Down**: cannot move, and the unit's own accuracy is cut by 75% on anything it attempts while down. Cleared by spending AP to stand back up - the cost is set by whatever knocked it down (Punch: 1 AP), not a fixed global amount. Chance to inflict: 80% if the attacker's Strength beats the target's Strength + Defense ("Armor"), 2% otherwise (currently only Punch can cause this)
+- **Slowed**: reduces EFFECTIVE Speed by a %, for a set number of turns - both set by whatever inflicted it (Frost Blast: -40%, 2 turns). Lowers both turn-order priority (a Slowed unit acts later starting the following Turn) and tiles-per-AP
 - **Rooted**: Cannot move; can still attack/cast
 - **Frozen**: Reduced movement speed; slower attacks
 - **Silenced**: Cannot cast spells; can still use skills
@@ -401,6 +421,21 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Mechanics**: Directional abilities; no line-of-sight required
 - **Friendly Fire**: ENABLED (careful with AoE)
 - **Detection**: Hitting any unit reveals it for 1 turn
+- **Cone AOE - First Implementation (Frost Blast)**: aimed at a direction rather than a specific unit - click any hex within range to set the direction and fire. The cone is a real 60-degree hex sector (narrow at range 1, naturally widening with distance) rather than an approximation, and hits every living unit inside it out to the move's range. A live preview highlights the exact hexes that would be hit as the mouse moves, before committing
+
+#### Attack Targeting & Preview
+- **Range Indicator**: selecting an attack closes the menu and shows a "select a target, or press E to return" prompt; every hex within the move's actual range (respecting any specialist range bonus, e.g. the Cleric's mace) lights up faintly, with actual valid targets highlighted in red on top of that
+- **Live Preview Panel**: hovering a valid target shows its exact Damage, Hit%, Crit% (or "100% (backstab)" if guaranteed), and any status effect/Knockdown chance the move could inflict - computed from the same formulas the attack actually resolves with, not a separate estimate
+- **No Silent Failures**: picking a move that's unaffordable (AP/MP), out of ammo, or has nothing in range shows a specific message explaining why, rather than the menu just doing nothing
+
+#### Victory Condition
+- **Format**: 4-player free-for-all - each player is treated as a "team" of one (no real team/faction system exists yet)
+- **Elimination**: a unit is eliminated once Fainted (not necessarily dead - HP can still be above 0); the match ends the moment only one player's unit is left un-Fainted, and that player wins (a simultaneous last-two-standing situation is a Draw)
+
+#### AI (Placeholder)
+- **Current Behavior**: every non-player-controlled unit simply walks toward the player each turn (closest reachable tile adjacent to the player, via the same pathfinding movement uses) - it does not attack yet. This exists so player-side attacks/spells have something in range to test against while the rest of combat is built out
+- **Also Handles**: a Stunned AI unit always attempts to Break Stun; a Knocked Down one always stands back up; movement animates the same way a player's does
+- **Not Yet Implemented**: actual attack decision-making, target prioritization, or any tactical behavior - full AI is a separate, later pass
 
 ### 4.2 Class System
 
@@ -433,7 +468,8 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Strategy**: Allows creative team compositions
 
 ### 4.3 Equipment & Progression
-- **Equipment Slots**: Weapon, Armor, Accessory (at minimum)
+- **Equipment Slots**: Weapon, Armor, Accessory (at minimum) - "Armor" as a real equipment slot doesn't exist yet; the STR-vs-(STR+DEF) Knockdown formula uses raw Defense as a stand-in for it until it does
+- **Weapon Inventory**: fully implemented now - see Inventory & Weight under Combat System §4.1 (20 weight capacity, per-weapon weights, ammo for ranged weapons)
 - **Leveling**: Experience from combat; stat growth per level
 - **Abilities**: Learned via class progression or equipment bonuses
 - **Cards**: Gained from treasure chests, enemy drops, crafting
@@ -548,7 +584,10 @@ SagesOfOzvaram/
 │   ├── Weapon.cs
 │   ├── WeaponCatalog.cs
 │   ├── RaceAttacks.cs
+│   ├── RaceCatalog.cs       (per-race stat bonus + elemental vulnerability)
 │   ├── ClassCatalog.cs
+│   ├── AttackResolver.cs    (targeting → hit/crit/damage/status/knockback resolution)
+│   ├── AmmoType.cs
 │   ├── SpellCard.cs
 │   ├── SpellCatalog.cs
 │   ├── SummonCard.cs
@@ -617,36 +656,41 @@ SagesOfOzvaram/
 - Sprite loading from disk
 - Unit spawning in corners (avoiding water/mountains)
 - Sprite scaling per-unit
-- Turn order system (Speed-based)
-- Camera pan/zoom to units per turn
+- Turn order system (Speed-based, now off EFFECTIVE Speed - see Status Effects/Slowed)
+- Camera pan/zoom to units per turn, now continuously following (not just once per turn) including mid-walk and mouse-hover during Move mode
 - Auto-advance between units every 3 seconds
-- WASD camera controls (fixed directional inputs)
+- WASD camera controls, deltaTime-scaled (frame-rate independent - fixed a jitter bug where panning speed was tied to frame rate)
 - Map Editor Dev Console (basic tile/object commands)
+- Font system (text renders throughout the UI - AP/HP display, menus, combat log, tooltips)
+- Turn announcement UI ("TURN X START" with fade animation)
+- Movement: click-to-move with pathfinding, AP cost display, live path preview, and now real tile-by-tile walk animation (not an instant teleport)
+- **Full attack system**: targeting (single-target click, HitsAllAdjacent, and a real cone-AOE aim-by-direction mode), hit/miss rolls, crit, damage (including per-weapon AttackPower, DEF/RES diminishing-returns mitigation, Evasion), knockback/thrust movement, weapon switching, ammo consumption, range indicator + live damage/hit%/crit/affliction preview panel, and a combat log
+- Status effects: Bleeding (now off MAX HP), Stunned (with Break Stun + cooldown), Knocked Down, Slowed, and Faint (forced unbreakable stun) - all fully resolved, not just data
+- Inventory weight system (20 capacity, per-weapon weights) and a per-weapon ammo system (Arrow/Bullet/Bolt)
+- Race Perks (per-race stat bonus + elemental vulnerability, applied automatically)
+- Simple move-toward-player AI for non-player units (no attacking yet)
+- FFA victory condition (last player with a non-Fainted unit wins)
+- Health display on units (name + HP/MaxHP text)
 
 #### 🔄 IN PROGRESS
-- Font system integration (Arial.spritefont setup — file not yet added to Content/, Content.mgcb has no registered entries)
-- Turn announcement UI ("TURN X START" with fade animation) — designed but not yet implemented in Draw(); no rendering code exists for it currently
 - UI polish (turn display, current unit info)
+- AI: currently movement-only; attack decision-making is the next major piece
 
 #### ⏳ TODO (Phase 1 remaining)
-- [ ] Persistent turn/unit display in UI
 - [ ] Pixelated grass sprites/textures on tiles
-- [ ] Click unit to select, show movement range
-- [ ] Click tile to move unit (pathfinding + animation)
-- [ ] Basic attack system (select target, deal damage)
-- [ ] Health display on units
+- [ ] AI attacks (not just movement)
 - [ ] Sound effects & music (basic)
 
 ### Phase 2: Gameplay Core (Next)
-- [ ] Full combat system (spells, abilities, items)
-- [ ] Deck/card system mechanics
-- [ ] Status effects application & resolution
+- [ ] Spell/card execution (currently presentation/deck-state only - see Card/Deck System)
+- [ ] Status effects still unimplemented: Rooted, Frozen, Silenced, Bound, Cursed, Fear, Blind
 - [ ] Aggro system implementation
 - [ ] Fog of War visualization
 - [ ] Map Editor UI (palette, inspector, toolbar)
 - [ ] More unit classes & progression
 - [ ] Save/Load game state
 - [ ] Story intro & tutorial
+- [ ] Real teams/parties (combat is currently a 4-player FFA, no grouping)
 
 ### Phase 3: Content & Polish (Planned)
 - [ ] Full story campaign (Acts 1-4)
@@ -830,18 +874,44 @@ SagesOfOzvaram/
 
 ---
 
+### Session 5: The Attack System, End to End
+**Goals**: Take combat from data-only to a fully playable 4-player FFA - targeting, resolution, every weapon's real numbers, and the systems those numbers needed to mean anything
+
+**Accomplishments** *(see Combat System §4.1 for exact current numbers - this is the "what got built," not the "what it's tuned to")*:
+- Inventory weight system (20 capacity, per-weapon weights) and a real ammo system (Arrow/Bullet/Bolt, consumed per shot)
+- Full attack resolution pipeline: targeting (single-target, HitsAllAdjacent, and a real cone-AOE aim-by-direction mode with live preview), hit/miss, crit (incl. guaranteed backstab crits), damage, knockback/thrust, weapon-switch handling, ammo spend - plus a range indicator and a live damage/hit%/crit/affliction preview panel so nothing is a guess
+- Simple move-toward-player AI (movement only, no attacks yet), with real tile-by-tile walk animation for every unit (not a teleport) and a camera that continuously follows whoever's acting
+- New status effects, all fully resolved (not just data): Knocked Down, Stunned (with a Break Stun mechanic + cooldown), Faint (a forced, unbreakable version of Stun), Slowed
+- FFA victory condition (last player with a non-Fainted unit wins)
+- A full weapon-by-weapon balance pass: every racial move and all 9 weapons got real numbers, several new mechanics along the way (distance-banded accuracy for Longbow/Pistol/Crossbow, per-weapon `AttackPower` so multiple tiers of the same weapon can share moves, a Wand introduced alongside the Staff, Shield Bash restricted to a Warrior specialist, a Cleric-only mace upgrade with its own range/damage-type bonus)
+- 7-type damage system (Sharp/Blunt/Magical/Light/Electric/Poison/Frost) replacing the old Physical/Magical split
+- DEF/RES switched to a diminishing-returns curve (the same family WoW/Skyrim use) instead of a flat clamped percentage
+- Evasion actually wired into the hit-chance formula for the first time
+- Race Perks: a stat bonus + elemental vulnerability per race, applied automatically to any unit of that race
+- Every attack's AP cost unified to 1; Sorcerer's Staff/Wand attacks now cost 10 MP on top - the only moves in the game that spend MP
+
+**Fixed Along the Way**:
+- Combat menu selections that failed silently (unaffordable AP/MP, no ammo, nothing in range) now always show why
+- Camera didn't follow a unit that moved mid-turn (only re-centered once per turn) - now follows continuously, including during Move-mode's tile-hover
+- View Map's WASD panning was frame-rate dependent (flat per-frame step, no deltaTime scaling) - the actual cause of reported jitter/lag, now scaled properly
+- `HexGrid.GetHexesInRadius` was completely broken (ignored its center parameter) - found while building the range indicator, which needed correct radius math
+
+**Notes**:
+- AI attacking (not just moving) is the natural next milestone
+- Spell/card execution is still a separate, unstarted system - the deck/hand UI works, but nothing a card does actually happens yet
+
+---
+
 ## 9. UPCOMING MILESTONES
 
 ### Immediate (Next 1-2 sessions)
-- [ ] **Font Integration**: Get Arial.spritefont working in Content pipeline
-- [ ] **Turn UI**: Display "TURN X", current unit name, turn order
-- [ ] **Unit Selection**: Click unit to select, show movement range
-- [ ] **Unit Movement**: Click tile to move, simple pathfinding
+- [ ] **AI Attacks**: non-player units currently only move toward the player - give them real attack decisions
+- [ ] **Roachlin Slash / Summon Attacks**: summoned creatures' move lists work differently from a hero's kit (every move counts as an "attack," even spell-like ones) - still a separate, unstarted design pass
+- [ ] **Remaining Weapons**: any future weapon variants (e.g. a second Dagger/Sword tier, now that `Weapon.AttackPower` supports it) and finishing the AttackPower migration for Staff/Wand/Bow/Pistol
 
 ### Short-term (Next 3-5 sessions)
-- [ ] **Combat System**: Basic attack (select target, deal damage, show HP)
-- [ ] **Health Display**: HP bar or number on units
-- [ ] **Status Effects**: Apply/resolve simple effects (Stun, Knockdown)
+- [ ] **Spell/Card Execution**: the deck/hand UI is fully built (draw, browse, tooltips), but no spell or summon actually does anything yet when played
+- [ ] **Remaining Status Effects**: Rooted, Frozen, Silenced, Bound, Cursed, Fear, Blind are still just data/prose, unlike Bleeding/Stunned/Knocked Down/Slowed/Faint
 - [ ] **Sound Effects**: Basic UI sounds, attack sounds, music loop
 
 ### Medium-term (Phase 1 completion)
@@ -849,6 +919,7 @@ SagesOfOzvaram/
 - [ ] **Map Editor UI**: Proper palette, inspector, toolbar
 - [ ] **Save/Load**: Full game state persistence
 - [ ] **Story Intro**: First scene, tutorial
+- [ ] **Real Teams**: combat is currently a 4-player FFA (no party/faction grouping) - needed before the story's multi-hero party structure can exist in-engine
 
 ---
 
@@ -949,13 +1020,19 @@ SagesOfOzvaram/
 ## 13. KNOWN ISSUES & TECHNICAL DEBT
 
 ### Current Blockers
-- [ ] **Font Rendering**: Arial.spritefont not loading in Content pipeline
-  - **Impact**: UI text invisible; turn announcements won't show
-  - **Solution**: Add to Content.mgcb, rebuild Content
-  - **Workaround**: Hard-code rectangle overlays instead of text
+- [x] **Font Rendering**: Arial.spritefont not loading in Content pipeline
+  - **Status**: Resolved - text renders throughout the UI now (AP/HP display, all menus, combat log, tooltips)
 
 - [ ] **Perlin Noise Indexing**: Previous out-of-bounds errors (FIXED with & 255 masking)
   - **Status**: Resolved; monitor for future edge cases
+
+- [ ] **Camera Pan Speed Not Frame-Rate Independent**: `HandleMapControls`'s WASD pan speed was a flat per-FRAME step (`panSpeed = 5f`, applied once per Update() call with no deltaTime scaling) instead of a per-SECOND rate - any variance in frame timing showed up directly as visible stutter
+  - **Impact**: reported as "View Map feels laggy and jittery"
+  - **Status**: Resolved - converted to `400 pixels/second * deltaTime`
+
+- [ ] **HexGrid.GetHexesInRadius Bug**: iterated `x`/`y` as absolute coordinates near the map origin instead of relative to `centerCol`/`centerRow`, and added `(x, y)` instead of `(centerCol + x, centerRow + y)` - returned hexes near (0,0) regardless of what center was passed in
+  - **Impact**: unused by anything at the time (dead code), so no observed symptom - found and fixed while building the Move-mode range indicator, which needed a correct version of this exact functionality
+  - **Status**: Resolved
 
 - [ ] **HexGrid Odd-R/Cube Conversion**: `OddRToCube`/`CubeToOddR` used the wrong offset formula (matched "odd-q" column-offset instead of the "odd-r" row-offset scheme the rest of HexGrid uses) - about 1 in 7 neighbor pairs resolved to a cube delta of the wrong distance, and opposite screen-directions didn't map to opposite cube deltas
   - **Impact**: `GetDistance` was subtly wrong in some tile configurations; discovered while implementing Facing/backstab detection, which depends on direction math being correct
@@ -1001,6 +1078,7 @@ SagesOfOzvaram/
 | 1.0 | Initial | Dave | GDD foundation, lore, mechanics, tech stack |
 | 1.1 | Following | Dave | Map system details, HexGrid math, procedural generation |
 | 1.2 | Latest | Dave | Unit system, turn system, dev journal, status update |
+| 1.2 (Session 5 update) | September 2026 | Dave | Full attack system (targeting/resolution/AI/status effects), complete weapon-by-weapon balance pass, damage types, ammo, DEF/RES diminishing returns, Evasion, Race Perks, movement animation + camera follow, View Map jitter fix - see Combat System §4.1 and Dev Journal Session 5 |
 
 ---
 

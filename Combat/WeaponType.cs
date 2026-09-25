@@ -11,7 +11,9 @@ namespace SagesOfOzvaram.Combat
         OneHandedSword, // distinct from a future TwoHandedSword - a One-Handed specialist isn't automatically a Two-Handed one
         Shield,
         Staff,
+        Wand, // distinct from Staff - a Staff specialist isn't automatically a Wand specialist (the Sorcerer happens to be both)
         Bow,
+        Crossbow, // distinct from Bow - a generalist weapon (see WeaponCatalog.Crossbow), nobody specializes in it, and a Bow specialist gets no bonus using one
         Pistol,
         Mace
     }

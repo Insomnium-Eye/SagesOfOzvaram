@@ -440,7 +440,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Warrior,
             new Move("Mighty Slash", "One devastating swing, whatever's in hand.",
                 apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.90f, baseDamage: 4,
-                strengthDivisor: 2f, damageType: DamageType.Physical),
+                strengthDivisor: 2f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/MightySlash_CardArt");
 
         public static readonly SpellCard SummonBlade = new SpellCard(
@@ -484,7 +484,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Warrior,
             new Move("Whirlwind", "A spinning arc of steel.",
                 apCost: 3, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
-                strengthDivisor: 3f, damageType: DamageType.Physical, hitsAllAdjacent: true),
+                strengthDivisor: 3f, damageType: DamageType.Sharp, hitsAllAdjacent: true),
             "imgs/Cards/Spells/Whirlwind_CardArt");
 
         public static readonly SpellCard Execute = new SpellCard(
@@ -493,7 +493,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Warrior,
             new Move("Execute", "End it.",
                 apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 5,
-                strengthDivisor: 3f, damageType: DamageType.Physical),
+                strengthDivisor: 3f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/Execute_CardArt");
 
         public static readonly SpellCard Charge = new SpellCard(
@@ -502,7 +502,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Warrior,
             new Move("Charge", "Close the distance before they can react.",
                 apCost: 2, mpCost: 3, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
-                strengthDivisor: 3f, damageType: DamageType.Physical, attackerAdvanceTiles: 3),
+                strengthDivisor: 3f, damageType: DamageType.Sharp, attackerAdvanceTiles: 3),
             "imgs/Cards/Spells/Charge_CardArt");
 
         public static readonly SpellCard BattleCry = new SpellCard(
@@ -550,7 +550,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Place Trap", "A trap only the one who set it will ever see.",
                 apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
-                strengthDivisor: 4f, damageType: DamageType.Physical,
+                strengthDivisor: 4f, damageType: DamageType.Sharp,
                 inflictsStatusEffect: "Snared", statusEffectChance: 0.85f, statusDurationTurns: 2),
             "imgs/Cards/Spells/PlaceTrap_CardArt");
 
@@ -577,7 +577,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Multi-Shot", "Why loose one arrow when you can loose three.",
                 apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
-                strengthDivisor: 4f, damageType: DamageType.Physical),
+                strengthDivisor: 4f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/MultiShot_CardArt");
 
         public static readonly SpellCard PiercingShot = new SpellCard(
@@ -586,7 +586,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Piercing Shot", "One line, drawn straight through everything in it.",
                 apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.85f, baseDamage: 8,
-                strengthDivisor: 3.5f, damageType: DamageType.Physical),
+                strengthDivisor: 3.5f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/PiercingShot_CardArt");
 
         public static readonly SpellCard ExplosiveTrap = new SpellCard(
@@ -596,7 +596,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Explosive Trap", "Not every trap needs to be subtle.",
                 apCost: 3, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 10,
-                strengthDivisor: 3f, damageType: DamageType.Physical),
+                strengthDivisor: 3f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/ExplosiveTrap_CardArt");
 
         public static readonly SpellCard Camouflage = new SpellCard(
@@ -641,7 +641,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Rain of Arrows", "The sky itself turns hostile.",
                 apCost: 3, mpCost: 4, range: 5, baseAccuracy: 0.75f, baseDamage: 6,
-                strengthDivisor: 4f, damageType: DamageType.Physical),
+                strengthDivisor: 4f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/RainOfArrows_CardArt");
 
         public static readonly SpellCard PoisonShot = new SpellCard(
@@ -650,7 +650,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Poison Shot", "The wound is the least of their worries.",
                 apCost: 2, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 4,
-                strengthDivisor: 5f, damageType: DamageType.Physical,
+                strengthDivisor: 5f, damageType: DamageType.Sharp,
                 inflictsStatusEffect: "Poisoned", statusEffectChance: 0.65f, statusDurationTurns: 3),
             "imgs/Cards/Spells/PoisonShot_CardArt");
 
@@ -660,7 +660,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Net Shot", "Sometimes the point isn't to hurt them.",
                 apCost: 2, mpCost: 2, range: 4, baseAccuracy: 0.85f, baseDamage: 2,
-                strengthDivisor: 6f, damageType: DamageType.Physical,
+                strengthDivisor: 6f, damageType: DamageType.Sharp,
                 inflictsStatusEffect: "Snared", statusEffectChance: 0.80f, statusDurationTurns: 2),
             "imgs/Cards/Spells/NetShot_CardArt");
 
@@ -679,7 +679,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Vital Shot", "One shot, exactly where it counts.",
                 apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 6,
-                strengthDivisor: 3f, damageType: DamageType.Physical,
+                strengthDivisor: 3f, damageType: DamageType.Sharp,
                 critChance: 0.30f, critMultiplier: 2.5f),
             "imgs/Cards/Spells/VitalShot_CardArt");
 
