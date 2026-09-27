@@ -19,6 +19,7 @@ namespace SagesOfOzvaram.Combat
         public int MPCost { get; }
         public int Range { get; }                    // hex distance
         public DamageType DamageType { get; }         // which stat (DEF/RES) mitigates this hit
+        public AttackAnimationType AnimationType { get; } // Slash (default - melee swing near the target) or Shooting (projectile from attacker to target) - see Game1's attack-animation spawning
 
         public int BaseDamage { get; }
         public float StrengthDivisor { get; }         // damage bonus = Strength / StrengthDivisor; 0 = no STR scaling
@@ -92,13 +93,14 @@ namespace SagesOfOzvaram.Combat
                     bool canInflictKnockdown = false, float knockdownChanceIfStrongerStr = 0f, float knockdownChanceOtherwise = 0f,
                     int knockdownStandUpApCost = 1, float accuracyFalloffPerTile = 0f,
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
-                    AmmoType? requiredAmmoType = null)
+                    AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash)
         {
             Name = name;
             Description = description;
             APCost = apCost;
             MPCost = mpCost;
             Range = range;
+            AnimationType = animationType;
             BaseAccuracy = baseAccuracy;
             AccuracyFalloffPerTile = accuracyFalloffPerTile;
             AccuracyBands = accuracyBands;

@@ -123,6 +123,18 @@ namespace SagesOfOzvaram
         private string _combatLogMessage = "";
         private float _combatLogTimer = 0f;
 
+        /// <summary>A simple, presentation-only "swing near the target" (Slash) or "projectile from attacker to target" (Shooting) effect, spawned per-target whenever an attack resolves - see SpawnAttackAnimations.</summary>
+        private class ActiveAttackEffect
+        {
+            public AttackAnimationType Type;
+            public Vector2 From;
+            public Vector2 To;
+            public float Elapsed;
+            public float Duration;
+        }
+
+        private readonly List<ActiveAttackEffect> _activeAttackEffects = new List<ActiveAttackEffect>();
+
         // Movement mode (opened from the "Move" turn-menu option)
         private bool _movementModeActive = false;
         private Dictionary<(int col, int row), (int tiles, int waterTiles)> _reachableTiles = new Dictionary<(int, int), (int, int)>();
@@ -599,54 +611,69 @@ namespace SagesOfOzvaram
                     foreach (var unit in _units)
                         unit.UpdateMovementAnimation(deltaTime);
 
+                    // Advance (and drop once finished) every active slash/shooting attack effect.
+                    for (int i = _activeAttackEffects.Count - 1; i >= 0; i--)
+                    {
+                        _activeAttackEffects[i].Elapsed += deltaTime;
+                        if (_activeAttackEffects[i].Elapsed >= _activeAttackEffects[i].Duration)
+                            _activeAttackEffects.RemoveAt(i);
+                    }
+
                     if (_combatLogTimer > 0f)
                         _combatLogTimer -= deltaTime;
 
                     // Camera continuously tracks whichever unit is acting, so it follows
                     // smoothly even as that unit walks tile-by-tile mid-turn (its Position
                     // animates via UpdateMovementAnimation above) instead of only snapping once
-                    // when the turn starts. Suppressed while free-looking the map (_viewingMap) -
-                    // that mode hands the camera entirely to WASD/scroll panning (see
-                    // HandleMapControls); ResumeFromMapView snaps it back on exit.
-                    _cameraTarget = _turnSystem.CurrentUnit.Position;
-
-                    // While picking a destination tile, follow whatever hex the mouse is over
-                    // instead - lets you scout the full reachable range without needing to pan
-                    // separately (WASD's free panning is suppressed during this mode below, so
-                    // hover is the only thing driving the camera here).
-                    if (_movementModeActive)
+                    // when the turn starts. Fully suppressed (no auto-recenter at all) while
+                    // free-looking the map (_viewingMap) or picking a Move destination
+                    // (_movementModeActive) - both hand the camera entirely to WASD/scroll
+                    // panning instead (see HandleMapControls); ResumeFromMapView and
+                    // OpenMovementMode each do their own one-time snap on entry.
+                    if (_viewingMap || _movementModeActive)
                     {
-                        var viewportSizeForHover = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                        var hoveredMovementHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSizeForHover);
-                        _cameraTarget = _hexGrid.HexToWorld(hoveredMovementHex.col, hoveredMovementHex.row);
+                        // Manual panning owns the camera here - nothing to do.
                     }
-
-                    if (!_viewingMap && _turnSystem.TransitioningCamera)
+                    else
                     {
-                        float progress = _turnSystem.CameraTransitionElapsed / 1.5f;  // Normalize to 0-1
-                        progress = MathHelper.Clamp(progress, 0f, 1f);
+                        _cameraTarget = _turnSystem.CurrentUnit.Position;
 
-                        // Smooth interpolation (easing)
-                        float easeProgress = progress * progress * (3f - 2f * progress);  // Smoothstep
+                        if (_turnSystem.TransitioningCamera)
+                        {
+                            float progress = _turnSystem.CameraTransitionElapsed / 1.5f;  // Normalize to 0-1
+                            progress = MathHelper.Clamp(progress, 0f, 1f);
 
-                        _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, easeProgress);
-                        _renderer.ZoomLevel = MathHelper.Lerp(_renderer.ZoomLevel, _cameraZoomTarget, easeProgress);
-                    }
-                    else if (!_viewingMap)
-                    {
-                        // Initial swoop-in is done - lock on exactly from here so the camera
-                        // can never lag behind a unit mid-walk.
-                        _renderer.CameraPosition = _cameraTarget;
-                        _renderer.ZoomLevel = _cameraZoomTarget;
+                            // Smooth interpolation (easing)
+                            float easeProgress = progress * progress * (3f - 2f * progress);  // Smoothstep
 
-                        // Allow this unit's one AI move + the auto-advance that ends its turn
-                        _hasAutoAdvancedThisTurn = false;
-                        _hasAiActedThisTurn = false;
+                            _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, easeProgress);
+                            _renderer.ZoomLevel = MathHelper.Lerp(_renderer.ZoomLevel, _cameraZoomTarget, easeProgress);
+                        }
+                        else
+                        {
+                            // Initial swoop-in is done - lock on exactly from here so the camera
+                            // can never lag behind a unit mid-walk.
+                            _renderer.CameraPosition = _cameraTarget;
+                            _renderer.ZoomLevel = _cameraZoomTarget;
+
+                            // Allow this unit's one AI move + the auto-advance that ends its turn
+                            _hasAutoAdvancedThisTurn = false;
+                            _hasAiActedThisTurn = false;
+                        }
                     }
 
                     bool isPlayerTurn = _turnSystem.CurrentUnit == _playerUnit;
 
-                    if (isPlayerTurn && !_turnSystem.TransitioningCamera)
+                    // Nothing acts - neither the player nor AI - until the "Turn X - Go!" banner
+                    // finishes (2s). The camera still swoops in underneath it (that lerp is
+                    // above, ungated), but this is what actually stops an AI unit from moving
+                    // the instant a match/Turn starts, before the player's even had a chance to
+                    // register whose turn it is.
+                    if (_turnSystem.ShowingTurnAnnouncement)
+                    {
+                        // Waiting out the announcement - no input handling, no AI, no auto-advance.
+                    }
+                    else if (isPlayerTurn && !_turnSystem.TransitioningCamera)
                     {
                         if (_playerUnit.IsStunned)
                         {
@@ -1151,6 +1178,12 @@ namespace SagesOfOzvaram
         /// <summary>
         /// Enter movement mode: computes _reachableTiles out to a bit beyond the unit's current
         /// AP budget (so out-of-range tiles nearby still show, tinted red - see DrawMovementRange).
+        /// Also snaps the camera once onto whatever tile the cursor happens to be over already,
+        /// so opening the menu doesn't leave the view centered somewhere unrelated - WASD then
+        /// pans freely from there (Update's camera-follow is suppressed for the whole mode, not
+        /// re-triggered every frame - a per-frame version of this chased the mouse in a runaway
+        /// feedback loop, since moving the camera changes which tile a STATIONARY cursor points
+        /// at, which moved the camera further, forever).
         /// </summary>
         private void OpenMovementMode()
         {
@@ -1159,6 +1192,11 @@ namespace SagesOfOzvaram
 
             _reachableTiles = Pathfinder.GetReachableTiles(_hexGrid, _map, start, _playerUnit.TilesPerAP, displayApBudget, GetOccupiedTiles(_playerUnit));
             _reachableTiles.Remove(start);
+
+            var mouseState = Mouse.GetState();
+            var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            var cursorHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+            _renderer.CameraPosition = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
 
             _movementModeActive = true;
         }
@@ -1252,11 +1290,14 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Placeholder AI (GDD-pending - no real decision-making yet): walk as close to the
-        /// player as this turn's AP allows, so melee/ranged moves have something to hit while
-        /// the attack system is being tested. Picks whichever tile adjacent to the player is
-        /// reachable with the shortest path, and moves toward it; doesn't attack yet. Also
-        /// handles Stun (always attempts Break Stun) and Knockdown (always stands back up).
+        /// Placeholder AI (GDD-pending - no real tactical depth yet): always targets the
+        /// player specifically (matches the FFA's current scope - AI-vs-AI isn't handled).
+        /// If the player is already in range of some affordable move, use the hardest-hitting
+        /// one instead of moving - no point closing distance you don't need to (this is what
+        /// keeps ranged units from walking into melee range for no reason). Otherwise walk
+        /// toward the player as before, then check once more - it may have closed into range
+        /// this turn - and attack if so. Also handles Stun (always attempts Break Stun) and
+        /// Knockdown (always stands back up).
         /// </summary>
         private void RunSimpleAI(BaseUnit aiUnit)
         {
@@ -1265,7 +1306,7 @@ namespace SagesOfOzvaram
 
             // Stunned: always attempt to Break Stun. If it fails (unaffordable/on cooldown),
             // that's this turn's one action - nothing else to try. If it succeeds, fall through
-            // and still use whatever AP remains to move, same as a normal turn would.
+            // and still use whatever AP remains to move/attack, same as a normal turn would.
             if (aiUnit.IsStunned)
             {
                 if (!aiUnit.TryBreakStun())
@@ -1275,12 +1316,15 @@ namespace SagesOfOzvaram
                 }
             }
 
-            // Knocked Down: stand up instead of trying (and failing) to move this turn.
+            // Knocked Down: stand up instead of trying (and failing) to move/attack this turn.
             if (aiUnit.IsKnockedDown)
             {
                 aiUnit.TryStandUp();
                 return;
             }
+
+            if (TryAiAttack(aiUnit))
+                return;
 
             var playerHex = _hexGrid.WorldToHex(_playerUnit.Position);
             var start = _hexGrid.WorldToHex(aiUnit.Position);
@@ -1305,6 +1349,50 @@ namespace SagesOfOzvaram
             // No reachable tile next to the player (e.g. boxed in) - just sit tight this turn.
             if (bestTile.HasValue)
                 MoveUnitTowards(aiUnit, bestTile.Value);
+
+            // May have closed into range this turn - take one swing if so.
+            TryAiAttack(aiUnit);
+        }
+
+        /// <summary>
+        /// Placeholder AI attack decision: among every move `aiUnit` can currently afford
+        /// (AP/MP/ammo) with the player in its effective range, use whichever would deal the
+        /// most raw damage. At most one attack per call (RunSimpleAI calls this up to twice a
+        /// turn - once before moving, once after). Returns true if an attack was made.
+        /// </summary>
+        private bool TryAiAttack(BaseUnit aiUnit)
+        {
+            var aiHex = _hexGrid.WorldToHex(aiUnit.Position);
+            var playerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int distanceTiles = _hexGrid.GetDistance(aiHex.col, aiHex.row, playerHex.col, playerHex.row);
+
+            var candidates = aiUnit.AvailableMovesWithSource
+                .Where(entry =>
+                {
+                    int apCost = aiUnit.GetEffectiveAPCost(entry.Move, entry.SourceWeapon);
+                    if (apCost > aiUnit.CurrentAP || entry.Move.MPCost > aiUnit.CurrentMP)
+                        return false;
+                    if (entry.Move.RequiredAmmoType.HasValue && aiUnit.GetAmmo(entry.Move.RequiredAmmoType.Value) < 1)
+                        return false;
+                    return distanceTiles <= entry.Move.GetEffectiveRange(aiUnit, entry.SourceWeapon);
+                })
+                .OrderByDescending(entry => entry.Move.GetDamage(aiUnit, _playerUnit, entry.SourceWeapon))
+                .ToList();
+
+            if (candidates.Count == 0)
+                return false;
+
+            var (move, sourceWeapon) = candidates[0];
+
+            BaseUnit primaryTarget = move.HitsAllAdjacent || move.HitsCone ? null : _playerUnit;
+            HexDirection? aimDirection = move.HitsCone
+                ? _hexGrid.GetDirectionTo(aiHex.col, aiHex.row, playerHex.col, playerHex.row)
+                : null;
+
+            var outcomes = AttackResolver.Resolve(aiUnit, primaryTarget, move, sourceWeapon, _hexGrid, _map, _units, aimDirection);
+            SpawnAttackAnimations(aiUnit, move, outcomes);
+            ShowCombatMessage(BuildCombatLogMessage(aiUnit, move, outcomes));
+            return true;
         }
 
         private void CancelMovementMode()
@@ -1454,7 +1542,8 @@ namespace SagesOfOzvaram
         private void ExecutePendingAttack(BaseUnit target, HexDirection? aimDirection = null)
         {
             var outcomes = AttackResolver.Resolve(_playerUnit, target, _pendingMove, _pendingSourceWeapon, _hexGrid, _map, _units, aimDirection);
-            ShowCombatMessage(BuildCombatLogMessage(_pendingMove, outcomes));
+            SpawnAttackAnimations(_playerUnit, _pendingMove, outcomes);
+            ShowCombatMessage(BuildCombatLogMessage(_playerUnit, _pendingMove, outcomes));
 
             _targetingModeActive = false;
             _coneAimingModeActive = false;
@@ -1467,10 +1556,49 @@ namespace SagesOfOzvaram
             _turnMenuActive = true;
         }
 
-        private string BuildCombatLogMessage(Move move, List<AttackOutcome> outcomes)
+        /// <summary>
+        /// Queue a simple visual effect for each target `move` was just used against - a Slash
+        /// (melee) flashes near the target, a Shooting move animates a projectile traveling
+        /// from the attacker to the target. Purely presentational - runs regardless of hit/miss,
+        /// so a whiffed swing/shot still visibly happens.
+        /// </summary>
+        private void SpawnAttackAnimations(BaseUnit attacker, Move move, List<AttackOutcome> outcomes)
+        {
+            Vector2 from = attacker.Position;
+            var fromHex = _hexGrid.WorldToHex(from);
+
+            foreach (var outcome in outcomes)
+            {
+                if (outcome.Target == null)
+                    continue;
+
+                float duration;
+                if (move.AnimationType == AttackAnimationType.Shooting)
+                {
+                    var toHex = _hexGrid.WorldToHex(outcome.Target.Position);
+                    int distanceTiles = _hexGrid.GetDistance(fromHex.col, fromHex.row, toHex.col, toHex.row);
+                    duration = 0.15f + 0.03f * distanceTiles; // a longer shot takes a touch longer to land
+                }
+                else
+                {
+                    duration = 0.25f;
+                }
+
+                _activeAttackEffects.Add(new ActiveAttackEffect
+                {
+                    Type = move.AnimationType,
+                    From = from,
+                    To = outcome.Target.Position,
+                    Elapsed = 0f,
+                    Duration = duration,
+                });
+            }
+        }
+
+        private string BuildCombatLogMessage(BaseUnit attacker, Move move, List<AttackOutcome> outcomes)
         {
             if (outcomes.Count == 0)
-                return $"{_playerUnit.Name} used {move.Name}, but there was nothing to hit.";
+                return $"{attacker.Name} used {move.Name}, but there was nothing to hit.";
 
             var parts = outcomes.Select(o =>
             {
@@ -1483,7 +1611,7 @@ namespace SagesOfOzvaram
                 return $"hit {o.Target.Name} for {o.Damage}{crit}{status}{fainted}";
             });
 
-            return $"{_playerUnit.Name} used {move.Name}: {string.Join("; ", parts)}";
+            return $"{attacker.Name} used {move.Name}: {string.Join("; ", parts)}";
         }
 
         /// <summary>Show a short-lived line at the bottom of the screen - both the actual combat log and "why didn't that work" feedback (unaffordable AP/MP, out of ammo, nothing in range) go through here so nothing is ever a silent no-op.</summary>
@@ -1594,13 +1722,13 @@ namespace SagesOfOzvaram
 
         private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState, float deltaTime)
         {
-            // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open
-            // (W/S there navigate the menu instead), and while picking a move destination
-            // (Update's camera block follows the mouse hover there instead - free panning would
-            // just fight that). Scaled by deltaTime (not a flat per-frame step) so it's smooth
-            // and frame-rate-independent instead of speeding up or stuttering with the frame
-            // rate - this was the actual cause of View Map feeling laggy/jittery.
-            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive && !_movementModeActive)
+            // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
+            // since W/S there navigate the menu instead (Move mode doesn't use W/S for
+            // anything, so panning stays available there - see OpenMovementMode for its
+            // one-time entry snap). Scaled by deltaTime (not a flat per-frame step) so it's
+            // smooth and frame-rate-independent instead of speeding up or stuttering with the
+            // frame rate - this was the actual cause of View Map feeling laggy/jittery.
+            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive)
             {
                 float panSpeed = 400f; // pixels/second
                 if (keyboardState.IsKeyDown(Keys.W))
@@ -1763,7 +1891,12 @@ namespace SagesOfOzvaram
                     Vector2 spriteSize = new Vector2(unit.SpriteTexture.Width * finalScale, unit.SpriteTexture.Height * finalScale);
                     Vector2 spritePos = unit.Position - (spriteSize / 2f);
 
-                    _spriteBatch.Draw(unit.SpriteTexture, spritePos, null, Color.White, 0f,
+                    // No real greyscale shader exists (or is worth building) for a "simple"
+                    // death indicator - tinting toward gray is the same approximation IsFainted
+                    // already uses for its HP text below, just applied to the sprite too.
+                    Color spriteTint = unit.IsAlive ? Color.White : new Color(90, 90, 90);
+
+                    _spriteBatch.Draw(unit.SpriteTexture, spritePos, null, spriteTint, 0f,
                                     Vector2.Zero, finalScale, SpriteEffects.None, 0f);
                 }
 
@@ -1771,12 +1904,22 @@ namespace SagesOfOzvaram
 
                 if (_font != null)
                 {
-                    string hpText = $"{unit.Name}: {unit.HP}/{unit.MaxHP}";
-                    Vector2 textSize = _font.MeasureString(hpText) * 0.4f;
+                    string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.MaxHP}" : $"{unit.Name}: DEAD";
+                    Vector2 textSize = _font.MeasureString(statusText) * 0.4f;
                     Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 40f);
-                    Color hpColor = unit.IsFainted ? Color.Gray : Color.White;
-                    _spriteBatch.DrawString(_font, hpText, textPos, hpColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+                    Color textColor = !unit.IsAlive ? Color.DarkRed : (unit.IsFainted ? Color.Gray : Color.White);
+                    _spriteBatch.DrawString(_font, statusText, textPos, textColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
                 }
+            }
+
+            // Simple slash/shooting attack effects (see SpawnAttackAnimations) - purely visual
+            foreach (var effect in _activeAttackEffects)
+            {
+                float t = MathHelper.Clamp(effect.Elapsed / effect.Duration, 0f, 1f);
+                if (effect.Type == AttackAnimationType.Slash)
+                    DrawSlashEffect(effect.To, t);
+                else
+                    DrawShootingEffect(effect.From, effect.To, t);
             }
 
             _spriteBatch.End();
@@ -2190,13 +2333,35 @@ namespace SagesOfOzvaram
             }
         }
 
-        private void DrawLineSimple(Vector2 start, Vector2 end, Color color)
+        private void DrawLineSimple(Vector2 start, Vector2 end, Color color) => DrawLineSimple(start, end, color, 1f);
+
+        private void DrawLineSimple(Vector2 start, Vector2 end, Color color, float thickness)
         {
             float angle = (float)Math.Atan2(end.Y - start.Y, end.X - start.X);
             float length = Vector2.Distance(start, end);
 
             _spriteBatch.Draw(_whitePixel, start, null, color, angle, Vector2.Zero,
-                            new Vector2(length, 1f), SpriteEffects.None, 0f);
+                            new Vector2(length, thickness), SpriteEffects.None, 0f);
+        }
+
+        /// <summary>A quick fading "X" swipe near the target - the melee attack effect (see SpawnAttackAnimations). t goes 0 (just landed) to 1 (fully faded).</summary>
+        private void DrawSlashEffect(Vector2 target, float t)
+        {
+            float alpha = 1f - t;
+            float size = 16f;
+            Color color = Color.White * alpha;
+
+            DrawLineSimple(target + new Vector2(-size, -size), target + new Vector2(size, size), color, 3f);
+            DrawLineSimple(target + new Vector2(-size, size), target + new Vector2(size, -size), color, 3f);
+        }
+
+        /// <summary>A small projectile traveling straight from attacker to target - the ranged attack effect (see SpawnAttackAnimations). t goes 0 (just fired) to 1 (arrived).</summary>
+        private void DrawShootingEffect(Vector2 from, Vector2 to, float t)
+        {
+            Vector2 pos = Vector2.Lerp(from, to, t);
+            const float size = 6f;
+            var rect = new Rectangle((int)(pos.X - size / 2f), (int)(pos.Y - size / 2f), (int)size, (int)size);
+            _spriteBatch.Draw(_whitePixel, rect, Color.Yellow);
         }
 
         // Dynamic regions on Content/imgs/Cards/Spells/SpellCard.png, as fractions of the card's

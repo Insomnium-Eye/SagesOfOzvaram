@@ -106,7 +106,7 @@ namespace SagesOfOzvaram.Combat
                 dagger.SpecialistAttacks.Add(new Move("Throw Dagger",
                     "Hurls the dagger at a target, consuming it - only a dagger specialist can make the throw count. Decent accuracy up close, but harder to land the further out it's thrown.",
                     apCost: 1, mpCost: 0, range: 8, baseAccuracy: 0.8f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 10f,
-                    accuracyFalloffPerTile: 0.08f, consumesWeapon: true));
+                    accuracyFalloffPerTile: 0.08f, consumesWeapon: true, animationType: AttackAnimationType.Shooting));
 
                 return dagger;
             }
@@ -132,7 +132,7 @@ namespace SagesOfOzvaram.Combat
                 staff.SpecialistAttacks.Add(new Move("Frost Blast",
                     "A cone of biting frost, low on raw damage but enough to chill anything it touches, slowing them down - only a Staff specialist can channel it.",
                     apCost: 1, mpCost: 10, range: 4, baseAccuracy: 0.75f, baseDamage: 5, intelligenceDivisor: 5f,
-                    damageType: DamageType.Magical, hitsCone: true,
+                    damageType: DamageType.Magical, hitsCone: true, animationType: AttackAnimationType.Shooting,
                     inflictsStatusEffect: "Slowed", statusDurationTurns: 2, speedReductionPercent: 0.4f));
 
                 return staff;
@@ -157,7 +157,7 @@ namespace SagesOfOzvaram.Combat
                 wand.SpecialistAttacks.Add(new Move("Arcane Missile",
                     "A bolt of raw arcane energy that occasionally surges for extra damage - only a Wand specialist can channel it.",
                     apCost: 1, mpCost: 10, range: 3, baseAccuracy: 0.8f, baseDamage: 14, intelligenceDivisor: 3f,
-                    damageType: DamageType.Magical, critChance: 0.08f, critMultiplier: 3f));
+                    damageType: DamageType.Magical, critChance: 0.08f, critMultiplier: 3f, animationType: AttackAnimationType.Shooting));
 
                 return wand;
             }
@@ -176,7 +176,7 @@ namespace SagesOfOzvaram.Combat
                 critChance: 0.20f, critMultiplier: 3f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.10f,
                 accuracyBands: new List<(int, int, float)> { (1, 1, 0.30f), (2, 4, 0.55f) },
-                requiredAmmoType: AmmoType.Bolt))
+                requiredAmmoType: AmmoType.Bolt, animationType: AttackAnimationType.Shooting))
         { Type = WeaponType.Crossbow, Weight = 3 };
 
         /// <summary>
@@ -192,7 +192,7 @@ namespace SagesOfOzvaram.Combat
                 apCost: 1, mpCost: 0, range: 6, baseAccuracy: 0.65f, baseDamage: 9, damageType: DamageType.Sharp, strengthDivisor: 5f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.10f,
                 accuracyBands: new List<(int, int, float)> { (1, 2, 0.20f), (3, 4, 0.65f), (5, 6, 0.45f) },
-                requiredAmmoType: AmmoType.Arrow),
+                requiredAmmoType: AmmoType.Arrow, animationType: AttackAnimationType.Shooting),
             new Move("Bow Whack", "A quick smack with the bow's limb at point-blank range - barely hurts, but doesn't require an arrow.",
                 apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.85f, baseDamage: 1, damageType: DamageType.Blunt, strengthDivisor: 6f))
         { Type = WeaponType.Bow, SpecialistAccuracyBonus = 0.15f, Weight = 3 };
@@ -209,7 +209,7 @@ namespace SagesOfOzvaram.Combat
                 critChance: 0.08f, critMultiplier: 3f, knockbackBase: 1,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.10f,
                 accuracyBands: new List<(int, int, float)> { (1, 1, 0.35f), (2, 3, 0.75f) },
-                requiredAmmoType: AmmoType.Bullet))
+                requiredAmmoType: AmmoType.Bullet, animationType: AttackAnimationType.Shooting))
         { Type = WeaponType.Pistol, Weight = 2 };
 
         /// <summary>
