@@ -171,7 +171,8 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Live Path Preview**: hovering a tile draws a line from the unit through the path to it, growing/shrinking as the cursor moves, ending in an arrowhead; hovering an unreachable tile (off-grid, blocked, occupied) instead draws the trail to the nearest tile that IS reachable and marks the hovered tile with a red X instead of an arrowhead
 - **Clicking Moves Toward, Not Just To**: clicking any tile - even one further than the unit can currently afford - moves it as far along that path as its AP allows, rather than refusing the click outright. A tile with no path at all (impassable/occupied/unreachable) is simply ignored
 - **Animated Movement**: a unit no longer jumps straight to its destination - it visibly walks the path tile-by-tile, animating smoothly through each hex in turn (0.2s per tile) rather than teleporting
-- **Camera Follows the Mover**: the camera continuously tracks whichever unit is acting (not just once when its turn starts), so it stays locked on as that unit walks mid-turn; while picking a destination tile in Move mode, it instead follows whichever tile the mouse is hovering, so you can scout the full reachable range without needing to pan separately (WASD's free panning is suppressed during that mode for the same reason). Free-look ("View Map") hands the camera entirely back to WASD/scroll panning and snaps back to the acting unit on exit
+- **Camera Follows the Mover**: the camera continuously tracks whichever unit is acting (not just once when its turn starts), so it stays locked on as that unit walks mid-turn. Move mode and free-look ("View Map") both fully own the camera instead - opening either does a one-time snap (Move mode snaps to whatever tile the cursor is already over, so clicking "Move" behaves as if you'd hovered that tile first; View Map snaps back to the acting unit on exit) and WASD/scroll panning takes over from there with no further auto-recentering while that mode is open
+- **Turn-Start Gate**: the existing "TURN X START" announcement (2 seconds, every turn - not just the match's first) now genuinely blocks all turn logic while it's showing, not just its own display - no AI movement, no AI attacks, no auto-advance, and no player input processes until it clears. Previously only the camera's own transition-lerp gated anything, which was shorter than the announcement, so a unit (AI or player) could act while "Turn X - Go!" was still on screen
 - **Current Implementation**: Move and Attack are both fully functional (targeting, resolution, everything below); Spells/Items are still unimplemented when selected
 
 #### Elevation Tiers & Height Mechanics
@@ -433,9 +434,17 @@ This approach creates a richer, more believable world where cultural misundersta
 - **Elimination**: a unit is eliminated once Fainted (not necessarily dead - HP can still be above 0); the match ends the moment only one player's unit is left un-Fainted, and that player wins (a simultaneous last-two-standing situation is a Draw)
 
 #### AI (Placeholder)
-- **Current Behavior**: every non-player-controlled unit simply walks toward the player each turn (closest reachable tile adjacent to the player, via the same pathfinding movement uses) - it does not attack yet. This exists so player-side attacks/spells have something in range to test against while the rest of combat is built out
-- **Also Handles**: a Stunned AI unit always attempts to Break Stun; a Knocked Down one always stands back up; movement animates the same way a player's does
-- **Not Yet Implemented**: actual attack decision-making, target prioritization, or any tactical behavior - full AI is a separate, later pass
+- **Current Behavior**: every non-player-controlled unit now attacks as well as moves. Each turn, it first checks for an attack (skipping the walk-toward-player step entirely if one's already available), then moves toward the player if nothing was in range, then checks for an attack again afterward (in case it just closed into range) - so it gets at most one attack attempt before moving and one after, never a multi-attack chain even with AP left over
+- **Attack Selection**: among every move the unit can currently afford (AP, MP, and ammo all checked) with the player within that move's effective range, it picks whichever deals the most raw damage - no weighting for accuracy, status effects, or positioning yet, and `HitsAllAdjacent`/cone moves are handled the same way a player's are (aimed straight at the player's direction for a cone)
+- **Still Player-Only Targeting**: even though this is a true 4-player FFA, the AI only ever targets the player specifically - it doesn't yet attack other AI units, so AI-vs-AI combat doesn't happen on its own
+- **Also Handles**: a Stunned AI unit always attempts to Break Stun; a Knocked Down one always stands back up; movement animates the same way a player's does; a resolved AI attack plays the same slash/shooting effect and combat log message a player's attack would (see Weapon Attack Animations and Attack Targeting & Preview)
+- **Not Yet Implemented**: target prioritization/threat assessment, attacking anyone other than the player, weighing anything besides raw damage, and any deeper tactical behavior (positioning, retreating, focus-fire) - still a separate, later pass
+
+#### Weapon Attack Animations
+- **Concept**: every move plays one of two simple visual effects on resolution, purely presentational (`AttackAnimationType`, set per-move) - it doesn't affect resolution at all
+- **Slash**: a short swipe drawn near the target, used for melee weapon/racial moves (Punch, Bite, Swipe, Sword Slash/Pierce/Spin, Dagger Stab, Shield Bash, Mace Bash, Bonk, Whack, ...)
+- **Shooting**: a projectile drawn traveling from the attacker's position to the target, used for anything ranged (Arrow Shot, Bolt Shot, Pistol Shot, Throw Dagger, Arcane Missile, Frost Blast) - travel duration scales slightly with distance rather than being fixed
+- **Death Visuals**: a dead unit's sprite is drawn with a flat gray color tint (an approximation, not true desaturation - the project has no shader/Effect pipeline yet) and its name/HP label switches to "`{Name}: DEAD`" in dark red, distinct from a merely-Fainted unit (which keeps its normal sprite and shows a gray HP label instead)
 
 ### 4.2 Class System
 
@@ -588,6 +597,7 @@ SagesOfOzvaram/
 │   ├── ClassCatalog.cs
 │   ├── AttackResolver.cs    (targeting → hit/crit/damage/status/knockback resolution)
 │   ├── AmmoType.cs
+│   ├── AttackAnimationType.cs (Slash/Shooting - see Weapon Attack Animations)
 │   ├── SpellCard.cs
 │   ├── SpellCatalog.cs
 │   ├── SummonCard.cs
@@ -664,21 +674,23 @@ SagesOfOzvaram/
 - Font system (text renders throughout the UI - AP/HP display, menus, combat log, tooltips)
 - Turn announcement UI ("TURN X START" with fade animation)
 - Movement: click-to-move with pathfinding, AP cost display, live path preview, and now real tile-by-tile walk animation (not an instant teleport)
-- **Full attack system**: targeting (single-target click, HitsAllAdjacent, and a real cone-AOE aim-by-direction mode), hit/miss rolls, crit, damage (including per-weapon AttackPower, DEF/RES diminishing-returns mitigation, Evasion), knockback/thrust movement, weapon switching, ammo consumption, range indicator + live damage/hit%/crit/affliction preview panel, and a combat log
+- **Full attack system**: targeting (single-target click, HitsAllAdjacent, and a real cone-AOE aim-by-direction mode), hit/miss rolls, crit, damage (including per-weapon AttackPower, DEF/RES diminishing-returns mitigation, Evasion), knockback/thrust movement, weapon switching, ammo consumption, range indicator + live damage/hit%/crit/affliction preview panel, a combat log, and a simple per-move Slash/Shooting visual effect (see Weapon Attack Animations)
 - Status effects: Bleeding (now off MAX HP), Stunned (with Break Stun + cooldown), Knocked Down, Slowed, and Faint (forced unbreakable stun) - all fully resolved, not just data
 - Inventory weight system (20 capacity, per-weapon weights) and a per-weapon ammo system (Arrow/Bullet/Bolt)
 - Race Perks (per-race stat bonus + elemental vulnerability, applied automatically)
-- Simple move-toward-player AI for non-player units (no attacking yet)
+- AI now attacks as well as moves (highest-damage affordable in-range move, before and after moving each turn - still player-targeting only, see AI (Placeholder))
+- Turn-start announcement now genuinely blocks all turn logic (AI and player alike) until it clears, every turn - not just cosmetic, and not just Turn 1
+- Death visuals: a dead unit's sprite tints gray and its label reads "DEAD," distinct from Fainted
 - FFA victory condition (last player with a non-Fainted unit wins)
 - Health display on units (name + HP/MaxHP text)
 
 #### 🔄 IN PROGRESS
 - UI polish (turn display, current unit info)
-- AI: currently movement-only; attack decision-making is the next major piece
+- AI: attacks and moves now, but still only targets the player and only weighs raw damage - target prioritization and any deeper tactical behavior is still ahead
 
 #### ⏳ TODO (Phase 1 remaining)
 - [ ] Pixelated grass sprites/textures on tiles
-- [ ] AI attacks (not just movement)
+- [ ] AI targeting other AI units (true FFA behavior, not just player-focused)
 - [ ] Sound effects & music (basic)
 
 ### Phase 2: Gameplay Core (Next)
@@ -902,10 +914,26 @@ SagesOfOzvaram/
 
 ---
 
+### Session 6: AI Attacks, Turn-Start Gating, Weapon Animations, Death Visuals
+**Goals**: Close the biggest gaps left after Session 5 - AI that only moved, a Move-mode camera bug, no visual feedback on hits, and units that could act before their own turn had visibly started
+
+**Accomplishments**:
+- **Weapon Attack Animations**: every move now plays a simple Slash (melee) or Shooting (ranged, travels attacker→target) effect on resolution, purely visual - see Weapon Attack Animations under Combat System §4.1
+- **Move-Mode Camera Fix**: replaced a divergent per-frame camera-chase bug (see Known Issues) with a one-time snap on opening Move mode, to whatever tile the cursor is already over - clicking "Move" now behaves as if the cursor had hovered that tile first, matching the requested behavior exactly
+- **Turn-Start Gate**: the "TURN X START" announcement (2s, every turn) now genuinely blocks all turn logic - no AI movement, no AI attacks, no auto-advance, no player input - until it clears, rather than only gating the camera's cosmetic transition (which was shorter, letting units act while the banner was still up)
+- **AI Attacks**: AI units now attack as well as move - one attempt before moving (skip walking if already in range) and one after (in case it just closed distance), each picking the highest-damage affordable in-range move it has. Still targets the player specifically, not other AI units - see AI (Placeholder)
+- **Death Visuals**: a dead unit's sprite tints gray (color-multiply approximation - no shader/Effect pipeline exists yet for true desaturation) and its label switches to "DEAD" in dark red, distinct from the existing gray-label treatment for a merely-Fainted unit
+
+**Notes**:
+- Every feature this session was verified with `dotnet build` (compiles clean) plus a short smoke-test launch (process stays alive) - this environment has no way to drive mouse/keyboard input, so none of it has been verified by an actual interactive playthrough yet
+- AI targeting other AI units (not just the player) is the natural next AI milestone, now that attacking at all is in place
+
+---
+
 ## 9. UPCOMING MILESTONES
 
 ### Immediate (Next 1-2 sessions)
-- [ ] **AI Attacks**: non-player units currently only move toward the player - give them real attack decisions
+- [ ] **AI Target Prioritization**: AI now attacks, but only ever targets the player specifically - extending it to attack other AI units (true FFA behavior) and weighing more than raw damage is the natural next step
 - [ ] **Roachlin Slash / Summon Attacks**: summoned creatures' move lists work differently from a hero's kit (every move counts as an "attack," even spell-like ones) - still a separate, unstarted design pass
 - [ ] **Remaining Weapons**: any future weapon variants (e.g. a second Dagger/Sword tier, now that `Weapon.AttackPower` supports it) and finishing the AttackPower migration for Staff/Wand/Bow/Pistol
 
@@ -1042,6 +1070,10 @@ SagesOfOzvaram/
   - **Impact**: mouse hex selection, hover highlighting, and movement-mode's click-to-move/path-preview (all built on `WorldToHex`) could target the wrong tile - reported as "cursor on one tile, a tile elsewhere gets highlighted"
   - **Status**: Resolved - derived the correct inverse of the axial-to-pixel formula `HexToWorld`/`OddRToCube` actually imply and swapped it in; verified with a brute-force check (every tile center, plus 500 randomly-jittered click points within each tile's interior, 800/800 passing; the old formula failed 799/800)
 
+- [ ] **Move-Mode Camera Divergent Feedback Loop**: `OpenMovementMode`'s camera-follow recomputed "world position under the cursor" every frame using the CURRENT camera position, then snapped the camera straight to it - since the mouse doesn't move but the camera does, each frame's screen→world conversion pointed further away than the last, with nothing bounding it
+  - **Impact**: reported as "the camera moves extremely fast way beyond the bounds of the map" as soon as Move mode opened
+  - **Status**: Resolved - removed the per-frame chase entirely; `OpenMovementMode` now does a single one-time snap to the cursor's tile using `Mouse.GetState()` at the moment Move is selected, and Update()'s camera-follow is fully suppressed for the rest of Move mode (WASD/scroll pan freely from there, same treatment as View Map) - see Camera Follows the Mover under Combat System §4.1
+
 ### Technical Debt
 - [ ] DevConsole needs expansion (more commands, better parsing)
 - [ ] AssetRegistry could support more asset types (models, sounds)
@@ -1079,10 +1111,11 @@ SagesOfOzvaram/
 | 1.1 | Following | Dave | Map system details, HexGrid math, procedural generation |
 | 1.2 | Latest | Dave | Unit system, turn system, dev journal, status update |
 | 1.2 (Session 5 update) | September 2026 | Dave | Full attack system (targeting/resolution/AI/status effects), complete weapon-by-weapon balance pass, damage types, ammo, DEF/RES diminishing returns, Evasion, Race Perks, movement animation + camera follow, View Map jitter fix - see Combat System §4.1 and Dev Journal Session 5 |
+| 1.2 (Session 6 update) | September 2026 | Dave | AI attacks (highest-damage affordable in-range move, before/after moving), turn-start gate blocking all turn logic during the announcement, Slash/Shooting weapon attack animations, Move-mode camera bug fix (one-time cursor snap, no more divergent chase), death visuals (gray tint + "DEAD" label) - see Combat System §4.1, Known Issues, and Dev Journal Session 6 |
 
 ---
 
 **END OF DOCUMENT**
 
-Last Updated: September 2026  
+Last Updated: September 2026 (Session 6)  
 Next Review: After Phase 1 completion or major design changes
