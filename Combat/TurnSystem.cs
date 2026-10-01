@@ -104,6 +104,7 @@ namespace SagesOfOzvaram.Combat
             }
 
             CurrentUnit.ResetAP();
+            CurrentUnit.RegenMana();
             CurrentUnit.ClearGuard();
             CurrentUnit.ResetCardDrawState();
         }

@@ -229,10 +229,17 @@ namespace SagesOfOzvaram.Units
         /// <summary>Refill AP to MaxAP. Called automatically when this unit's turn starts.</summary>
         public void ResetAP() => CurrentAP = MaxAP;
 
-        // Mana Points - unlike AP, this does NOT auto-refill each turn (nothing spends MP yet,
-        // since there's no Spell/card execution system; first-pass placeholder pool per class).
+        // Mana Points - unlike AP (full refill), MP regenerates a flat amount per turn, tiered
+        // by Class (see ClassCatalog.GetManaRegenPerTurn) rather than set per-instance, same
+        // "shared by Class" rule as WeaponSpecializations below.
         public int MaxMP { get; set; } = 10;
         public int CurrentMP { get; set; } = 10;
+
+        /// <summary>Flat MP regenerated at the start of this unit's turn - Sorcerer highest, Cleric second, Warrior/Hunter lowest, None (summons) none at all.</summary>
+        public int ManaRegenPerTurn => ClassCatalog.GetManaRegenPerTurn(Class);
+
+        /// <summary>Regenerate MP by ManaRegenPerTurn, capped at MaxMP. Called automatically when this unit's turn starts.</summary>
+        public void RegenMana() => CurrentMP = Math.Min(MaxMP, CurrentMP + ManaRegenPerTurn);
 
         /// <summary>AP cost to Guard. Adjustable - some abilities/weapons may raise or lower this.</summary>
         public int GuardAPCost { get; set; } = 2;

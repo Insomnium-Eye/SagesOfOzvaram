@@ -112,6 +112,13 @@ namespace SagesOfOzvaram
         private Weapon _pendingSourceWeapon;
         private List<BaseUnit> _targetCandidates = new List<BaseUnit>();
 
+        // Set only when _pendingMove came from casting a SpellCard (via the Cards menu) rather
+        // than a weapon/racial attack - lets ExecutePendingAttack/CancelTargeting know to remove
+        // the card from hand on a successful cast, and to return to the Cards menu (not the
+        // Attack menu) on cancel.
+        private SpellCard _pendingSpellCard;
+        private bool _targetingFromCardMenu = false;
+
         /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
         private BaseUnit _hoveredAttackTarget;
 
@@ -903,6 +910,25 @@ namespace SagesOfOzvaram
             _highlightedHandCardIndex = _handCardIndex;
         }
 
+        /// <summary>Remove a played card from the player's hand (consumed on a successful cast) and refresh the hand view.</summary>
+        private void RemoveCardFromHand(object card)
+        {
+            if (_classHands.TryGetValue(_playerUnit.Class, out var hand) && hand != null)
+                hand.Remove(card);
+
+            _availableHandCards = new List<object>(hand ?? new List<object>());
+            if (_availableHandCards.Count > 0)
+            {
+                _handCardIndex = Math.Clamp(_handCardIndex, 0, _availableHandCards.Count - 1);
+                _highlightedHandCardIndex = _handCardIndex;
+            }
+            else
+            {
+                _handCardIndex = 0;
+                _highlightedHandCardIndex = null;
+            }
+        }
+
         /// <summary>
         /// Compute the 4 portrait rectangles for the character-select 2x2 grid, centered onscreen.
         /// </summary>
@@ -1155,6 +1181,12 @@ namespace SagesOfOzvaram
                         }
                     }
                 }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.Space) && !_previousKeyboardState.IsKeyDown(Keys.Space))
+            {
+                TryCastSelectedCard();
+                return; // casting may close the card menu (targeting mode, or a HitsAllAdjacent resolve) - don't also process E/F below against now-stale state
             }
 
             if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
@@ -1535,6 +1567,92 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// Whether a SpellCard's effect can actually be cast right now through the same
+        /// AttackResolver pipeline weapon attacks use - true for anything that deals real damage
+        /// to a chosen target (or every adjacent enemy). Trap spells are excluded on purpose
+        /// despite having a damage formula: Place Trap/Explosive Trap are meant to place
+        /// something that triggers later, and resolving them as an immediate hit on a clicked
+        /// target would misrepresent what the card actually does - they need a real
+        /// placement/trigger system first. Everything else (buffs, heals, AP grants, taming,
+        /// summoning, ...) has no execution path yet at all; see TryCastSelectedCard.
+        /// </summary>
+        private static bool SpellCastsAsAttack(SpellCard card)
+        {
+            if (card.Name == "Place Trap" || card.Name == "Explosive Trap")
+                return false;
+            return card.Effect.BaseDamage > 0 && !card.Effect.TargetsAllies;
+        }
+
+        /// <summary>
+        /// Cast a damage-dealing SpellCard through the exact same AP/MP-check, targeting, and
+        /// AttackResolver pipeline a weapon attack uses - sourceWeapon is null throughout, same
+        /// as a racial move. The card is only removed from hand once it actually resolves (see
+        /// ExecutePendingAttack) - cancelling target selection leaves it in hand untouched.
+        /// </summary>
+        private void CastSpellAsAttack(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            if (!move.HitsAllAdjacent)
+            {
+                var validTargets = GetValidAttackTargets(move, null);
+                if (validTargets.Count == 0)
+                {
+                    ShowCombatMessage($"Nothing in range for {move.Name}.");
+                    return;
+                }
+                _targetCandidates = validTargets;
+            }
+
+            _pendingMove = move;
+            _pendingSourceWeapon = null;
+            _pendingSpellCard = card;
+            _cardMenuActive = false;
+
+            if (move.HitsAllAdjacent)
+            {
+                ExecutePendingAttack(null);
+            }
+            else
+            {
+                _targetingFromCardMenu = true;
+                _targetingModeActive = true;
+            }
+        }
+
+        /// <summary>
+        /// Attempt to cast whichever card is currently selected in the hand (_handCardIndex) -
+        /// damage-dealing Spell Cards go through CastSpellAsAttack for real; everything else
+        /// (utility/buff spells, and all Summon Cards - no summon-to-battlefield system exists
+        /// yet) just reports that casting isn't implemented for it yet, same honest treatment as
+        /// an unaffordable move rather than a silent no-op.
+        /// </summary>
+        private void TryCastSelectedCard()
+        {
+            if (_availableHandCards.Count == 0)
+                return;
+
+            object card = _availableHandCards[_handCardIndex];
+            if (card is SpellCard spellCard)
+            {
+                if (SpellCastsAsAttack(spellCard))
+                    CastSpellAsAttack(spellCard);
+                else
+                    ShowCombatMessage($"{spellCard.Name} can't be cast yet - no execution system for that effect.");
+            }
+            else if (card is SummonCard summonCard)
+            {
+                ShowCombatMessage($"Summoning {summonCard.Name} isn't implemented yet.");
+            }
+        }
+
+        /// <summary>
         /// Resolve _pendingMove against the given target (null for a HitsAllAdjacent move, which
         /// ignores it) or aimDirection (for a HitsCone move) via AttackResolver, log the
         /// outcome, and return to the turn menu.
@@ -1545,11 +1663,17 @@ namespace SagesOfOzvaram
             SpawnAttackAnimations(_playerUnit, _pendingMove, outcomes);
             ShowCombatMessage(BuildCombatLogMessage(_playerUnit, _pendingMove, outcomes));
 
+            // A spell cast successfully - consume it from the hand, same as any card play.
+            if (_pendingSpellCard != null)
+                RemoveCardFromHand(_pendingSpellCard);
+
             _targetingModeActive = false;
             _coneAimingModeActive = false;
             _attackMenuActive = false;
             _pendingMove = null;
             _pendingSourceWeapon = null;
+            _pendingSpellCard = null;
+            _targetingFromCardMenu = false;
             _targetCandidates.Clear();
 
             _turnMenuIndex = 0;
@@ -1645,9 +1769,19 @@ namespace SagesOfOzvaram
             _targetingModeActive = false;
             _pendingMove = null;
             _pendingSourceWeapon = null;
+            _pendingSpellCard = null;
             _targetCandidates.Clear();
-            _attackMenuIndex = 0;
-            _attackMenuActive = true;
+
+            if (_targetingFromCardMenu)
+            {
+                _targetingFromCardMenu = false;
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _attackMenuIndex = 0;
+                _attackMenuActive = true;
+            }
         }
 
         /// <summary>Handle input while aiming _pendingMove's cone: click any hex to set the direction and fire, E to cancel back to the attack submenu.</summary>
@@ -1932,7 +2066,10 @@ namespace SagesOfOzvaram
                 _spriteBatch.DrawString(_font, $"Turn {_turnSystem.CurrentTurn}", new Vector2(16, 16), Color.White);
 
                 if (_turnSystem.CurrentUnit == _playerUnit)
+                {
                     _spriteBatch.DrawString(_font, $"AP: {_playerUnit.CurrentAP}/{_playerUnit.MaxAP}", new Vector2(16, 40), Color.White);
+                    _spriteBatch.DrawString(_font, $"MP: {_playerUnit.CurrentMP}/{_playerUnit.MaxMP}", new Vector2(16, 64), Color.White);
+                }
 
                 if (_turnSystem.ShowingTurnAnnouncement)
                     DrawTurnAnnouncement(viewportSize);
@@ -2066,7 +2203,17 @@ namespace SagesOfOzvaram
             {
                 bool selected = i == _attackMenuIndex;
                 Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
-                Color textColor = selected ? Color.Black : Color.White;
+
+                // "Back" has no entry in _attackMenuMoves (it's the trailing extra label) -
+                // everything else is only unaffordable if the player can't cover its AP or MP.
+                bool affordable = true;
+                if (i < _attackMenuMoves.Count)
+                {
+                    var (move, sourceWeapon) = _attackMenuMoves[i];
+                    affordable = _playerUnit.CurrentAP >= _playerUnit.GetEffectiveAPCost(move, sourceWeapon)
+                        && _playerUnit.CurrentMP >= move.MPCost;
+                }
+                Color textColor = !affordable ? Color.Red : (selected ? Color.Black : Color.White);
 
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
                 _spriteBatch.DrawString(_font, _attackMenuLabels[i],
@@ -2399,8 +2546,9 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
+            bool canAffordMP = caster.CurrentMP >= card.Effect.MPCost;
             DrawTextCentered(card.Name, FractionalRect(destRect, CardNameBarRegion), Color.White);
-            DrawTextCentered(card.Effect.MPCost.ToString(), FractionalRect(destRect, CardCostCircleRegion), Color.Black);
+            DrawTextCentered(card.Effect.MPCost.ToString(), FractionalRect(destRect, CardCostCircleRegion), canAffordMP ? Color.Black : Color.Red);
             DrawTextCentered(card.ClassLabel, FractionalRect(destRect, CardTypeBarRegion), Color.White);
             DrawWrappedText(card.Description, FractionalRect(destRect, CardDescriptionRegion), Color.Black);
 
@@ -2487,8 +2635,9 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
+            bool canAffordMana = _playerUnit.CurrentMP >= card.ManaCost;
             DrawTextCentered(card.Name, FractionalRect(destRect, SummonNameBarRegion), Color.White);
-            DrawTextCentered(card.ManaCost.ToString(), FractionalRect(destRect, SummonManaCostCircleRegion), Color.Black);
+            DrawTextCentered(card.ManaCost.ToString(), FractionalRect(destRect, SummonManaCostCircleRegion), canAffordMana ? Color.Black : Color.Red);
 
             DrawTextCentered(card.Attack.ToString(), FractionalRect(destRect, SummonAttackBarRegion), Color.White);
             DrawTextCentered(card.Intelligence.ToString(), FractionalRect(destRect, SummonIntelligenceBarRegion), Color.White);
@@ -2645,8 +2794,8 @@ namespace SagesOfOzvaram
 
             DrawBottomHint(viewportSize,
                 _availableHandCards.Count > 1
-                    ? "A/D or click a side card to browse - F to draw - E to close"
-                    : "F to draw - E to close");
+                    ? "A/D or click a side card to browse - Space to cast - F to draw - E to close"
+                    : "Space to cast - F to draw - E to close");
         }
 
         /// <summary>

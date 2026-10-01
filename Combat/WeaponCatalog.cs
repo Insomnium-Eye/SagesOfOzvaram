@@ -7,9 +7,9 @@ namespace SagesOfOzvaram.Combat
     /// mutable state through a common weapon object. Move numbers are first-pass placeholders
     /// pending a real balance pass, same as RaceAttacks. Physical weapons scale with Strength;
     /// magical weapons (the Sorcerer's Staff/Wand) scale with Intelligence instead. Every attack
-    /// costs 1 AP, per design; every Staff/Wand attack (Bonk, Frost Blast, Whack, Arcane
-    /// Missile) additionally costs 10 MP, since they're the Sorcerer's magic-adjacent implements -
-    /// nothing else in the game costs MP to use.
+    /// costs 1 AP, per design; only the actual MAGIC attacks cost MP - that's Frost Blast and
+    /// Arcane Missile specifically (the Staff/Wand SpecialistAttacks, Sorcerer-only), not their
+    /// base Bonk/Whack, which anyone can swing for free. Nothing else in the game costs MP to use.
     /// Weight (see BaseUnit.InventoryWeightCapacity) is 2 for small one-handed weapons (Dagger,
     /// Pistol) and 3 for everything larger (Sword, Mace, Staff, Bow, Shield).
     ///
@@ -113,19 +113,20 @@ namespace SagesOfOzvaram.Combat
         }
 
         /// <summary>
-        /// Bonk is a base Attack anyone carrying a Staff can use (physical, STR-scaled). Frost
-        /// Blast is a SpecialistAttack - only a WeaponType.Staff specialist (currently just the
-        /// Sorcerer) can channel it; everyone else is limited to Bonk. Same base+specialist
-        /// pattern as every other weapon (e.g. Sword's Slash/Pierce + Spin) - the Wand (see
-        /// below) mirrors it too, with Whack + Arcane Missile.
+        /// Bonk is a base Attack anyone carrying a Staff can use (physical, STR-scaled, no MP
+        /// cost - it's just whacking someone with a stick). Frost Blast is a SpecialistAttack -
+        /// only a WeaponType.Staff specialist (currently just the Sorcerer) can channel it, and
+        /// it's the one that actually costs MP; everyone else is limited to Bonk. Same
+        /// base+specialist pattern as every other weapon (e.g. Sword's Slash/Pierce + Spin) -
+        /// the Wand (see below) mirrors it too, with Whack + Arcane Missile.
         /// </summary>
         public static Weapon RhinewoodStaff
         {
             get
             {
                 var staff = new Weapon("Rhinewood Staff",
-                    new Move("Bonk", "A clumsy overhead whack with the staff - low accuracy, low damage, but can rattle the target. Draws on the same mana as everything else this implement does.",
-                        apCost: 1, mpCost: 10, range: 1, baseAccuracy: 0.55f, baseDamage: 2, damageType: DamageType.Blunt, strengthDivisor: 4f,
+                    new Move("Bonk", "A clumsy overhead whack with the staff - low accuracy, low damage, but can rattle the target. No different from swinging any other blunt object - costs no mana.",
+                        apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.55f, baseDamage: 2, damageType: DamageType.Blunt, strengthDivisor: 4f,
                         inflictsStatusEffect: "Stunned", statusEffectChance: 0.20f, statusDurationTurns: 1))
                 { Type = WeaponType.Staff, Weight = 3 };
 
@@ -141,8 +142,9 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>
         /// Small, light, one-handed - Whack is a base Attack anyone carrying a Wand can use
-        /// (weak, but reliable). Arcane Missile is a SpecialistAttack - only a WeaponType.Wand
-        /// specialist (currently just the Sorcerer) can channel it; everyone else is limited to
+        /// (weak, but reliable, and free - no mana in a tap with a stick). Arcane Missile is a
+        /// SpecialistAttack - only a WeaponType.Wand specialist (currently just the Sorcerer)
+        /// can channel it, and it's the one that actually costs MP; everyone else is limited to
         /// Whack. This is the Sorcerer's actual spellcasting implement, not the Staff.
         /// </summary>
         public static Weapon Wand
@@ -150,8 +152,8 @@ namespace SagesOfOzvaram.Combat
             get
             {
                 var wand = new Weapon("Willow Wand",
-                    new Move("Whack", "A quick rap with the wand's tip - barely stings, but reliably lands. Draws on the same mana as everything else this implement does.",
-                        apCost: 1, mpCost: 10, range: 1, baseAccuracy: 0.95f, baseDamage: 1, damageType: DamageType.Blunt, strengthDivisor: 6f))
+                    new Move("Whack", "A quick rap with the wand's tip - barely stings, but reliably lands. No mana in a tap with a stick.",
+                        apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.95f, baseDamage: 1, damageType: DamageType.Blunt, strengthDivisor: 6f))
                 { Type = WeaponType.Wand, Weight = 2 };
 
                 wand.SpecialistAttacks.Add(new Move("Arcane Missile",
