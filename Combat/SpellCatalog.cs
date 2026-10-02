@@ -74,15 +74,6 @@ namespace SagesOfOzvaram.Combat
                 grantedAP: 2),
             "imgs/Cards/Spells/SecondWind_CardArt");
 
-        public static readonly SpellCard ThrowGrit = new SpellCard(
-            "Throw Grit",
-            "Flings a handful of dirt and sand into a target's eyes within 3 tiles, lowering their Accuracy for 2 turns.",
-            requiredClass: null,
-            new Move("Throw Grit", "A cheap trick anyone can pull off - a fistful of grit to the eyes.",
-                apCost: 1, mpCost: 1, range: 3, baseAccuracy: 0.85f, baseDamage: 0,
-                inflictsStatusEffect: "Blinded", statusEffectChance: 0.75f, statusDurationTurns: 2),
-            "imgs/Cards/Spells/ThrowGrit_CardArt");
-
         public static readonly SpellCard Brace = new SpellCard(
             "Brace",
             "Plant your feet and tense every muscle: +DEF/+RES for 1 turn. No shield required, just instinct.",
@@ -102,15 +93,6 @@ namespace SagesOfOzvaram.Combat
                 inflictsStatusEffect: "Rallied", statusDurationTurns: 2),
             "imgs/Cards/Spells/RallyCry_CardArt");
 
-        public static readonly SpellCard Trip = new SpellCard(
-            "Trip",
-            "A well-placed shove or hooked foot on an adjacent target - little damage, but a real chance to knock them down and Stun them.",
-            requiredClass: null,
-            new Move("Trip", "Simple physical trickery - anyone can throw someone off balance.",
-                apCost: 1, mpCost: 1, range: 1, baseAccuracy: 0.75f, baseDamage: 0,
-                inflictsStatusEffect: "Stunned", statusEffectChance: 0.6f),
-            "imgs/Cards/Spells/Trip_CardArt");
-
         public static readonly SpellCard SteadyHands = new SpellCard(
             "Steady Hands",
             "A moment of focused concentration: +Accuracy for 2 turns. Safer than Meditate, but far less potent.",
@@ -129,7 +111,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Sorcerer,
             new Move("Mana Shield", "Wrap yourself in a ward of raw mana.",
                 apCost: 1, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "Mana Shielded"),
+                inflictsStatusEffect: "Mana Shielded", isManaShield: true),
             "imgs/Cards/Spells/ManaShield_CardArt");
 
         public static readonly SpellCard Blink = new SpellCard(
@@ -138,7 +120,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Sorcerer,
             new Move("Blink", "Fold the space between here and there.",
                 apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
-                targetsAllies: true),
+                targetsAllies: true, isBlink: true),
             "imgs/Cards/Spells/Blink_CardArt");
 
         public static readonly SpellCard Flames = new SpellCard(
@@ -202,11 +184,12 @@ namespace SagesOfOzvaram.Combat
 
         public static readonly SpellCard ArcaneShield = new SpellCard(
             "Arcane Shield",
-            "A shimmering ward of arcane force: +DEF/+RES for 2 turns. Stronger than Brace, but costs Mana to conjure.",
+            "Conjure a shimmering ward of arcane force around yourself or an ally within 3 tiles, absorbing 8 + INT/3 damage before it touches their HP.",
             HeroClass.Sorcerer,
             new Move("Arcane Shield", "Bend light and force into a barrier.",
-                apCost: 1, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                targetsAllies: true, inflictsStatusEffect: "Arcane Shielded", statusDurationTurns: 2),
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 8,
+                intelligenceDivisor: 3f, damageType: DamageType.Magical,
+                targetsAllies: true, isAllyShield: true),
             "imgs/Cards/Spells/ArcaneShield_CardArt");
 
         public static readonly SpellCard Curse = new SpellCard(
@@ -623,7 +606,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Disengage", "The best shot is the one you live to take.",
                 apCost: 1, mpCost: 2, range: 3, baseAccuracy: 1f, baseDamage: 0,
-                targetsAllies: true),
+                targetsAllies: true, isBlink: true),
             "imgs/Cards/Spells/Disengage_CardArt");
 
         public static readonly SpellCard BeastBond = new SpellCard(
@@ -687,7 +670,7 @@ namespace SagesOfOzvaram.Combat
         {
             ArcaneBolt,
             Meditate, ForcedSleep, ConjurePotions, BandageWound, SecondWind,
-            ThrowGrit, Brace, RallyCry, Trip, SteadyHands,
+            Brace, RallyCry, SteadyHands,
             ManaShield, Blink, Flames, IceSpike, ChainLightning, EnchantWeapon,
             Fireball, FrostNova, ArcaneShield, Curse, TeleportStrike, ManaBurn, MagicMissile, ArcaneOrb,
             TezsMercy, ClearMind, MinorCleanse, RadiantBolt, BlessingOfLight, HallowedWard, TezsVigil,
@@ -698,6 +681,13 @@ namespace SagesOfOzvaram.Combat
             PlaceTrap, TameBeast, EagleEye, MultiShot, PiercingShot, ExplosiveTrap, Camouflage,
             HuntersMark, Disengage, BeastBond, RainOfArrows, PoisonShot, NetShot, Track, VitalShot,
         };
+
+        /// <summary>Assigns every spell card a stable, sequential integer Id (1, 2, 3, ...) in the exact declaration order above - see SpellCard.Id and the dev console's "add card &lt;ID&gt;".</summary>
+        static SpellCatalog()
+        {
+            for (int i = 0; i < AllCards.Count; i++)
+                AllCards[i].Id = i + 1;
+        }
 
         /// <summary>Every spell card a given class currently has access to: its class-specific cards plus every Generic (RequiredClass null) card.</summary>
         public static List<SpellCard> GetSpellsForClass(HeroClass heroClass)
@@ -710,5 +700,8 @@ namespace SagesOfOzvaram.Combat
             }
             return result;
         }
+
+        /// <summary>Every spell card that exists, regardless of class - used by the dev console's "add card" command to look one up by name.</summary>
+        public static List<SpellCard> GetAllCards() => new List<SpellCard>(AllCards);
     }
 }

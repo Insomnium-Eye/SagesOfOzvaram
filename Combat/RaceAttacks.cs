@@ -40,6 +40,54 @@ namespace SagesOfOzvaram.Combat
                 "Roachlin Slash", "Slashes with claws.",
                 apCost: 1, mpCost: 0, range: 1,
                 baseAccuracy: 0.85f, baseDamage: 3, damageType: DamageType.Sharp, strengthDivisor: 5f),
+
+            [Race.DuskRoachlinPriest] = new Move(
+                "Shadow Weave", "Weaves a strand of dark magic into the target from range.",
+                apCost: 1, mpCost: 0, range: 3,
+                baseAccuracy: 0.75f, baseDamage: 3, damageType: DamageType.Magical, intelligenceDivisor: 3.5f),
+
+            [Race.AetherfluffBeetle] = new Move(
+                "Nudge", "A harmless little bump - this creature isn't built to fight.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.90f, baseDamage: 0, damageType: DamageType.Blunt),
+
+            [Race.Bearat] = new Move(
+                "Maul", "A heavy, clubbing swipe from a thick-hided brute.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.75f, baseDamage: 6, damageType: DamageType.Blunt, strengthDivisor: 2.4f),
+
+            [Race.MirebackSlogger] = new Move(
+                "Shove", "Puts its full armored weight behind a crushing push.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.70f, baseDamage: 5, damageType: DamageType.Blunt, strengthDivisor: 2.2f,
+                knockbackBase: 1, knockbackDamagePerTile: 3),
+
+            [Race.LanternmothCinderwing] = new Move(
+                "Cinder Dust", "Scatters a glowing, faintly searing dust at range.",
+                apCost: 1, mpCost: 0, range: 3,
+                baseAccuracy: 0.80f, baseDamage: 2, damageType: DamageType.Magical, intelligenceDivisor: 3.2f),
+
+            [Race.Brambleboar] = new Move(
+                "Gore", "A thorn-backed charge that tears flesh and leaves it bleeding.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.75f, baseDamage: 5, damageType: DamageType.Sharp, strengthDivisor: 2.2f,
+                inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Minor, statusEffectChance: 0.35f),
+
+            [Race.SiltfinMawpike] = new Move(
+                "Snap Bite", "A fast, jagged-jawed bite from the shallows.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.80f, baseDamage: 4, damageType: DamageType.Sharp, strengthDivisor: 2.25f),
+
+            [Race.GloamravenOssuary] = new Move(
+                "Precision Strike", "A carefully placed strike aimed at a vital spot.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.85f, baseDamage: 3, damageType: DamageType.Sharp, strengthDivisor: 2f,
+                critChance: 0.30f, critMultiplier: 3f),
+
+            [Race.RootmossStonegloom] = new Move(
+                "Stone Slam", "A slow, immense blow with the weight of old stone behind it.",
+                apCost: 1, mpCost: 0, range: 1,
+                baseAccuracy: 0.70f, baseDamage: 5, damageType: DamageType.Blunt, strengthDivisor: 2.25f),
         };
 
         public static Move GetInnateMove(Race race) => InnateMoves[race];

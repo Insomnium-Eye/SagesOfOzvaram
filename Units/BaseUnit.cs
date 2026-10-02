@@ -134,6 +134,31 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public HeroClass Class { get; }
 
+        /// <summary>
+        /// Generic damage-absorption pool, reusable by any "health shield" effect (currently
+        /// just Mana Shield) - ApplyRawDamage drains this before HP, so a 20-point shield on a
+        /// unit at 50/100 HP absorbs the next 20 damage with HP untouched, same as a unit at
+        /// full HP gaining 20 points of overshield. 0 = no shield active.
+        /// </summary>
+        public int ShieldPoints { get; set; } = 0;
+
+        /// <summary>True while ShieldPoints is being drawn from the SAME pool as CurrentMP (Mana Shield specifically) - draining ShieldPoints also drains CurrentMP by the same amount while this is set. False for a shield that isn't tied to mana.</summary>
+        public bool ShieldDrainsMana { get; set; } = false;
+
+        /// <summary>Grant (or refresh, taking the larger) a health shield - see ShieldPoints.</summary>
+        public void ApplyShield(int amount, bool drainsMana = false)
+        {
+            ShieldPoints = Math.Max(ShieldPoints, amount);
+            ShieldDrainsMana = drainsMana;
+        }
+
+        /// <summary>Drop any active health shield early (e.g. the Sorcerer toggling Mana Shield off).</summary>
+        public void ClearShield()
+        {
+            ShieldPoints = 0;
+            ShieldDrainsMana = false;
+        }
+
         /// <summary>Bleed magnitude as a % of MAX HP lost when this unit's turn starts. 0 = not bleeding.</summary>
         public float BleedPercentPerTurn { get; set; } = 0f;
 
@@ -543,7 +568,23 @@ namespace SagesOfOzvaram.Units
 
         private void ApplyRawDamage(int damage)
         {
-            HP = Math.Max(0, HP - Math.Max(0, damage));
+            damage = Math.Max(0, damage);
+
+            if (ShieldPoints > 0)
+            {
+                int absorbed = Math.Min(ShieldPoints, damage);
+                ShieldPoints -= absorbed;
+                damage -= absorbed;
+
+                if (ShieldDrainsMana)
+                {
+                    CurrentMP = Math.Max(0, CurrentMP - absorbed);
+                    if (ShieldPoints <= 0)
+                        ShieldDrainsMana = false;
+                }
+            }
+
+            HP = Math.Max(0, HP - damage);
             UpdateFaintStatus();
         }
 

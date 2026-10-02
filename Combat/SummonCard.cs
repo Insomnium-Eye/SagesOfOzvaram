@@ -7,6 +7,9 @@ namespace SagesOfOzvaram.Combat
     /// </summary>
     public class SummonCard
     {
+        /// <summary>Stable numeric ID for this card, e.g. for the dev console's "add card &lt;ID&gt;" - assigned once by SummonCatalog in declaration order, not set here.</summary>
+        public int Id { get; internal set; }
+
         public string Name { get; }
         public int ManaCost { get; }
         public string UnitType { get; }

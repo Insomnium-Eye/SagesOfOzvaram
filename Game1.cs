@@ -47,6 +47,17 @@ namespace SagesOfOzvaram
         private KeyboardState _previousKeyboardState;
         private MouseState _previousMouseState;
         private string _consoleInput = "";
+
+        /// <summary>
+        /// Lines scrolled up from the bottom of the console's output - 0 shows the latest lines
+        /// (the normal/live view). Clamped against the actual output length every time it's used
+        /// (DrawConsole), so it's safe to let it grow past what's currently valid (e.g. right
+        /// after a "clear") without needing to proactively re-clamp it everywhere it changes.
+        /// </summary>
+        private int _consoleScrollOffset = 0;
+
+        /// <summary>Lines of console output shown at once - shared by DrawConsole (what it slices/shows) and HandleConsoleInput (how far a PageUp/PageDown press scrolls).</summary>
+        private const int ConsoleVisibleLines = 12;
         private bool _consoleOpen = false;
 
         // Selected hex
@@ -119,6 +130,17 @@ namespace SagesOfOzvaram
         private SpellCard _pendingSpellCard;
         private bool _targetingFromCardMenu = false;
 
+        // Teleport targeting (opened for an IsBlink spell, e.g. Blink/Disengage) - click any
+        // highlighted tile to teleport the caster there instantly, no pathfinding involved.
+        private bool _teleportModeActive = false;
+        private HashSet<(int col, int row)> _teleportValidTiles = new HashSet<(int col, int row)>();
+
+        // Ally-shield targeting (opened for an IsAllyShield spell, e.g. Arcane Shield) - unlike
+        // _targetCandidates (attack targeting), this list includes the caster itself, since
+        // shielding yourself is a valid choice.
+        private bool _allyTargetModeActive = false;
+        private List<BaseUnit> _allyTargetCandidates = new List<BaseUnit>();
+
         /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
         private BaseUnit _hoveredAttackTarget;
 
@@ -174,6 +196,14 @@ namespace SagesOfOzvaram
 
             // Dev console
             _console = new DevConsole(_map, _assetRegistry);
+            _console.AddCardCallback = AddCardToHandCommand;
+            _console.ListCardsCallback = ListCardsCommand;
+
+            // Actual typed characters for the console - KeyboardState (polled in
+            // HandleConsoleInput) only reports WHICH keys are held, not what character a key
+            // produces (layout/shift-dependent), so without this nothing ever appeared when
+            // typing. TextInput is keyboard-layout-aware and fires once per keystroke.
+            Window.TextInput += OnConsoleTextInput;
 
             // Initialize units list
             _units = new List<BaseUnit>();
@@ -605,7 +635,7 @@ namespace SagesOfOzvaram
                 if (_consoleOpen)
                 {
                     // Console input handling
-                    HandleConsoleInput(keyboardState);
+                    HandleConsoleInput(keyboardState, mouseState);
                 }
                 else
                 {
@@ -707,6 +737,14 @@ namespace SagesOfOzvaram
                         {
                             HandleConeAimingInput(keyboardState, mouseState);
                         }
+                        else if (_teleportModeActive)
+                        {
+                            HandleTeleportInput(keyboardState, mouseState);
+                        }
+                        else if (_allyTargetModeActive)
+                        {
+                            HandleAllyTargetInput(keyboardState, mouseState);
+                        }
                         else if (_movementModeActive)
                         {
                             HandleMovementInput(keyboardState, mouseState);
@@ -733,6 +771,8 @@ namespace SagesOfOzvaram
                         _attackMenuActive = false;
                         _targetingModeActive = false;
                         _coneAimingModeActive = false;
+                        _teleportModeActive = false;
+                        _allyTargetModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
 
@@ -765,22 +805,44 @@ namespace SagesOfOzvaram
             base.Update(gameTime);
         }
 
-        private void HandleConsoleInput(KeyboardState keyboardState)
+        /// <summary>
+        /// Appends actual typed characters to _consoleInput while the console is open - see the
+        /// Window.TextInput subscription in Initialize(). Filters out '`'/'~' (toggles the
+        /// console, see Update - never typed) and Enter/Backspace (handled via KeyboardState
+        /// polling in HandleConsoleInput instead, so they don't double up as control characters).
+        /// </summary>
+        private void OnConsoleTextInput(object sender, TextInputEventArgs e)
+        {
+            if (!_consoleOpen)
+                return;
+
+            char c = e.Character;
+            if (c == '`' || c == '~' || c == '\r' || c == '\n' || c == '\b')
+                return;
+
+            _consoleInput += c;
+        }
+
+        private void HandleConsoleInput(KeyboardState keyboardState, MouseState mouseState)
         {
             // Backspace
-            if (keyboardState.IsKeyDown(Keys.Back) && _consoleInput.Length > 0)
+            if (keyboardState.IsKeyDown(Keys.Back) && !_previousKeyboardState.IsKeyDown(Keys.Back) && _consoleInput.Length > 0)
             {
                 _consoleInput = _consoleInput.Substring(0, _consoleInput.Length - 1);
             }
 
-            // Submit command
+            // Submit command - also snaps the scrollback back to the live/bottom view, same as
+            // sending a message in a chat log.
             if (keyboardState.IsKeyDown(Keys.Enter) && !_previousKeyboardState.IsKeyDown(Keys.Enter))
             {
                 _console.ExecuteCommand(_consoleInput);
                 _consoleInput = "";
+                _consoleScrollOffset = 0;
             }
 
-            // Command history
+            // Command history - kept on Up/Down (the conventional binding for a command-line
+            // prompt, same as a shell); PageUp/PageDown and the mouse wheel scroll the output
+            // log instead, below, so there's no ambiguity between the two.
             if (keyboardState.IsKeyDown(Keys.Up) && !_previousKeyboardState.IsKeyDown(Keys.Up))
             {
                 _consoleInput = _console.GetPreviousCommand();
@@ -788,6 +850,21 @@ namespace SagesOfOzvaram
             if (keyboardState.IsKeyDown(Keys.Down) && !_previousKeyboardState.IsKeyDown(Keys.Down))
             {
                 _consoleInput = _console.GetNextCommand();
+            }
+
+            // Scroll the output log: PageUp/PageDown by a full page, mouse wheel a few lines per
+            // notch. Clamping against the actual output length happens in DrawConsole.
+            if (keyboardState.IsKeyDown(Keys.PageUp) && !_previousKeyboardState.IsKeyDown(Keys.PageUp))
+                _consoleScrollOffset += ConsoleVisibleLines;
+            if (keyboardState.IsKeyDown(Keys.PageDown) && !_previousKeyboardState.IsKeyDown(Keys.PageDown))
+                _consoleScrollOffset = Math.Max(0, _consoleScrollOffset - ConsoleVisibleLines);
+
+            int scrollDelta = mouseState.ScrollWheelValue - _previousMouseState.ScrollWheelValue;
+            if (scrollDelta != 0)
+            {
+                // MonoGame reports 120 units per standard wheel notch - dividing it down gives a
+                // few lines per notch rather than a single line, which feels too slow to scan output with.
+                _consoleScrollOffset = Math.Max(0, _consoleScrollOffset + scrollDelta / 40);
             }
         }
 
@@ -927,6 +1004,119 @@ namespace SagesOfOzvaram
                 _handCardIndex = 0;
                 _highlightedHandCardIndex = null;
             }
+        }
+
+        /// <summary>
+        /// Dev-console "add card &lt;CardID&gt;" handler (see DevConsole.AddCardCallback): looks the
+        /// integer ID up against every SpellCard/SummonCard's stable Id (see "list cards" for the
+        /// full table) and adds it straight into the player's current hand, bypassing the deck
+        /// entirely - a pure testing shortcut, not a real draw.
+        /// </summary>
+        private string AddCardToHandCommand(int cardId)
+        {
+            if (_playerUnit == null)
+                return "No player unit active - pick a character first.";
+
+            object card = FindCardById(cardId);
+            if (card == null)
+                return $"Unknown card ID: {cardId}. Try 'list cards'.";
+
+            if (!_classHands.TryGetValue(_playerUnit.Class, out var hand) || hand == null)
+            {
+                hand = new List<object>();
+                _classHands[_playerUnit.Class] = hand;
+            }
+            hand.Add(card);
+
+            _availableHandCards = new List<object>(hand);
+            _handCardIndex = _availableHandCards.Count - 1;
+            _highlightedHandCardIndex = _handCardIndex;
+
+            string name = card is SpellCard spellCard ? spellCard.Name : card is SummonCard summonCard ? summonCard.Name : cardId.ToString();
+            return $"Added '{name}' (ID {cardId}) to {_playerUnit.Name}'s hand.";
+        }
+
+        /// <summary>
+        /// Dev-console "list cards all"/"list cards &lt;ClassID&gt;" handler (see
+        /// DevConsole.ListCardsCallback): one "ID: Name" line per card, in catalog order.
+        /// classId null (bare "list cards" or "list cards all") lists every card; 0-3
+        /// (Sorcerer/Warrior/Cleric/Hunter) restricts the Spell Cards section to that class's
+        /// own cards plus the Generic ones everyone gets (same set `GetSpellsForClass` returns
+        /// for the real Cards menu) - Summon Cards are always listed in full either way, since
+        /// they aren't class-gated.
+        /// </summary>
+        private List<string> ListCardsCommand(int? classId)
+        {
+            var lines = new List<string>();
+
+            if (classId.HasValue)
+            {
+                // 0 = Generic (RequiredClass null - every class gets these, but they're their
+                // own category here, not folded into any one class's list); 1-4 = an actual
+                // HeroClass, showing ONLY that class's own cards - unlike the real Cards menu
+                // (GetSpellsForClass), Generic spells are deliberately excluded here, since the
+                // point of asking for "Sorcerer cards" is the Sorcerer-specific roster.
+                if (classId.Value == 0)
+                {
+                    lines.Add("Spell Cards (Generic):");
+                    foreach (var card in SpellCatalog.GetAllCards())
+                    {
+                        if (card.RequiredClass == null)
+                            lines.Add($"  {card.Id}: {card.Name}");
+                    }
+                }
+                else
+                {
+                    HeroClass? heroClass = classId.Value switch
+                    {
+                        1 => HeroClass.Sorcerer,
+                        2 => HeroClass.Warrior,
+                        3 => HeroClass.Cleric,
+                        4 => HeroClass.Hunter,
+                        _ => null,
+                    };
+
+                    if (heroClass == null)
+                        return new List<string> { $"Unknown class ID: {classId.Value}. Use 0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter." };
+
+                    lines.Add($"Spell Cards ({heroClass}):");
+                    foreach (var card in SpellCatalog.GetAllCards())
+                    {
+                        if (card.RequiredClass == heroClass)
+                            lines.Add($"  {card.Id}: {card.Name}");
+                    }
+                }
+            }
+            else
+            {
+                lines.Add("Spell Cards:");
+                foreach (var card in SpellCatalog.GetAllCards())
+                    lines.Add($"  {card.Id}: {card.Name}");
+            }
+
+            lines.Add("Summon Cards:");
+            foreach (var card in SummonCatalog.AllSummons)
+                lines.Add($"  {card.Id}: {card.Name}");
+
+            return lines;
+        }
+
+        /// <summary>Find a SpellCard or SummonCard by its stable integer Id - see AddCardToHandCommand.</summary>
+        private static object FindCardById(int cardId)
+        {
+            foreach (var card in SpellCatalog.GetAllCards())
+            {
+                if (card.Id == cardId)
+                    return card;
+            }
+
+            foreach (var card in SummonCatalog.AllSummons)
+            {
+                if (card.Id == cardId)
+                    return card;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -1627,21 +1817,250 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// Cast an IsBlink spell (e.g. Blink, Disengage): pays AP/MP up front like any other
+        /// cast, then opens teleport targeting mode showing every passable, unoccupied tile
+        /// within Range of the caster - clicking one instantly moves the caster there (see
+        /// HandleTeleportInput/ExecuteBlink). Cancelling (E) refunds nothing since nothing is
+        /// spent until a destination is actually chosen.
+        /// </summary>
+        private void CastBlinkSpell(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var occupied = GetOccupiedTiles(_playerUnit);
+            _teleportValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, move.Range)
+                .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToHashSet();
+
+            if (_teleportValidTiles.Count == 0)
+            {
+                ShowCombatMessage($"Nowhere to go for {move.Name}.");
+                return;
+            }
+
+            _pendingMove = move;
+            _pendingSpellCard = card;
+            _cardMenuActive = false;
+            _teleportModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a teleport destination for an IsBlink spell: click a highlighted tile to blink there, E to cancel back to the Cards menu.</summary>
+        private void HandleTeleportInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelTeleport();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_teleportValidTiles.Contains(clickedHex))
+                    ExecuteBlink(clickedHex);
+            }
+        }
+
+        /// <summary>Spend _pendingMove's AP/MP, move the caster straight to destHex, consume the card, and return to the turn menu.</summary>
+        private void ExecuteBlink((int col, int row) destHex)
+        {
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+            _playerUnit.Position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+
+            ShowCombatMessage($"{_playerUnit.Name} uses {_pendingMove.Name}.");
+
+            if (_pendingSpellCard != null)
+                RemoveCardFromHand(_pendingSpellCard);
+
+            CancelTeleport(returnToCardMenu: false);
+        }
+
+        private void CancelTeleport(bool returnToCardMenu = true)
+        {
+            _teleportModeActive = false;
+            _pendingMove = null;
+            _pendingSpellCard = null;
+            _teleportValidTiles.Clear();
+
+            if (returnToCardMenu)
+            {
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
+        }
+
+        /// <summary>
+        /// Cast an IsManaShield spell (currently just Mana Shield): pays its own AP/MP, then
+        /// grants a shield equal to whatever MP remains after that (see BaseUnit.ApplyShield,
+        /// ShieldDrainsMana true so the shield and MP drain together as it absorbs hits).
+        /// Casting it again while already mana-shielded toggles the shield off instead of
+        /// re-paying, matching the original "can be turned off at will" design.
+        /// </summary>
+        private void CastManaShield(SpellCard card)
+        {
+            if (_playerUnit.ShieldPoints > 0 && _playerUnit.ShieldDrainsMana)
+            {
+                _playerUnit.ClearShield();
+                ShowCombatMessage($"{_playerUnit.Name} drops their Mana Shield.");
+                return;
+            }
+
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - apCost);
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - move.MPCost);
+            _playerUnit.ApplyShield(_playerUnit.CurrentMP, drainsMana: true);
+
+            ShowCombatMessage($"{_playerUnit.Name} raises a Mana Shield ({_playerUnit.ShieldPoints} points).");
+            RemoveCardFromHand(card);
+
+            _cardMenuActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        /// <summary>
+        /// Cast an IsAllyShield spell (e.g. Arcane Shield): pays AP/MP up front, then opens
+        /// ally-targeting mode listing every living unit within Range - including the caster
+        /// itself, since shielding yourself is a valid choice. Clicking one grants it a shield
+        /// sized by move.GetDamage(caster) (reusing the attack-damage formula fields as the
+        /// shield's magnitude, not actual damage) and consumes the card.
+        /// </summary>
+        private void CastAllyShield(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int range = move.GetEffectiveRange(_playerUnit, null);
+            _allyTargetCandidates = _units.Where(u => u.IsAlive && (u == _playerUnit
+                    || _hexGrid.GetDistance(casterHex.col, casterHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= range))
+                .ToList();
+
+            if (_allyTargetCandidates.Count == 0)
+            {
+                ShowCombatMessage($"Nothing in range for {move.Name}.");
+                return;
+            }
+
+            _pendingMove = move;
+            _pendingSpellCard = card;
+            _cardMenuActive = false;
+            _allyTargetModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a shield target for an IsAllyShield spell: click a highlighted unit (including the caster's own tile) to shield it, E to cancel back to the Cards menu.</summary>
+        private void HandleAllyTargetInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelAllyTarget();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                var target = _allyTargetCandidates.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == clickedHex);
+                if (target != null)
+                    ExecuteAllyShield(target);
+            }
+        }
+
+        /// <summary>Spend _pendingMove's AP/MP, grant target a shield, consume the card, and return to the turn menu.</summary>
+        private void ExecuteAllyShield(BaseUnit target)
+        {
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+
+            int shieldAmount = _pendingMove.GetDamage(_playerUnit);
+            target.ApplyShield(shieldAmount);
+
+            ShowCombatMessage(target == _playerUnit
+                ? $"{_playerUnit.Name} shields themself ({shieldAmount} points)."
+                : $"{_playerUnit.Name} shields {target.Name} ({shieldAmount} points).");
+
+            if (_pendingSpellCard != null)
+                RemoveCardFromHand(_pendingSpellCard);
+
+            CancelAllyTarget(returnToCardMenu: false);
+        }
+
+        private void CancelAllyTarget(bool returnToCardMenu = true)
+        {
+            _allyTargetModeActive = false;
+            _pendingMove = null;
+            _pendingSpellCard = null;
+            _allyTargetCandidates.Clear();
+
+            if (returnToCardMenu)
+            {
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
+        }
+
+        /// <summary>
         /// Attempt to cast whichever card is currently selected in the hand (_handCardIndex) -
-        /// damage-dealing Spell Cards go through CastSpellAsAttack for real; everything else
-        /// (utility/buff spells, and all Summon Cards - no summon-to-battlefield system exists
-        /// yet) just reports that casting isn't implemented for it yet, same honest treatment as
-        /// an unaffordable move rather than a silent no-op.
+        /// an IsBlink spell opens teleport targeting (CastBlinkSpell), an IsManaShield spell
+        /// grants/toggles a shield (CastManaShield), an IsAllyShield spell opens ally-targeting
+        /// (CastAllyShield), a damage-dealing Spell Card goes through CastSpellAsAttack for
+        /// real; everything else (utility/buff spells, and all Summon Cards - no
+        /// summon-to-battlefield system exists yet) just reports that casting isn't implemented
+        /// for it yet, same honest treatment as an unaffordable move rather than a silent no-op.
         /// </summary>
         private void TryCastSelectedCard()
         {
             if (_availableHandCards.Count == 0)
                 return;
 
+            // Cast whichever card is actually shown big/centered right now (see
+            // GetFocusedHandCardIndex) - a mouse-hovered side card counts as "selected" too,
+            // not just whatever A/D or a click last set _handCardIndex to, so the card Space
+            // casts always matches the card the player is looking at.
+            var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            _handCardIndex = GetFocusedHandCardIndex(viewportSize, Mouse.GetState().Position) ?? _handCardIndex;
+            _highlightedHandCardIndex = _handCardIndex;
+
             object card = _availableHandCards[_handCardIndex];
             if (card is SpellCard spellCard)
             {
-                if (SpellCastsAsAttack(spellCard))
+                if (spellCard.Effect.IsBlink)
+                    CastBlinkSpell(spellCard);
+                else if (spellCard.Effect.IsManaShield)
+                    CastManaShield(spellCard);
+                else if (spellCard.Effect.IsAllyShield)
+                    CastAllyShield(spellCard);
+                else if (SpellCastsAsAttack(spellCard))
                     CastSpellAsAttack(spellCard);
                 else
                     ShowCombatMessage($"{spellCard.Name} can't be cast yet - no execution system for that effect.");
@@ -1994,6 +2413,34 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Teleport targeting (e.g. Blink) - every valid destination tile highlighted purple,
+            // whichever one the mouse is over highlighted brighter.
+            if (_teleportModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _teleportValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(220, 150, 255, 180) : new Color(170, 100, 255, 110);
+                    Color outline = hovered ? Color.White : Color.MediumPurple;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
+            // Ally-shield targeting (e.g. Arcane Shield) - every valid target highlighted green
+            // (including the caster's own tile), brighter where the mouse is hovering.
+            if (_allyTargetModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var candidate in _allyTargetCandidates)
+                {
+                    bool hovered = _hexGrid.WorldToHex(candidate.Position) == hoveredHex;
+                    Color fill = hovered ? new Color(160, 255, 170, 180) : new Color(100, 220, 140, 120);
+                    Color outline = hovered ? Color.White : Color.LightGreen;
+                    DrawHexFilled(candidate.Position, fill, outline);
+                }
+            }
+
             // Draw hover hex
             if (!_consoleOpen)
             {
@@ -2036,11 +2483,14 @@ namespace SagesOfOzvaram
 
                 DrawFacingIndicator(unit);
 
+                if (unit.IsAlive)
+                    DrawUnitHealthBar(unit);
+
                 if (_font != null)
                 {
                     string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.MaxHP}" : $"{unit.Name}: DEAD";
                     Vector2 textSize = _font.MeasureString(statusText) * 0.4f;
-                    Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 40f);
+                    Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 48f);
                     Color textColor = !unit.IsAlive ? Color.DarkRed : (unit.IsFainted ? Color.Gray : Color.White);
                     _spriteBatch.DrawString(_font, statusText, textPos, textColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
                 }
@@ -2097,6 +2547,10 @@ namespace SagesOfOzvaram
                 }
                 else if (_coneAimingModeActive)
                     DrawBottomHint(viewportSize, "Click anywhere to aim the cone and fire - E to cancel");
+                else if (_teleportModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted tile to blink there - E to cancel");
+                else if (_allyTargetModeActive)
+                    DrawBottomHint(viewportSize, "Select a target to shield (yourself included) - E to cancel");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 
@@ -2323,6 +2777,48 @@ namespace SagesOfOzvaram
         /// Draw a small arrow inside the unit's hex tile pointing toward whichever neighboring
         /// tile its Facing points at - a stand-in until sprites have real facing artwork.
         /// </summary>
+        /// <summary>
+        /// HP bar above a unit's sprite: a dark background sized to MaxHP, filled HP on top
+        /// (red to green as it drops), and - whenever ShieldPoints is active - a blue segment
+        /// appended past the MaxHP mark, extending the bar's total width rather than overlapping
+        /// the HP portion. A unit at 50/100 HP with a 20-point shield reads as [50 filled][50
+        /// dark/missing][20 blue], total visual width 120; a unit at full HP with the same
+        /// shield just appends the 20 blue points past the already-full bar.
+        /// </summary>
+        private void DrawUnitHealthBar(BaseUnit unit)
+        {
+            const float barWidth = 50f;
+            const float barHeight = 6f;
+            float pixelsPerPoint = barWidth / Math.Max(1, unit.MaxHP);
+
+            float filledWidth = unit.HP * pixelsPerPoint;
+            float missingWidth = (unit.MaxHP - unit.HP) * pixelsPerPoint;
+            float shieldWidth = unit.ShieldPoints * pixelsPerPoint;
+
+            Vector2 barPos = unit.Position - new Vector2(barWidth / 2f, 60f);
+
+            // Dark background spans HP's own range only (filled + missing) - the shield segment
+            // gets its own distinct blue block appended after it, not folded into this backing.
+            _spriteBatch.Draw(_whitePixel,
+                new Rectangle((int)barPos.X, (int)barPos.Y, (int)(filledWidth + missingWidth), (int)barHeight),
+                new Color(35, 35, 35, 220));
+
+            Color hpColor = Color.Lerp(Color.Red, Color.LimeGreen, unit.HP / (float)Math.Max(1, unit.MaxHP));
+            if (filledWidth > 0f)
+            {
+                _spriteBatch.Draw(_whitePixel,
+                    new Rectangle((int)barPos.X, (int)barPos.Y, (int)filledWidth, (int)barHeight),
+                    hpColor);
+            }
+
+            if (shieldWidth > 0f)
+            {
+                _spriteBatch.Draw(_whitePixel,
+                    new Rectangle((int)(barPos.X + filledWidth + missingWidth), (int)barPos.Y, (int)shieldWidth, (int)barHeight),
+                    Color.DeepSkyBlue);
+            }
+        }
+
         private void DrawFacingIndicator(BaseUnit unit)
         {
             var (col, row) = _hexGrid.WorldToHex(unit.Position);
@@ -2730,6 +3226,24 @@ namespace SagesOfOzvaram
         /// explaining whatever number/icon the cursor is over. A "no cards" message shows if
         /// the class has neither spells nor summons available yet.
         /// </summary>
+        /// <summary>
+        /// Whichever hand card is currently shown big/centered - the mouse-hovered side card if
+        /// any, else whatever A/D or a prior click last selected (_highlightedHandCardIndex).
+        /// This is also exactly what TryCastSelectedCard casts on Space, so the card the player
+        /// is actually looking at is always the one Space plays - no silent mismatch where
+        /// hovering a card (without clicking it) shows it big but a different card gets cast.
+        /// </summary>
+        private int? GetFocusedHandCardIndex(Vector2 viewportSize, Point mousePos)
+        {
+            var layout = GetHandCardLayout(viewportSize);
+            for (int i = layout.Count - 1; i >= 0; i--)
+            {
+                if (layout[i].Contains(mousePos))
+                    return i;
+            }
+            return _highlightedHandCardIndex;
+        }
+
         private void DrawCardMenuOverlay(Vector2 viewportSize)
         {
             _spriteBatch.Draw(_whitePixel, new Rectangle(0, 0, (int)viewportSize.X, (int)viewportSize.Y), new Color(0, 0, 0, 160));
@@ -2748,7 +3262,7 @@ namespace SagesOfOzvaram
                     }
                 }
 
-                int? focusedCardIndex = hoveredCardIndex >= 0 ? hoveredCardIndex : _highlightedHandCardIndex;
+                int? focusedCardIndex = GetFocusedHandCardIndex(viewportSize, mousePos);
                 for (int i = 0; i < _availableHandCards.Count; i++)
                 {
                     if (i != focusedCardIndex)
@@ -3006,9 +3520,15 @@ namespace SagesOfOzvaram
                             new Rectangle(0, consoleY, GraphicsDevice.Viewport.Width, CONSOLE_HEIGHT),
                             new Color(0, 0, 0, 200));
 
-            // Draw output
+            // Draw output - _consoleScrollOffset is lines scrolled up from the bottom (0 = the
+            // live/latest view); clamped here against the actual output length so it's safe for
+            // it to have grown past what's currently valid (e.g. right after a "clear").
             int y = consoleY + 10;
-            var output = _console.GetOutput().TakeLast(12).ToList();
+            var allOutput = _console.GetOutput();
+            int maxScroll = Math.Max(0, allOutput.Count - ConsoleVisibleLines);
+            _consoleScrollOffset = Math.Clamp(_consoleScrollOffset, 0, maxScroll);
+            int skip = Math.Max(0, allOutput.Count - ConsoleVisibleLines - _consoleScrollOffset);
+            var output = allOutput.Skip(skip).Take(ConsoleVisibleLines).ToList();
             foreach (var line in output)
             {
                 _spriteBatch.DrawString(_font, line, new Vector2(10, y), Color.White);
@@ -3020,10 +3540,14 @@ namespace SagesOfOzvaram
                                    new Vector2(10, consoleY + CONSOLE_HEIGHT - 25),
                                    Color.LimeGreen);
 
-            // Draw help text
-            _spriteBatch.DrawString(_font, "Type 'help' for commands | ~ to close",
+            // Draw help text - replaced with a "scrolled up" notice whenever not at the bottom,
+            // so it's obvious new output won't be visible until scrolling back down.
+            string helpText = _consoleScrollOffset > 0
+                ? $"-- scrolled up {_consoleScrollOffset} lines (PgDn/mouse wheel to return) --"
+                : "Type 'help' for commands | ~ to close | PgUp/PgDn or mouse wheel to scroll";
+            _spriteBatch.DrawString(_font, helpText,
                                    new Vector2(10, consoleY + CONSOLE_HEIGHT - 45),
-                                   Color.Gray);
+                                   _consoleScrollOffset > 0 ? Color.Yellow : Color.Gray);
         }
 
         protected override void UnloadContent()

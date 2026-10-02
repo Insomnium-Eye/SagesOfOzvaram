@@ -78,6 +78,9 @@ namespace SagesOfOzvaram.Combat
         public int StatusDurationTurns { get; }     // how many turns InflictsStatusEffect lasts, 0 = instant/not duration-based
         public bool TargetsAllies { get; }          // true = affects allies (self and/or adjacent allies) rather than an enemy target
         public float SpeedReductionPercent { get; } // % Speed reduction when InflictsStatusEffect is "Slowed" (e.g. Frost Blast), 0-1; lasts StatusDurationTurns - see BaseUnit.ApplySpeedReduction
+        public bool IsBlink { get; }                // true = an instant self-teleport to any passable, unoccupied tile within Range (e.g. Blink, Disengage) - handled by Game1's teleport targeting mode, not AttackResolver
+        public bool IsManaShield { get; }           // true = grants the caster a health shield equal to their remaining MP after paying this move's own cost, drained in lockstep with MP (see BaseUnit.ShieldPoints/ApplyShield) - casting again while already shielded toggles it off instead of re-paying
+        public bool IsAllyShield { get; }           // true = lets the caster pick itself OR any other unit in range to grant a health shield to (e.g. Arcane Shield) - the shield's size is GetDamage(caster) (reusing BaseDamage/StrengthDivisor/IntelligenceDivisor as the shield-magnitude formula, not an attack), handled by Game1's ally-targeting mode, not AttackResolver
 
         public Move(string name, string description, int apCost, int mpCost, int range,
                     float baseAccuracy, int baseDamage, DamageType damageType = DamageType.Magical,
@@ -93,7 +96,8 @@ namespace SagesOfOzvaram.Combat
                     bool canInflictKnockdown = false, float knockdownChanceIfStrongerStr = 0f, float knockdownChanceOtherwise = 0f,
                     int knockdownStandUpApCost = 1, float accuracyFalloffPerTile = 0f,
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
-                    AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash)
+                    AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
+                    bool isBlink = false, bool isManaShield = false, bool isAllyShield = false)
         {
             Name = name;
             Description = description;
@@ -132,6 +136,9 @@ namespace SagesOfOzvaram.Combat
             KnockdownChanceIfStrongerSTR = knockdownChanceIfStrongerStr;
             KnockdownChanceOtherwise = knockdownChanceOtherwise;
             KnockdownStandUpAPCost = knockdownStandUpApCost;
+            IsBlink = isBlink;
+            IsManaShield = isManaShield;
+            IsAllyShield = isAllyShield;
         }
 
         /// <summary>

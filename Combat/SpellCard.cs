@@ -9,6 +9,9 @@ namespace SagesOfOzvaram.Combat
     /// </summary>
     public class SpellCard
     {
+        /// <summary>Stable numeric ID for this card, e.g. for the dev console's "add card &lt;ID&gt;" - assigned once by SpellCatalog in declaration order, not set here.</summary>
+        public int Id { get; internal set; }
+
         public string Name { get; }
         public string Description { get; }
 

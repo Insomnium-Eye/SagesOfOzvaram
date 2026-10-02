@@ -114,6 +114,13 @@ namespace SagesOfOzvaram.Combat
             RootmossStonegloom
         };
 
+        /// <summary>Assigns every summon card a stable, sequential integer Id starting at 1001 (so it's visually distinct from a SpellCard's 1-based Id at a glance) in the exact declaration order above - see SummonCard.Id and the dev console's "add card &lt;ID&gt;".</summary>
+        static SummonCatalog()
+        {
+            for (int i = 0; i < AllCards.Count; i++)
+                AllCards[i].Id = 1001 + i;
+        }
+
         public static List<SummonCard> AllSummons => AllCards;
     }
 }

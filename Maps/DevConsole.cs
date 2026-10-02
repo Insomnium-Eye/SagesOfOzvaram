@@ -21,6 +21,23 @@ namespace SagesOfOzvaram.Maps
         public bool IsEnabled { get; set; } = true;
         public bool IsOpen { get; set; } = false;
 
+        /// <summary>
+        /// Set by Game1 after construction - DevConsole itself knows nothing about spells, cards,
+        /// or hands (that's all game-state owned by Game1), so "add card &lt;ID&gt;" just hands the
+        /// typed ID off to whatever Game1 wires up here and prints back whatever it returns.
+        /// </summary>
+        public Func<int, string> AddCardCallback { get; set; }
+
+        /// <summary>
+        /// Set by Game1 after construction - "list cards all" (or bare "list cards") passes null
+        /// for every card; "list cards &lt;ClassID&gt;" passes that class ID (0=Generic, 1=Sorcerer,
+        /// 2=Warrior, 3=Cleric, 4=Hunter - DevConsole doesn't know about HeroClass itself, just
+        /// forwards the raw int) to list only that class's OWN cards, Generic excluded even for
+        /// 1-4. Either way, prints whatever lines come back
+        /// (one card ID + name per line).
+        /// </summary>
+        public Func<int?, List<string>> ListCardsCallback { get; set; }
+
         public DevConsole(Map map, AssetRegistry assetRegistry)
         {
             _map = map;
@@ -61,6 +78,12 @@ namespace SagesOfOzvaram.Maps
                         break;
                     case "clear":
                         ClearOutput();
+                        break;
+                    case "add":
+                        HandleAddCommand(parts);
+                        break;
+                    case "list":
+                        HandleListCommand(parts);
                         break;
                     default:
                         AddOutput($"Unknown command: {command}. Type 'help' for available commands.");
@@ -395,6 +418,95 @@ namespace SagesOfOzvaram.Maps
             AddOutput($"Set object '{id}' {property} to {value}");
         }
 
+        private void HandleAddCommand(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                AddOutput("Usage: add card <CardID>");
+                return;
+            }
+
+            string action = parts[1].ToLower();
+            switch (action)
+            {
+                case "card":
+                    AddCard(parts);
+                    break;
+                default:
+                    AddOutput($"Unknown add action: {action}");
+                    break;
+            }
+        }
+
+        private void AddCard(string[] parts)
+        {
+            // add card <CardID> (an integer - see "list cards" for the ID of every card)
+            if (parts.Length < 3)
+            {
+                AddOutput("Usage: add card <CardID> (integer - see 'list cards')");
+                return;
+            }
+
+            if (!int.TryParse(parts[2], out int cardId))
+            {
+                AddOutput($"Error: CardID must be an integer, got '{parts[2]}'. Try 'list cards' to find one.");
+                return;
+            }
+
+            if (AddCardCallback == null)
+            {
+                AddOutput("Error: card system not connected to the console.");
+                return;
+            }
+
+            AddOutput(AddCardCallback(cardId));
+        }
+
+        private void HandleListCommand(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                AddOutput("Usage: list cards all | list cards <ClassID>");
+                return;
+            }
+
+            string action = parts[1].ToLower();
+            switch (action)
+            {
+                case "cards":
+                    ListCards(parts);
+                    break;
+                default:
+                    AddOutput($"Unknown list action: {action}");
+                    break;
+            }
+        }
+
+        private void ListCards(string[] parts)
+        {
+            if (ListCardsCallback == null)
+            {
+                AddOutput("Error: card system not connected to the console.");
+                return;
+            }
+
+            // "list cards" and "list cards all" both mean "every card" (null); anything else in
+            // that slot must be an integer class ID (0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter).
+            int? classId = null;
+            if (parts.Length >= 3 && !parts[2].Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(parts[2], out int parsed))
+                {
+                    AddOutput($"Error: expected 'all' or a class ID (0-3), got '{parts[2]}'.");
+                    return;
+                }
+                classId = parsed;
+            }
+
+            foreach (var line in ListCardsCallback(classId))
+                AddOutput(line);
+        }
+
         private void HandleMapCommand(string[] parts)
         {
             if (parts.Length < 2)
@@ -434,6 +546,9 @@ namespace SagesOfOzvaram.Maps
             AddOutput("object set <id> <property> <value>");
             AddOutput("map info");
             AddOutput("map clear");
+            AddOutput("list cards all - list every spell/summon card's integer ID and name");
+            AddOutput("list cards <ClassID> - list only that class's own cards, Generic excluded (0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter)");
+            AddOutput("add card <CardID> - add a spell/summon card (by integer ID) to the player's hand for testing");
             AddOutput("clear - Clear console output");
             AddOutput("help - Show this message");
         }
