@@ -4,6 +4,7 @@ using Microsoft.Xna.Framework.Input;
 using SagesOfOzvaram.Maps;
 using SagesOfOzvaram.Units;
 using SagesOfOzvaram.Units.Heroes;
+using SagesOfOzvaram.Units.Summons;
 using SagesOfOzvaram.Combat;
 using System;
 using System.Collections.Generic;
@@ -89,6 +90,12 @@ namespace SagesOfOzvaram
         private List<object> _availableHandCards = new List<object>();
         private int _handCardIndex = 0;
         private int? _highlightedHandCardIndex;
+
+        // Double-click-to-cast tracking (see HandleCardMenuInput/CardDoubleClickSeconds) - which
+        // card index a click last landed on, and at what total-game-time, so a second click on
+        // the SAME card shortly after counts as the cast rather than every lone click casting.
+        private int _lastCardClickIndex = -1;
+        private float _lastCardClickTime = -1f;
         private readonly Random _deckRandom = new Random();
         private readonly Dictionary<HeroClass, List<object>> _classDecks = new Dictionary<HeroClass, List<object>>();
         private readonly Dictionary<HeroClass, List<object>> _classHands = new Dictionary<HeroClass, List<object>>();
@@ -140,6 +147,12 @@ namespace SagesOfOzvaram
         // shielding yourself is a valid choice.
         private bool _allyTargetModeActive = false;
         private List<BaseUnit> _allyTargetCandidates = new List<BaseUnit>();
+
+        // Summon placement (opened for a SummonCard) - click any highlighted tile adjacent to
+        // the caster to spawn the summoned creature there; see CastSummon/ExecuteSummon.
+        private bool _summonPlacementModeActive = false;
+        private HashSet<(int col, int row)> _summonPlacementValidTiles = new HashSet<(int col, int row)>();
+        private SummonCard _pendingSummonCard;
 
         /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
         private BaseUnit _hoveredAttackTarget;
@@ -613,12 +626,14 @@ namespace SagesOfOzvaram
             }
             else
             {
-                // FFA win check - each player is a "team" of one; the moment only one unit is
-                // left not Fainted, the match is over (GDD-pending: revisit once real teams exist).
-                var stillStanding = _units.Where(u => !u.IsFainted).ToList();
-                if (stillStanding.Count <= 1)
+                // FFA win check - a unit's team is itself, or whoever summoned it (see
+                // GetTeamRoot/BaseUnit.Owner); the moment at most one team still has a living
+                // member, the match is over. A lone surviving summon still counts as its owner's
+                // team winning, even if the owner itself has already Fainted.
+                var stillStandingTeams = _units.Where(u => !u.IsFainted).Select(GetTeamRoot).Distinct().ToList();
+                if (stillStandingTeams.Count <= 1)
                 {
-                    _matchWinner = stillStanding.Count == 1 ? stillStanding[0] : null;
+                    _matchWinner = stillStandingTeams.Count == 1 ? stillStandingTeams[0] : null;
                     _gameState = GameState.MatchOver;
                     _previousKeyboardState = keyboardState;
                     _previousMouseState = mouseState;
@@ -745,13 +760,17 @@ namespace SagesOfOzvaram
                         {
                             HandleAllyTargetInput(keyboardState, mouseState);
                         }
+                        else if (_summonPlacementModeActive)
+                        {
+                            HandleSummonPlacementInput(keyboardState, mouseState);
+                        }
                         else if (_movementModeActive)
                         {
                             HandleMovementInput(keyboardState, mouseState);
                         }
                         else if (_cardMenuActive)
                         {
-                            HandleCardMenuInput(keyboardState, mouseState);
+                            HandleCardMenuInput(keyboardState, mouseState, (float)gameTime.TotalGameTime.TotalSeconds);
                         }
                         else
                         {
@@ -773,6 +792,7 @@ namespace SagesOfOzvaram
                         _coneAimingModeActive = false;
                         _teleportModeActive = false;
                         _allyTargetModeActive = false;
+                        _summonPlacementModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
 
@@ -1340,7 +1360,10 @@ namespace SagesOfOzvaram
             _cardMenuActive = true;
         }
 
-        private void HandleCardMenuInput(KeyboardState keyboardState, MouseState mouseState)
+        /// <summary>Seconds between two clicks on the same card for the second one to count as the double-click that casts it (see HandleCardMenuInput).</summary>
+        private const float CardDoubleClickSeconds = 0.4f;
+
+        private void HandleCardMenuInput(KeyboardState keyboardState, MouseState mouseState, float totalSeconds)
         {
             if (_availableHandCards.Count > 1)
             {
@@ -1354,22 +1377,55 @@ namespace SagesOfOzvaram
                     _handCardIndex = (_handCardIndex - 1 + _availableHandCards.Count) % _availableHandCards.Count;
                     _highlightedHandCardIndex = _handCardIndex;
                 }
+            }
 
-                // Clicking a peeking side card highlights (selects) it, same as A/D.
-                if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            // A single click just selects/focuses a card (same as A/D) - a SECOND click on that
+            // SAME card within CardDoubleClickSeconds is what actually casts it, so a plain click
+            // to look a card over (or to switch which one you're looking at) never accidentally
+            // plays it. The click has to land on an actual card - either a smaller peeking side
+            // card's own slot, or the current big focused card's larger on-screen silhouette
+            // (ScaleCardRect) - clicking empty space does nothing either way.
+            if (_availableHandCards.Count > 0 && mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var layout = GetHandCardLayout(viewportSize);
+                Point clickPos = new Point(mouseState.X, mouseState.Y);
+
+                int clickedIndex = -1;
+                if (_highlightedHandCardIndex.HasValue
+                    && ScaleCardRect(layout[_highlightedHandCardIndex.Value], 2.10f).Contains(clickPos))
                 {
-                    Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                    var layout = GetHandCardLayout(viewportSize);
-                    Point clickPos = new Point(mouseState.X, mouseState.Y);
+                    clickedIndex = _highlightedHandCardIndex.Value;
+                }
+                else
+                {
                     for (int i = layout.Count - 1; i >= 0; i--)
                     {
                         if (layout[i].Contains(clickPos))
                         {
-                            _handCardIndex = i;
-                            _highlightedHandCardIndex = i;
+                            clickedIndex = i;
                             break;
                         }
                     }
+                }
+
+                if (clickedIndex >= 0)
+                {
+                    bool isDoubleClick = clickedIndex == _lastCardClickIndex
+                        && totalSeconds - _lastCardClickTime <= CardDoubleClickSeconds;
+
+                    _handCardIndex = clickedIndex;
+                    _highlightedHandCardIndex = clickedIndex;
+
+                    if (isDoubleClick)
+                    {
+                        _lastCardClickIndex = -1; // consumed - a 3rd rapid click starts a fresh pair, not an immediate re-cast
+                        TryCastSelectedCard();
+                        return; // casting may close the card menu - don't also process E/F below against now-stale state
+                    }
+
+                    _lastCardClickIndex = clickedIndex;
+                    _lastCardClickTime = totalSeconds;
                 }
             }
 
@@ -1746,12 +1802,16 @@ namespace SagesOfOzvaram
             _targetingModeActive = true;
         }
 
-        /// <summary>Every living unit other than the player's, within the move's effective Range (see Move.GetEffectiveRange) of the player's current position.</summary>
+        /// <summary>A unit's team identity - itself, or whoever summoned it (see BaseUnit.Owner). Two units are allied iff this is equal for both.</summary>
+        private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
+
+        /// <summary>Every living enemy unit (not on the player's own team - see GetTeamRoot) within the move's effective Range (see Move.GetEffectiveRange) of the player's current position.</summary>
         private List<BaseUnit> GetValidAttackTargets(Move move, Weapon sourceWeapon)
         {
             var attackerHex = _hexGrid.WorldToHex(_playerUnit.Position);
             int range = move.GetEffectiveRange(_playerUnit, sourceWeapon);
-            return _units.Where(u => u != _playerUnit && u.IsAlive
+            var playerTeam = GetTeamRoot(_playerUnit);
+            return _units.Where(u => GetTeamRoot(u) != playerTeam && u.IsAlive
                     && _hexGrid.GetDistance(attackerHex.col, attackerHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= range)
                 .ToList();
         }
@@ -2029,14 +2089,132 @@ namespace SagesOfOzvaram
             }
         }
 
+        /// <summary>Flat AP cost to summon a creature - first-pass placeholder, pending a balance pass (see GDD Portal System/Summon Cards).</summary>
+        private const int SummonAPCost = 2;
+
+        /// <summary>How far from the caster a summoned creature can be placed.</summary>
+        private const int SummonPlacementRange = 1;
+
+        /// <summary>
+        /// Build the actual battlefield BaseUnit for a given SummonCard - one Units.Summons.*
+        /// class per card, matching stats (see each class's own file). Null if card isn't a
+        /// recognized SummonCard instance (shouldn't happen - every SummonCatalog entry has one).
+        /// </summary>
+        private BaseUnit CreateSummonUnit(SummonCard card, Vector2 position)
+        {
+            if (card == SummonCatalog.DuskRoachlin) return new DuskRoachlin(position);
+            if (card == SummonCatalog.AetherfluffBeetle) return new AetherfluffBeetle(position);
+            if (card == SummonCatalog.DuskRoachlinPriest) return new DuskRoachlinPriest(position);
+            if (card == SummonCatalog.Bearat) return new Bearat(position);
+            if (card == SummonCatalog.MirebackSlogger) return new MirebackSlogger(position);
+            if (card == SummonCatalog.LanternmothCinderwing) return new LanternmothCinderwing(position);
+            if (card == SummonCatalog.Brambleboar) return new Brambleboar(position);
+            if (card == SummonCatalog.SiltfinMawpike) return new SiltfinMawpike(position);
+            if (card == SummonCatalog.GloamravenOssuary) return new GloamravenOssuary(position);
+            if (card == SummonCatalog.RootmossStonegloom) return new RootmossStonegloom(position);
+            return null;
+        }
+
+        /// <summary>
+        /// Cast a SummonCard: pays SummonAPCost + the card's own ManaCost up front (same
+        /// afford-first convention as every other card/move), then opens placement targeting -
+        /// every passable, unoccupied tile within SummonPlacementRange of the caster, same
+        /// mechanics as teleport targeting (CastBlinkSpell) just for picking where the new unit
+        /// appears instead of where the caster goes.
+        /// </summary>
+        private void CastSummon(SummonCard card)
+        {
+            if (SummonAPCost > _playerUnit.CurrentAP || card.ManaCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP to summon {card.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var occupied = GetOccupiedTiles(_playerUnit);
+            _summonPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, SummonPlacementRange)
+                .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToHashSet();
+
+            if (_summonPlacementValidTiles.Count == 0)
+            {
+                ShowCombatMessage($"Nowhere to place {card.Name}.");
+                return;
+            }
+
+            _pendingSummonCard = card;
+            _cardMenuActive = false;
+            _summonPlacementModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a summon's placement tile: click a highlighted tile to spawn it there, E to cancel back to the Cards menu.</summary>
+        private void HandleSummonPlacementInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelSummonPlacement();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_summonPlacementValidTiles.Contains(clickedHex))
+                    ExecuteSummon(clickedHex);
+            }
+        }
+
+        /// <summary>
+        /// Spend SummonAPCost/the card's MP, spawn the creature at destHex owned by the caster
+        /// (see BaseUnit.Owner - keeps it off the caster's own valid-attack-target lists and
+        /// counted as the caster's team for the FFA win check), load its sprite (a no-op if it
+        /// has none yet), add it to the battlefield, consume the card, and return to the turn
+        /// menu. It joins the turn order starting next Turn (TurnSystem rebuilds from the same
+        /// _units list each new Turn), not mid-cycle.
+        /// </summary>
+        private void ExecuteSummon((int col, int row) destHex)
+        {
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - SummonAPCost);
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingSummonCard.ManaCost);
+
+            var position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            var summon = CreateSummonUnit(_pendingSummonCard, position);
+            summon.Owner = _playerUnit;
+            summon.LoadContent(Content, GraphicsDevice);
+            _units.Add(summon);
+
+            ShowCombatMessage($"{_playerUnit.Name} summons a {summon.Name}.");
+            RemoveCardFromHand(_pendingSummonCard);
+
+            CancelSummonPlacement(returnToCardMenu: false);
+        }
+
+        private void CancelSummonPlacement(bool returnToCardMenu = true)
+        {
+            _summonPlacementModeActive = false;
+            _pendingSummonCard = null;
+            _summonPlacementValidTiles.Clear();
+
+            if (returnToCardMenu)
+            {
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
+        }
+
         /// <summary>
         /// Attempt to cast whichever card is currently selected in the hand (_handCardIndex) -
         /// an IsBlink spell opens teleport targeting (CastBlinkSpell), an IsManaShield spell
         /// grants/toggles a shield (CastManaShield), an IsAllyShield spell opens ally-targeting
-        /// (CastAllyShield), a damage-dealing Spell Card goes through CastSpellAsAttack for
-        /// real; everything else (utility/buff spells, and all Summon Cards - no
-        /// summon-to-battlefield system exists yet) just reports that casting isn't implemented
-        /// for it yet, same honest treatment as an unaffordable move rather than a silent no-op.
+        /// (CastAllyShield), a damage-dealing Spell Card goes through CastSpellAsAttack for real,
+        /// a SummonCard opens placement targeting (CastSummon); everything else (utility/buff
+        /// spells with no execution system yet) just reports that casting isn't implemented for
+        /// it yet, same honest treatment as an unaffordable move rather than a silent no-op.
         /// </summary>
         private void TryCastSelectedCard()
         {
@@ -2067,7 +2245,7 @@ namespace SagesOfOzvaram
             }
             else if (card is SummonCard summonCard)
             {
-                ShowCombatMessage($"Summoning {summonCard.Name} isn't implemented yet.");
+                CastSummon(summonCard);
             }
         }
 
@@ -2441,6 +2619,20 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Summon placement (any SummonCard) - every valid placement tile highlighted
+            // orange, whichever one the mouse is over highlighted brighter.
+            if (_summonPlacementModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _summonPlacementValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(255, 200, 120, 180) : new Color(220, 150, 60, 110);
+                    Color outline = hovered ? Color.White : Color.Orange;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
             // Draw hover hex
             if (!_consoleOpen)
             {
@@ -2551,6 +2743,8 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Click a highlighted tile to blink there - E to cancel");
                 else if (_allyTargetModeActive)
                     DrawBottomHint(viewportSize, "Select a target to shield (yourself included) - E to cancel");
+                else if (_summonPlacementModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 
@@ -3218,15 +3412,6 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Full-screen-ish hand-of-cards viewer: dims the background and shows the player's
-        /// available spell + summon cards as a browsable hand - the selected card centered and
-        /// large, with the previous/next cards peeking out smaller to either side (drawn first,
-        /// so the selected card overlaps them; clicking a side card selects it too, see
-        /// HandleCardMenuInput), A/D to browse. Hovering the center card shows a tooltip
-        /// explaining whatever number/icon the cursor is over. A "no cards" message shows if
-        /// the class has neither spells nor summons available yet.
-        /// </summary>
-        /// <summary>
         /// Whichever hand card is currently shown big/centered - the mouse-hovered side card if
         /// any, else whatever A/D or a prior click last selected (_highlightedHandCardIndex).
         /// This is also exactly what TryCastSelectedCard casts on Space, so the card the player
@@ -3244,6 +3429,16 @@ namespace SagesOfOzvaram
             return _highlightedHandCardIndex;
         }
 
+        /// <summary>
+        /// Full-screen-ish hand-of-cards viewer: dims the background and shows the player's
+        /// available spell + summon cards as a browsable hand - the selected card centered and
+        /// large, with the previous/next cards peeking out smaller to either side (drawn first,
+        /// so the selected card overlaps them; a single click just selects a card, a second
+        /// quick click on that same card casts it, see HandleCardMenuInput), A/D to browse.
+        /// Hovering the center card shows a tooltip
+        /// explaining whatever number/icon the cursor is over. A "no cards" message shows if
+        /// the class has neither spells nor summons available yet.
+        /// </summary>
         private void DrawCardMenuOverlay(Vector2 viewportSize)
         {
             _spriteBatch.Draw(_whitePixel, new Rectangle(0, 0, (int)viewportSize.X, (int)viewportSize.Y), new Color(0, 0, 0, 160));
@@ -3306,10 +3501,19 @@ namespace SagesOfOzvaram
                 _spriteBatch.DrawString(_font, text, (viewportSize - size) / 2f, Color.White);
             }
 
+            // A fresh combat-log message (e.g. "Not enough AP/MP for Mana Shield.", "X can't be
+            // cast yet") takes priority over the static control hint, same precedence every
+            // other input mode already gives it (see Draw's _combatLogTimer branch) - otherwise
+            // this unconditional hint, drawn every frame the menu stays open (which is always,
+            // since a failed cast never closes it), would immediately overwrite that message at
+            // the exact same screen position (DrawBottomHint paints an opaque box first), making
+            // every cast-failure message invisible the entire time it was supposed to show.
             DrawBottomHint(viewportSize,
-                _availableHandCards.Count > 1
-                    ? "A/D or click a side card to browse - Space to cast - F to draw - E to close"
-                    : "Space to cast - F to draw - E to close");
+                _combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage)
+                    ? _combatLogMessage
+                    : _availableHandCards.Count > 1
+                        ? "A/D to browse - double-click or Space to cast - F to draw - E to close"
+                        : "Double-click or Space to cast - F to draw - E to close");
         }
 
         /// <summary>

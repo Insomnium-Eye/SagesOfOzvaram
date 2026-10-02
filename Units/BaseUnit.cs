@@ -135,6 +135,14 @@ namespace SagesOfOzvaram.Units
         public HeroClass Class { get; }
 
         /// <summary>
+        /// The unit that summoned this one, or null for an independent combatant (every hero
+        /// unit today). A summon's team is its Owner's team - see Game1's GetTeamRoot/SameTeam,
+        /// used to keep a summon out of its own caster's valid-attack-target lists and to count
+        /// toward the caster's side of the FFA win condition instead of as its own contestant.
+        /// </summary>
+        public BaseUnit Owner { get; set; }
+
+        /// <summary>
         /// Generic damage-absorption pool, reusable by any "health shield" effect (currently
         /// just Mana Shield) - ApplyRawDamage drains this before HP, so a 20-point shield on a
         /// unit at 50/100 HP absorbs the next 20 damage with HP untouched, same as a unit at

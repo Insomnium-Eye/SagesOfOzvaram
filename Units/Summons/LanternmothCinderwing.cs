@@ -10,7 +10,7 @@ namespace SagesOfOzvaram.Units.Summons
         public LanternmothCinderwing(Vector2 position = default)
             : base("Lanternmoth Cinderwing", maxHP: 12, speed: 7, race: Race.LanternmothCinderwing, heroClass: HeroClass.None, position)
         {
-            // No sprite art exists for this summon yet.
+            SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 3;      // "Attack" on the card
             Intelligence = 8;
             Defense = 4;

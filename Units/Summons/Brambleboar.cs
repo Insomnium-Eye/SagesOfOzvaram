@@ -10,7 +10,7 @@ namespace SagesOfOzvaram.Units.Summons
         public Brambleboar(Vector2 position = default)
             : base("Brambleboar", maxHP: 20, speed: 6, race: Race.Brambleboar, heroClass: HeroClass.None, position)
         {
-            // No sprite art exists for this summon yet.
+            SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 11;     // "Attack" on the card
             Intelligence = 2;
             Defense = 7;

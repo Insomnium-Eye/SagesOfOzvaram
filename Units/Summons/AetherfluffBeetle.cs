@@ -10,7 +10,7 @@ namespace SagesOfOzvaram.Units.Summons
         public AetherfluffBeetle(Vector2 position = default)
             : base("Aetherfluff Beetle", maxHP: 10, speed: 5, race: Race.AetherfluffBeetle, heroClass: HeroClass.None, position)
         {
-            // No sprite art exists for this summon yet.
+            SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 0;      // "Attack" on the card
             Intelligence = 2;
             Defense = 4;

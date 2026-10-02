@@ -10,7 +10,7 @@ namespace SagesOfOzvaram.Units.Summons
         public DuskRoachlinPriest(Vector2 position = default)
             : base("Dusk Roachlin Priest", maxHP: 18, speed: 5, race: Race.DuskRoachlinPriest, heroClass: HeroClass.None, position)
         {
-            // No sprite art exists for this summon yet.
+            SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 4;      // "Attack" on the card
             Intelligence = 11;
             Defense = 5;
