@@ -81,6 +81,22 @@ namespace SagesOfOzvaram.Combat
         public bool IsBlink { get; }                // true = an instant self-teleport to any passable, unoccupied tile within Range (e.g. Blink, Disengage) - handled by Game1's teleport targeting mode, not AttackResolver
         public bool IsManaShield { get; }           // true = grants the caster a health shield equal to their remaining MP after paying this move's own cost, drained in lockstep with MP (see BaseUnit.ShieldPoints/ApplyShield) - casting again while already shielded toggles it off instead of re-paying
         public bool IsAllyShield { get; }           // true = lets the caster pick itself OR any other unit in range to grant a health shield to (e.g. Arcane Shield) - the shield's size is GetDamage(caster) (reusing BaseDamage/StrengthDivisor/IntelligenceDivisor as the shield-magnitude formula, not an attack), handled by Game1's ally-targeting mode, not AttackResolver
+        public bool IsSleepSpell { get; }           // true = puts the caster into Deep Sleep (e.g. Forced Sleep) via BaseUnit.ApplySleep(HealPercentMaxHP) - no targeting needed (always self), handled by Game1's CastSleepSpell, not AttackResolver
+        public bool IsMeditateSpell { get; }        // true = starts (or, if already meditating, ends and locks in) Meditate's growing stack buff - see BaseUnit.StartMeditating/EndMeditationAndLockIn, handled by Game1's CastMeditateSpell, not AttackResolver
+
+        // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
+        // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
+        // BaseUnit.TickBuffs (called from TurnSystem.OnUnitTurnStart, same place Stun/Speed
+        // reduction tick). Folded into EffectiveStrength/EffectiveAccuracy/EffectiveIntelligence/
+        // TotalDefense/TotalResistance, so anything already reading those (combat math, the
+        // HP/stat display) picks the buff up for free. Recasting the same InflictsStatusEffect
+        // name on a unit that still has it refreshes the duration/magnitude rather than stacking
+        // - see ApplyBuff. Also reused by EndMeditationAndLockIn to lock in Meditate's stacks.
+        public int StrengthBuff { get; }
+        public int AccuracyBuff { get; }
+        public int DefenseBuff { get; }
+        public int ResistanceBuff { get; }
+        public int IntelligenceBuff { get; }
 
         public Move(string name, string description, int apCost, int mpCost, int range,
                     float baseAccuracy, int baseDamage, DamageType damageType = DamageType.Magical,
@@ -97,7 +113,8 @@ namespace SagesOfOzvaram.Combat
                     int knockdownStandUpApCost = 1, float accuracyFalloffPerTile = 0f,
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
-                    bool isBlink = false, bool isManaShield = false, bool isAllyShield = false)
+                    bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
+                    int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
             Description = description;
@@ -139,6 +156,13 @@ namespace SagesOfOzvaram.Combat
             IsBlink = isBlink;
             IsManaShield = isManaShield;
             IsAllyShield = isAllyShield;
+            IsSleepSpell = isSleepSpell;
+            IsMeditateSpell = isMeditateSpell;
+            StrengthBuff = strengthBuff;
+            AccuracyBuff = accuracyBuff;
+            DefenseBuff = defenseBuff;
+            ResistanceBuff = resistanceBuff;
+            IntelligenceBuff = intelligenceBuff;
         }
 
         /// <summary>
@@ -156,7 +180,7 @@ namespace SagesOfOzvaram.Combat
         {
             float bonus = 0f;
             if (StrengthDivisor > 0f) bonus += attacker.EffectiveStrength / StrengthDivisor;
-            if (IntelligenceDivisor > 0f) bonus += attacker.Intelligence / IntelligenceDivisor;
+            if (IntelligenceDivisor > 0f) bonus += attacker.EffectiveIntelligence / IntelligenceDivisor;
 
             float flatBase = sourceWeapon?.AttackPower ?? BaseDamage;
             float total = flatBase + bonus;
@@ -165,7 +189,7 @@ namespace SagesOfOzvaram.Combat
                 total *= BonusDamageVsGuardingMultiplier;
 
             if (IsSpecialist(attacker, sourceWeapon) && sourceWeapon.SpecialistIntDamageBonusDivisor > 0f)
-                total += attacker.Intelligence / sourceWeapon.SpecialistIntDamageBonusDivisor;
+                total += attacker.EffectiveIntelligence / sourceWeapon.SpecialistIntDamageBonusDivisor;
 
             return (int)Math.Round(total);
         }
@@ -197,7 +221,7 @@ namespace SagesOfOzvaram.Combat
                 }
             }
 
-            chance += attacker.Accuracy * 0.001f;
+            chance += attacker.EffectiveAccuracy * 0.001f;
 
             if (target != null)
                 chance -= target.EffectiveEvasion * 0.001f;

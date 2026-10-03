@@ -102,13 +102,135 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public HexDirection Facing { get; set; } = HexDirection.East;
 
+        /// <summary>
+        /// Every status effect currently active on this unit (Buffs and Afflictions alike - see
+        /// StatusEffectType) - temporary stat buffs (Brace, Rally Cry, Steady Hands), Deep Sleep,
+        /// Meditate, and Stun all live here as data rather than as separate ad hoc fields/flags.
+        /// See ApplyStatusEffect/RemoveStatusEffect/GetRestrictingEffect/TryEndRestrictingEffect,
+        /// and Combat.SpellCaster for how most of these actually get created.
+        /// </summary>
+        public List<StatusEffect> StatusEffects { get; } = new List<StatusEffect>();
+
+        public IEnumerable<StatusEffect> Buffs => StatusEffects.Where(e => e.Type == StatusEffectType.Buff);
+        public IEnumerable<StatusEffect> Afflictions => StatusEffects.Where(e => e.Type == StatusEffectType.Affliction);
+
+        /// <summary>Apply (or refresh) a status effect - an existing one with the same Name is replaced outright, never stacked as a second copy.</summary>
+        public void ApplyStatusEffect(StatusEffect effect)
+        {
+            StatusEffects.RemoveAll(e => e.Name == effect.Name);
+            StatusEffects.Add(effect);
+        }
+
+        public bool HasStatusEffect(string name) => StatusEffects.Any(e => e.Name == name);
+        public void RemoveStatusEffect(string name) => StatusEffects.RemoveAll(e => e.Name == name);
+        public int GetStatusEffectTurnsRemaining(string name) => StatusEffects.FirstOrDefault(e => e.Name == name)?.TurnsRemaining ?? 0;
+
+        /// <summary>The active effect (if any) currently restricting this unit's turn menu to just its own EndEffectLabel + End Turn (e.g. Stunned, Deep Sleep, Meditating) - see TryEndRestrictingEffect. More than one active at once isn't a normal case; whichever comes first wins.</summary>
+        public StatusEffect GetRestrictingEffect() => StatusEffects.FirstOrDefault(e => e.RestrictsActions);
+
+        /// <summary>
+        /// Attempt the restricting effect's own "end it early" action (Break Stun, Wake Up, End
+        /// Meditation): spends EndEffectAPCost AP, then either converts its current bonus into a
+        /// locked-in Buff (LockInDurationTurns > 0 and it's actually built up a bonus yet, e.g.
+        /// Meditate) or just removes it outright (e.g. Deep Sleep). Stun is a special case even
+        /// here - Break Stun additionally requires CanBreakStun and being off its own 5-turn
+        /// cooldown, which it then starts on success; no other effect has either rule. No-op
+        /// (returns false, nothing spent) if nothing is restricting this unit right now, or its
+        /// own conditions (AP, or Stun's extra ones) aren't met.
+        /// </summary>
+        public bool TryEndRestrictingEffect()
+        {
+            var effect = GetRestrictingEffect();
+            if (effect == null || CurrentAP < effect.EndEffectAPCost)
+                return false;
+
+            bool isStun = effect.Name == "Stunned";
+            if (isStun && (!CanBreakStun || StunBreakCooldownRemaining > 0))
+                return false;
+
+            CurrentAP -= effect.EndEffectAPCost;
+
+            if (effect.LockInDurationTurns > 0 && effect.Magnitude > 0)
+            {
+                ApplyStatusEffect(new StatusEffect
+                {
+                    Name = effect.Name,
+                    Type = StatusEffectType.Buff,
+                    TurnsRemaining = effect.LockInDurationTurns,
+                    StrengthBonus = effect.StrengthBonus * effect.Magnitude,
+                    AccuracyBonus = effect.AccuracyBonus * effect.Magnitude,
+                    DefenseBonus = effect.DefenseBonus * effect.Magnitude,
+                    ResistanceBonus = effect.ResistanceBonus * effect.Magnitude,
+                    IntelligenceBonus = effect.IntelligenceBonus * effect.Magnitude,
+                });
+            }
+            else
+            {
+                RemoveStatusEffect(effect.Name);
+            }
+
+            if (isStun)
+                StunBreakCooldownRemaining = 5;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Run once at the start of this unit's own turn (TurnSystem.OnUnitTurnStart): applies
+        /// every active effect's per-turn heal (Deep Sleep), grows every GrowsOverTime effect's
+        /// stacks (Meditate, capped at MaxStacks), then ticks every effect's own TurnsRemaining
+        /// down by one (effects at -1, i.e. indefinite, are left alone) and drops any that just
+        /// hit 0.
+        /// </summary>
+        public void TickStatusEffects()
+        {
+            foreach (var effect in StatusEffects)
+            {
+                if (effect.HealPercentMaxHPPerTurn > 0f)
+                    Heal((int)Math.Round(MaxHP * effect.HealPercentMaxHPPerTurn));
+
+                if (effect.GrowsOverTime)
+                    effect.Stacks = Math.Min(effect.MaxStacks, effect.Stacks + 1);
+
+                // A restricting effect (Stun, Deep Sleep, Meditate) only counts down via its own
+                // "End Turn" choice (see ConsumeRestrictingEffectTurn) - ticking it here, before
+                // the affected unit even gets to act, would let e.g. a 1-turn Stun expire before
+                // its restricted menu ever had a chance to show.
+                if (!effect.RestrictsActions && effect.TurnsRemaining > 0)
+                    effect.TurnsRemaining--;
+            }
+
+            StatusEffects.RemoveAll(e => e.TurnsRemaining == 0);
+        }
+
+        /// <summary>Consume one turn of whatever's currently restricting this unit (e.g. Stun's own fixed duration) - called when "End Turn" is chosen from the restricted menu, or an AI unit fails its end-it-early attempt. A no-op for an indefinite effect (TurnsRemaining -1, e.g. Deep Sleep/Meditate - those only ever end via TryEndRestrictingEffect) or if nothing is restricting this unit right now.</summary>
+        public void ConsumeRestrictingEffectTurn()
+        {
+            var effect = GetRestrictingEffect();
+            if (effect == null || effect.TurnsRemaining <= 0)
+                return;
+
+            effect.TurnsRemaining--;
+            if (effect.TurnsRemaining == 0)
+                RemoveStatusEffect(effect.Name);
+        }
+
+        private int StatusStrengthBonus => StatusEffects.Sum(e => e.StrengthBonus * e.Magnitude);
+        private int StatusAccuracyBonus => StatusEffects.Sum(e => e.AccuracyBonus * e.Magnitude);
+        private int StatusDefenseBonus => StatusEffects.Sum(e => e.DefenseBonus * e.Magnitude);
+        private int StatusResistanceBonus => StatusEffects.Sum(e => e.ResistanceBonus * e.Magnitude);
+        private int StatusIntelligenceBonus => StatusEffects.Sum(e => e.IntelligenceBonus * e.Magnitude);
+
         // Combat stats (first-pass placeholder defaults; each hero overrides these)
         public int Strength { get; set; } = 10;
 
-        /// <summary>Strength including this unit's racial bonus, if its Race grants one (e.g. Lethios +2) - combat formulas (damage, Knockdown, the Bleeding DEF-gate) read this, not raw Strength.</summary>
-        public int EffectiveStrength => Strength + RaceCatalog.GetModifiers(Race).StrengthBonus;
+        /// <summary>Strength including this unit's racial bonus (if its Race grants one, e.g. Lethios +2) and every active status effect's own bonus (e.g. Rally Cry, live Meditate stacks) - combat formulas (damage, Knockdown, the Bleeding DEF-gate) read this, not raw Strength.</summary>
+        public int EffectiveStrength => Strength + RaceCatalog.GetModifiers(Race).StrengthBonus + StatusStrengthBonus;
 
         public int Accuracy { get; set; } = 10;
+
+        /// <summary>Accuracy including every active status effect's own bonus (e.g. Steady Hands, Rally Cry, live Meditate stacks) - Move.GetHitChance reads this, not raw Accuracy.</summary>
+        public int EffectiveAccuracy => Accuracy + StatusAccuracyBonus;
 
         /// <summary>Dodge stat - reduces an incoming attack's hit chance by 0.1%/point, the mirror of Accuracy's own +0.1%/point (see Move.GetHitChance).</summary>
         public int Evasion { get; set; } = 10;
@@ -118,6 +240,9 @@ namespace SagesOfOzvaram.Units
 
         /// <summary>Magic damage stat - magical weapon moves (e.g. the Sorcerer's Arcane Missile) scale with this instead of Strength.</summary>
         public int Intelligence { get; set; } = 10;
+
+        /// <summary>Intelligence including every active status effect's own bonus (live Meditate stacks included) - Move.GetDamage reads this, not raw Intelligence.</summary>
+        public int EffectiveIntelligence => Intelligence + StatusIntelligenceBonus;
 
         /// <summary>Physical damage reduction - raw armor rating, not a direct percentage; see DefenseMitigationPercent for the diminishing-returns curve that converts it.</summary>
         public int Defense { get; set; } = 10;
@@ -170,25 +295,19 @@ namespace SagesOfOzvaram.Units
         /// <summary>Bleed magnitude as a % of MAX HP lost when this unit's turn starts. 0 = not bleeding.</summary>
         public float BleedPercentPerTurn { get; set; } = 0f;
 
-        /// <summary>
-        /// How many of this unit's own upcoming turns are still skipped due to Stun - its
-        /// "length" is set by whatever inflicted it (Move.StatusDurationTurns), not a severity
-        /// rank. Decremented by one each time a turn is skipped - see TurnSystem.OnUnitTurnStart.
-        /// </summary>
-        public int StunTurnsRemaining { get; private set; }
+        /// <summary>True while a "Stunned" StatusEffect is active - see StatusEffects/GetRestrictingEffect.</summary>
+        public bool IsStunned => HasStatusEffect("Stunned");
 
-        public bool IsStunned => StunTurnsRemaining > 0;
+        /// <summary>True while a "Deep Sleep" StatusEffect is active - see StatusEffects/GetRestrictingEffect.</summary>
+        public bool IsAsleep => HasStatusEffect("Deep Sleep");
 
-        /// <summary>Stun for `turns` of this unit's own turns - takes the longer of this and any Stun already active, rather than shortening an existing one.</summary>
-        public void ApplyStun(int turns) => StunTurnsRemaining = Math.Max(StunTurnsRemaining, turns);
+        /// <summary>True while a "Meditating" StatusEffect (the active, still-growing kind - GrowsOverTime) is active - see StatusEffects/GetRestrictingEffect.</summary>
+        public bool IsMeditating => StatusEffects.Any(e => e.Name == "Meditating" && e.GrowsOverTime);
 
-        /// <summary>Consume one turn of Stun (called when this unit's turn is skipped because of it).</summary>
-        public void ConsumeStunTurn() => StunTurnsRemaining = Math.Max(0, StunTurnsRemaining - 1);
-
-        /// <summary>AP cost to Break Stun (see TryBreakStun).</summary>
+        /// <summary>AP cost to Break Stun (see TryEndRestrictingEffect, which this feeds into for display).</summary>
         public const int StunBreakAPCost = 3;
 
-        /// <summary>How many of this unit's own turns remain before Break Stun is off cooldown again. Ticks down once per turn regardless of whether this unit is currently stunned - see TurnSystem.OnUnitTurnStart.</summary>
+        /// <summary>How many of this unit's own turns remain before Break Stun is off cooldown again. Ticks down once per turn regardless of whether this unit is currently stunned - see TurnSystem.OnUnitTurnStart. Lives here rather than on the "Stunned" StatusEffect itself since it must keep counting down even after Stun has already ended.</summary>
         public int StunBreakCooldownRemaining { get; private set; }
 
         /// <summary>
@@ -199,22 +318,6 @@ namespace SagesOfOzvaram.Units
         public bool CanBreakStun => Class != HeroClass.None;
 
         public void TickStunBreakCooldown() => StunBreakCooldownRemaining = Math.Max(0, StunBreakCooldownRemaining - 1);
-
-        /// <summary>
-        /// Attempt to Break Stun: spends StunBreakAPCost AP, clears Stun entirely, and starts a
-        /// 5-turn cooldown. No-op (returns false, nothing spent) if not stunned, not a Summoner
-        /// unit, still on cooldown, or the AP can't be afforded.
-        /// </summary>
-        public bool TryBreakStun()
-        {
-            if (!IsStunned || !CanBreakStun || StunBreakCooldownRemaining > 0 || CurrentAP < StunBreakAPCost)
-                return false;
-
-            CurrentAP -= StunBreakAPCost;
-            StunTurnsRemaining = 0;
-            StunBreakCooldownRemaining = 5;
-            return true;
-        }
 
         /// <summary>True while Knocked Down (prone): cannot move, and this unit's own accuracy is cut by 75% on any move it attempts (see Move.GetHitChance). Cleared by spending KnockdownStandUpAPCost AP - see TryStandUp.</summary>
         public bool IsKnockedDown { get; private set; }
@@ -259,8 +362,15 @@ namespace SagesOfOzvaram.Units
 
         public void ResetCardDrawState() => CardsDrawnThisTurn = 0;
 
-        /// <summary>Refill AP to MaxAP. Called automatically when this unit's turn starts.</summary>
-        public void ResetAP() => CurrentAP = MaxAP;
+        /// <summary>Extra AP queued for this unit's NEXT turn (e.g. Second Wind) - added on top of MaxAP by the next ResetAP, then cleared, so it's a one-time bonus rather than a lasting MaxAP increase.</summary>
+        public int BonusAPNextTurn { get; set; }
+
+        /// <summary>Refill AP to MaxAP (plus any BonusAPNextTurn queued by a spell like Second Wind, consumed here). Called automatically when this unit's turn starts.</summary>
+        public void ResetAP()
+        {
+            CurrentAP = MaxAP + BonusAPNextTurn;
+            BonusAPNextTurn = 0;
+        }
 
         // Mana Points - unlike AP (full refill), MP regenerates a flat amount per turn, tiered
         // by Class (see ClassCatalog.GetManaRegenPerTurn) rather than set per-instance, same
@@ -329,11 +439,11 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         private const float ArmorDiminishingReturnsConstant = 100f;
 
-        /// <summary>Defense including this unit's racial bonus, if its Race grants one (e.g. Lethios +2) - raw armor rating, not yet run through the diminishing curve. Also what the Knockdown formula and Bleeding's DEF-gate read as "Armor."</summary>
-        public int TotalDefense => Defense + RaceCatalog.GetModifiers(Race).DefenseBonus;
+        /// <summary>Defense including this unit's racial bonus (if its Race grants one, e.g. Lethios +2) and every active status effect's own bonus (e.g. Brace, live Meditate stacks) - raw armor rating, not yet run through the diminishing curve. Also what the Knockdown formula and Bleeding's DEF-gate read as "Armor."</summary>
+        public int TotalDefense => Defense + RaceCatalog.GetModifiers(Race).DefenseBonus + StatusDefenseBonus;
 
-        /// <summary>Resistance including this unit's racial bonus, if its Race grants one (e.g. Human +7) - raw, not yet run through the diminishing curve.</summary>
-        public int TotalResistance => Resistance + RaceCatalog.GetModifiers(Race).ResistanceBonus;
+        /// <summary>Resistance including this unit's racial bonus (if its Race grants one, e.g. Human +7) and every active status effect's own bonus (e.g. Brace, live Meditate stacks) - raw, not yet run through the diminishing curve.</summary>
+        public int TotalResistance => Resistance + RaceCatalog.GetModifiers(Race).ResistanceBonus + StatusResistanceBonus;
 
         /// <summary>Physical mitigation % from TotalDefense (raw Defense + racial bonus, diminishing returns) - before any shield/Guard bonus, which are still flat adds layered on top.</summary>
         public float DefenseMitigationPercent => 100f * TotalDefense / (TotalDefense + ArmorDiminishingReturnsConstant);
@@ -577,6 +687,19 @@ namespace SagesOfOzvaram.Units
         private void ApplyRawDamage(int damage)
         {
             damage = Math.Max(0, damage);
+
+            // Any status effect with an InterruptDamagePercentMaxHP set (e.g. Meditate) is
+            // cleared outright - no lock-in - the moment a single hit meets that threshold,
+            // before shield absorption even comes into play; that's still "taking the hit."
+            if (MaxHP > 0)
+            {
+                foreach (var effect in StatusEffects.Where(e => e.InterruptDamagePercentMaxHP > 0f
+                        && damage >= MaxHP * e.InterruptDamagePercentMaxHP)
+                    .ToList())
+                {
+                    RemoveStatusEffect(effect.Name);
+                }
+            }
 
             if (ShieldPoints > 0)
             {

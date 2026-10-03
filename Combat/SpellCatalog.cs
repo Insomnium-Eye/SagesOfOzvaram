@@ -30,22 +30,22 @@ namespace SagesOfOzvaram.Combat
         public static readonly SpellCard Meditate = new SpellCard(
             "Meditate",
             "Enter a meditative state: each turn, gain a stack of RES/DEF/INT/ACC/STR (up to 3 stacks). "
-                + "Taking a hit for 10%+ of max HP interrupts it and clears all stacks. Choosing to end it "
-                + "voluntarily at the start of your turn locks in the current buff for 3 more turns.",
+                + "Taking a hit for 10%+ of max HP interrupts it and loses all stacks. Cast again while "
+                + "meditating to end it voluntarily instead, locking in the current bonus for 3 more turns.",
             requiredClass: null,
             new Move("Meditate", "Center yourself and let your focus build.",
                 apCost: 2, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "Meditating", statusDurationTurns: 3),
+                inflictsStatusEffect: "Meditating", statusDurationTurns: 3, isMeditateSpell: true),
             "imgs/Cards/Spells/Meditate_CardArt");
 
         public static readonly SpellCard ForcedSleep = new SpellCard(
             "Forced Sleep",
-            "Fall into a light sleep: immobilized, but heal 20% of max HP each turn while asleep. "
-                + "Any single hit of 10+ damage wakes you immediately.",
+            "Force yourself into Deep Sleep: immobilized, but heal 20% of max HP at the start of "
+                + "every turn while asleep. Costs 1 AP to Wake Up early.",
             requiredClass: null,
             new Move("Forced Sleep", "Force yourself into a shallow, restorative sleep.",
                 apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                healPercentMaxHP: 0.20f, inflictsStatusEffect: "Asleep"),
+                healPercentMaxHP: 0.20f, inflictsStatusEffect: "Deep Sleep", isSleepSpell: true),
             "imgs/Cards/Spells/ForcedSleep_CardArt");
 
         public static readonly SpellCard ConjurePotions = new SpellCard(
@@ -80,7 +80,8 @@ namespace SagesOfOzvaram.Combat
             requiredClass: null,
             new Move("Brace", "Brace for the incoming blow.",
                 apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "Braced", statusDurationTurns: 1),
+                inflictsStatusEffect: "Braced", statusDurationTurns: 1,
+                defenseBuff: 15, resistanceBuff: 15),
             "imgs/Cards/Spells/Brace_CardArt");
 
         public static readonly SpellCard RallyCry = new SpellCard(
@@ -90,7 +91,8 @@ namespace SagesOfOzvaram.Combat
             new Move("Rally Cry", "A shout that puts steel back in the spine.",
                 apCost: 2, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
                 hitsAllAdjacent: true, targetsAllies: true,
-                inflictsStatusEffect: "Rallied", statusDurationTurns: 2),
+                inflictsStatusEffect: "Rallied", statusDurationTurns: 2,
+                strengthBuff: 4, accuracyBuff: 15),
             "imgs/Cards/Spells/RallyCry_CardArt");
 
         public static readonly SpellCard SteadyHands = new SpellCard(
@@ -99,7 +101,8 @@ namespace SagesOfOzvaram.Combat
             requiredClass: null,
             new Move("Steady Hands", "Breathe. Focus. Steady your hands.",
                 apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "SteadyHands", statusDurationTurns: 2),
+                inflictsStatusEffect: "SteadyHands", statusDurationTurns: 2,
+                accuracyBuff: 20),
             "imgs/Cards/Spells/SteadyHands_CardArt");
 
         // --- Sorcerer Spells: burst arcane/elemental damage plus magical utility ---

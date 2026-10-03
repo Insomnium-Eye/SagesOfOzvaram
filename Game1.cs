@@ -90,12 +90,6 @@ namespace SagesOfOzvaram
         private List<object> _availableHandCards = new List<object>();
         private int _handCardIndex = 0;
         private int? _highlightedHandCardIndex;
-
-        // Double-click-to-cast tracking (see HandleCardMenuInput/CardDoubleClickSeconds) - which
-        // card index a click last landed on, and at what total-game-time, so a second click on
-        // the SAME card shortly after counts as the cast rather than every lone click casting.
-        private int _lastCardClickIndex = -1;
-        private float _lastCardClickTime = -1f;
         private readonly Random _deckRandom = new Random();
         private readonly Dictionary<HeroClass, List<object>> _classDecks = new Dictionary<HeroClass, List<object>>();
         private readonly Dictionary<HeroClass, List<object>> _classHands = new Dictionary<HeroClass, List<object>>();
@@ -109,10 +103,22 @@ namespace SagesOfOzvaram
         private bool _turnMenuActive = false;
         private bool _viewingMap = false;
 
-        // Stunned turn (replaces the normal turn menu entirely while _playerUnit.IsStunned - see
-        // HandleStunnedTurnInput). Not shown at all while Fainted - that's a forced, no-choice skip.
-        private static readonly string[] StunnedMenuOptions = { "Break Stun", "End Turn" };
-        private int _stunnedMenuIndex = 0;
+        // Restricted turn (replaces the normal turn menu entirely while the player's unit has a
+        // restricting StatusEffect active - Stunned, Deep Sleep, Meditating, ... - see
+        // HandleRestrictedTurnInput). Not shown at all while Fainted - that's a forced, no-choice
+        // skip. The first option's label/cost comes straight from that effect's own
+        // EndEffectLabel/EndEffectAPCost (see StatusEffect/BaseUnit.GetRestrictingEffect); "End
+        // Turn" is always the second - this menu works for ANY current or future restricting
+        // effect with no Game1 changes needed, since it reads the effect's own data rather than
+        // hardcoding which effect is active.
+        private int _restrictedMenuIndex = 0;
+
+        /// <summary>The two options shown while the player's unit can't act normally - the active restricting effect's own EndEffectLabel (with its AP cost), then "End Turn".</summary>
+        private static string[] GetRestrictedMenuOptions(BaseUnit unit)
+        {
+            var effect = unit.GetRestrictingEffect();
+            return new[] { effect?.EndEffectLabel ?? "Wait", "End Turn" };
+        }
 
         // Match end (FFA - each player is a "team" of one; last unit not Fainted wins)
         private BaseUnit _matchWinner;
@@ -727,11 +733,13 @@ namespace SagesOfOzvaram
                     }
                     else if (isPlayerTurn && !_turnSystem.TransitioningCamera)
                     {
-                        if (_playerUnit.IsStunned)
+                        if (_playerUnit.GetRestrictingEffect() != null)
                         {
-                            // Stunned overrides everything else - the only choices are trying to
-                            // Break Stun or ending the turn without acting (see HandleStunnedTurnInput).
-                            HandleStunnedTurnInput(keyboardState, mouseState);
+                            // A restricting StatusEffect (Stunned, Deep Sleep, Meditating, ...)
+                            // overrides everything else - the only choices are trying its own
+                            // end-it-early action or ending the turn without acting (see
+                            // HandleRestrictedTurnInput).
+                            HandleRestrictedTurnInput(keyboardState, mouseState);
                         }
                         else if (_viewingMap)
                         {
@@ -770,7 +778,7 @@ namespace SagesOfOzvaram
                         }
                         else if (_cardMenuActive)
                         {
-                            HandleCardMenuInput(keyboardState, mouseState, (float)gameTime.TotalGameTime.TotalSeconds);
+                            HandleCardMenuInput(keyboardState, mouseState);
                         }
                         else
                         {
@@ -1248,54 +1256,61 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Handle input while the player's unit is Stunned (but not Fainted): W/S or mouse-hover
-        /// to highlight "Break Stun" / "End Turn", click or E to confirm. No other menu is
-        /// reachable from here - see the isPlayerTurn dispatch in Update.
+        /// Handle input while the player's unit has a restricting StatusEffect active (Stunned,
+        /// Deep Sleep, Meditating, but not Fainted): W/S or mouse-hover to highlight that
+        /// effect's own end-it-early action vs "End Turn" (see GetRestrictedMenuOptions), click
+        /// or E to confirm. No other menu is reachable from here - see the isPlayerTurn dispatch
+        /// in Update.
         /// </summary>
-        private void HandleStunnedTurnInput(KeyboardState keyboardState, MouseState mouseState)
+        private void HandleRestrictedTurnInput(KeyboardState keyboardState, MouseState mouseState)
         {
+            var options = GetRestrictedMenuOptions(_playerUnit);
+
             if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
-                _stunnedMenuIndex = (_stunnedMenuIndex + 1) % StunnedMenuOptions.Length;
+                _restrictedMenuIndex = (_restrictedMenuIndex + 1) % options.Length;
             if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
-                _stunnedMenuIndex = (_stunnedMenuIndex - 1 + StunnedMenuOptions.Length) % StunnedMenuOptions.Length;
+                _restrictedMenuIndex = (_restrictedMenuIndex - 1 + options.Length) % options.Length;
 
             Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, StunnedMenuOptions.Length);
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, options.Length);
 
             for (int i = 0; i < optionRects.Length; i++)
             {
                 if (optionRects[i].Contains(mouseState.X, mouseState.Y))
                 {
-                    _stunnedMenuIndex = i;
+                    _restrictedMenuIndex = i;
                     if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
-                        ConfirmStunnedMenuSelection();
+                        ConfirmRestrictedMenuSelection();
                 }
             }
 
             if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
-                ConfirmStunnedMenuSelection();
+                ConfirmRestrictedMenuSelection();
         }
 
-        private void ConfirmStunnedMenuSelection()
+        private void ConfirmRestrictedMenuSelection()
         {
-            string option = StunnedMenuOptions[_stunnedMenuIndex];
+            string option = GetRestrictedMenuOptions(_playerUnit)[_restrictedMenuIndex];
 
-            if (option == "Break Stun")
+            if (option == "End Turn")
             {
-                // No-op (stays on this menu) if unaffordable, on cooldown, or not a Summoner
-                // unit - TryBreakStun reports which via its own bool, nothing more to show yet.
-                if (_playerUnit.TryBreakStun())
-                {
-                    _stunnedMenuIndex = 0;
-                    _turnMenuIndex = 0;
-                    _turnMenuActive = true; // free to act normally with whatever AP remains
-                }
-            }
-            else if (option == "End Turn")
-            {
-                _playerUnit.ConsumeStunTurn();
-                _stunnedMenuIndex = 0;
+                // Whatever's restricting this unit consumes one of its own turns here (Stun's
+                // fixed duration counts down; an indefinite effect like Deep Sleep/Meditate is
+                // untouched - see ConsumeRestrictingEffectTurn) until something actually clears it.
+                _playerUnit.ConsumeRestrictingEffectTurn();
+                _restrictedMenuIndex = 0;
                 _turnSystem.NextUnit();
+                return;
+            }
+
+            // Anything else is the restricting effect's own "end it early" action (Break Stun,
+            // Wake Up, End Meditation, ...) - TryEndRestrictingEffect reports success/failure via
+            // its own bool (unaffordable, on cooldown, ...), nothing more to show here yet.
+            if (_playerUnit.TryEndRestrictingEffect())
+            {
+                _restrictedMenuIndex = 0;
+                _turnMenuIndex = 0;
+                _turnMenuActive = true; // free to act normally with whatever AP remains
             }
         }
 
@@ -1360,10 +1375,7 @@ namespace SagesOfOzvaram
             _cardMenuActive = true;
         }
 
-        /// <summary>Seconds between two clicks on the same card for the second one to count as the double-click that casts it (see HandleCardMenuInput).</summary>
-        private const float CardDoubleClickSeconds = 0.4f;
-
-        private void HandleCardMenuInput(KeyboardState keyboardState, MouseState mouseState, float totalSeconds)
+        private void HandleCardMenuInput(KeyboardState keyboardState, MouseState mouseState)
         {
             if (_availableHandCards.Count > 1)
             {
@@ -1379,53 +1391,39 @@ namespace SagesOfOzvaram
                 }
             }
 
-            // A single click just selects/focuses a card (same as A/D) - a SECOND click on that
-            // SAME card within CardDoubleClickSeconds is what actually casts it, so a plain click
-            // to look a card over (or to switch which one you're looking at) never accidentally
-            // plays it. The click has to land on an actual card - either a smaller peeking side
-            // card's own slot, or the current big focused card's larger on-screen silhouette
-            // (ScaleCardRect) - clicking empty space does nothing either way.
+            // A click selects/focuses a card, same as A/D - EXCEPT when it lands on the card
+            // that's already focused/highlighted (i.e. clicking it again), which casts it
+            // instead. No time window: this used to require two clicks within a fixed interval
+            // (a real "double-click"), but that was unreliable in practice - two deliberate
+            // clicks a bit further apart than the window missed each other, forcing repeated
+            // clicking before two ever happened to land close enough together. Requiring the
+            // SECOND click to land on the already-selected card (any time later) needs no timing
+            // at all and is just as safe against an accidental single click casting something.
+            // The click has to land on an actual card - either a smaller peeking side card's own
+            // slot, or the current big focused card's larger on-screen silhouette (ScaleCardRect)
+            // - clicking empty space does nothing either way.
             if (_availableHandCards.Count > 0 && mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
             {
                 Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
                 var layout = GetHandCardLayout(viewportSize);
                 Point clickPos = new Point(mouseState.X, mouseState.Y);
 
-                int clickedIndex = -1;
                 if (_highlightedHandCardIndex.HasValue
                     && ScaleCardRect(layout[_highlightedHandCardIndex.Value], 2.10f).Contains(clickPos))
                 {
-                    clickedIndex = _highlightedHandCardIndex.Value;
-                }
-                else
-                {
-                    for (int i = layout.Count - 1; i >= 0; i--)
-                    {
-                        if (layout[i].Contains(clickPos))
-                        {
-                            clickedIndex = i;
-                            break;
-                        }
-                    }
+                    _handCardIndex = _highlightedHandCardIndex.Value;
+                    TryCastSelectedCard();
+                    return; // casting may close the card menu - don't also process E/F below against now-stale state
                 }
 
-                if (clickedIndex >= 0)
+                for (int i = layout.Count - 1; i >= 0; i--)
                 {
-                    bool isDoubleClick = clickedIndex == _lastCardClickIndex
-                        && totalSeconds - _lastCardClickTime <= CardDoubleClickSeconds;
-
-                    _handCardIndex = clickedIndex;
-                    _highlightedHandCardIndex = clickedIndex;
-
-                    if (isDoubleClick)
+                    if (layout[i].Contains(clickPos))
                     {
-                        _lastCardClickIndex = -1; // consumed - a 3rd rapid click starts a fresh pair, not an immediate re-cast
-                        TryCastSelectedCard();
-                        return; // casting may close the card menu - don't also process E/F below against now-stale state
+                        _handCardIndex = i;
+                        _highlightedHandCardIndex = i;
+                        break;
                     }
-
-                    _lastCardClickIndex = clickedIndex;
-                    _lastCardClickTime = totalSeconds;
                 }
             }
 
@@ -1574,7 +1572,8 @@ namespace SagesOfOzvaram
         /// one instead of moving - no point closing distance you don't need to (this is what
         /// keeps ranged units from walking into melee range for no reason). Otherwise walk
         /// toward the player as before, then check once more - it may have closed into range
-        /// this turn - and attack if so. Also handles Stun (always attempts Break Stun) and
+        /// this turn - and attack if so. Also handles any restricting StatusEffect (Stun, Deep
+        /// Sleep, Meditate, ...: always attempts that effect's own end-it-early action) and
         /// Knockdown (always stands back up).
         /// </summary>
         private void RunSimpleAI(BaseUnit aiUnit)
@@ -1582,16 +1581,16 @@ namespace SagesOfOzvaram
             if (aiUnit == _playerUnit || !aiUnit.IsAlive)
                 return;
 
-            // Stunned: always attempt to Break Stun. If it fails (unaffordable/on cooldown),
-            // that's this turn's one action - nothing else to try. If it succeeds, fall through
-            // and still use whatever AP remains to move/attack, same as a normal turn would.
-            if (aiUnit.IsStunned)
+            // Restricted (Stunned, Deep Sleep, Meditating, ...): always attempt that effect's own
+            // end-it-early action (TryEndRestrictingEffect reads whichever one is actually
+            // active). If it fails (unaffordable, or Stun's extra cooldown/class-gate), that's
+            // this turn's one action - consume a turn of it (Stun's fixed duration counts down;
+            // an indefinite effect is untouched) and stop there. If it succeeds, fall through and
+            // still use whatever AP remains to move/attack, same as a normal turn would.
+            if (aiUnit.GetRestrictingEffect() != null && !aiUnit.TryEndRestrictingEffect())
             {
-                if (!aiUnit.TryBreakStun())
-                {
-                    aiUnit.ConsumeStunTurn();
-                    return;
-                }
+                aiUnit.ConsumeRestrictingEffectTurn();
+                return;
             }
 
             // Knocked Down: stand up instead of trying (and failing) to move/attack this turn.
@@ -1823,8 +1822,11 @@ namespace SagesOfOzvaram
         /// despite having a damage formula: Place Trap/Explosive Trap are meant to place
         /// something that triggers later, and resolving them as an immediate hit on a clicked
         /// target would misrepresent what the card actually does - they need a real
-        /// placement/trigger system first. Everything else (buffs, heals, AP grants, taming,
-        /// summoning, ...) has no execution path yet at all; see TryCastSelectedCard.
+        /// placement/trigger system first. A self/ally utility spell - a stat buff (Brace, Rally
+        /// Cry, Steady Hands) and/or a next-turn AP grant (Second Wind) - casts through a
+        /// separate path instead (see SpellIsSelfUtility/CastSelfUtilitySpell); everything else
+        /// (heals, taming, summoning via spell, ...) has no execution path yet at all; see
+        /// TryCastSelectedCard.
         /// </summary>
         private static bool SpellCastsAsAttack(SpellCard card)
         {
@@ -1960,42 +1962,6 @@ namespace SagesOfOzvaram
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
             }
-        }
-
-        /// <summary>
-        /// Cast an IsManaShield spell (currently just Mana Shield): pays its own AP/MP, then
-        /// grants a shield equal to whatever MP remains after that (see BaseUnit.ApplyShield,
-        /// ShieldDrainsMana true so the shield and MP drain together as it absorbs hits).
-        /// Casting it again while already mana-shielded toggles the shield off instead of
-        /// re-paying, matching the original "can be turned off at will" design.
-        /// </summary>
-        private void CastManaShield(SpellCard card)
-        {
-            if (_playerUnit.ShieldPoints > 0 && _playerUnit.ShieldDrainsMana)
-            {
-                _playerUnit.ClearShield();
-                ShowCombatMessage($"{_playerUnit.Name} drops their Mana Shield.");
-                return;
-            }
-
-            var move = card.Effect;
-            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
-            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
-            {
-                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
-                return;
-            }
-
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - apCost);
-            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - move.MPCost);
-            _playerUnit.ApplyShield(_playerUnit.CurrentMP, drainsMana: true);
-
-            ShowCombatMessage($"{_playerUnit.Name} raises a Mana Shield ({_playerUnit.ShieldPoints} points).");
-            RemoveCardFromHand(card);
-
-            _cardMenuActive = false;
-            _turnMenuIndex = 0;
-            _turnMenuActive = true;
         }
 
         /// <summary>
@@ -2211,10 +2177,15 @@ namespace SagesOfOzvaram
         /// Attempt to cast whichever card is currently selected in the hand (_handCardIndex) -
         /// an IsBlink spell opens teleport targeting (CastBlinkSpell), an IsManaShield spell
         /// grants/toggles a shield (CastManaShield), an IsAllyShield spell opens ally-targeting
-        /// (CastAllyShield), a damage-dealing Spell Card goes through CastSpellAsAttack for real,
-        /// a SummonCard opens placement targeting (CastSummon); everything else (utility/buff
-        /// spells with no execution system yet) just reports that casting isn't implemented for
-        /// it yet, same honest treatment as an unaffordable move rather than a silent no-op.
+        /// (CastAllyShield), an IsSleepSpell puts the caster into Deep Sleep (CastSleepSpell), an
+        /// IsMeditateSpell starts (or, if already meditating, ends and locks in) Meditate
+        /// (CastMeditateSpell), a damage-dealing Spell Card goes through CastSpellAsAttack for
+        /// real, a self/ally utility spell (Brace/Rally Cry/Steady Hands/Second Wind) applies
+        /// instantly (CastSelfUtilitySpell), a SummonCard opens placement targeting (CastSummon);
+        /// everything else (heals and other utility spells with no execution system yet) just
+        /// reports that casting isn't
+        /// implemented for it yet, same honest treatment as an unaffordable move rather than a
+        /// silent no-op.
         /// </summary>
         private void TryCastSelectedCard()
         {
@@ -2234,12 +2205,12 @@ namespace SagesOfOzvaram
             {
                 if (spellCard.Effect.IsBlink)
                     CastBlinkSpell(spellCard);
-                else if (spellCard.Effect.IsManaShield)
-                    CastManaShield(spellCard);
                 else if (spellCard.Effect.IsAllyShield)
                     CastAllyShield(spellCard);
                 else if (SpellCastsAsAttack(spellCard))
                     CastSpellAsAttack(spellCard);
+                else if (SpellCaster.CanResolveInstantly(spellCard.Effect))
+                    ResolveInstantCast(spellCard);
                 else
                     ShowCombatMessage($"{spellCard.Name} can't be cast yet - no execution system for that effect.");
             }
@@ -2247,6 +2218,46 @@ namespace SagesOfOzvaram
             {
                 CastSummon(summonCard);
             }
+        }
+
+        /// <summary>
+        /// Cast a SpellCard whose entire effect SpellCaster.Cast can resolve on its own - Mana
+        /// Shield, Deep Sleep, Meditate, and the generic self/ally utility spells (Brace, Rally
+        /// Cry, Steady Hands, Second Wind). Game1's only job here is gathering the one piece of
+        /// UI-side context that logic can't reach on its own (which adjacent units are actually
+        /// this caster's allies, for a HitsAllAdjacent spell like Rally Cry) and then reflecting
+        /// the result back into the UI - showing the message, removing the card from hand unless
+        /// told not to (SpellCaster.CastResult.ConsumesCard - Mana Shield/Meditate's own
+        /// toggle-off, and Meditate's "stays in hand to serve as its own off switch" start, both
+        /// say no), and returning to the turn menu on success. No AP/MP/stat-effect logic lives
+        /// in Game1 for any of this.
+        /// </summary>
+        private void ResolveInstantCast(SpellCard card)
+        {
+            var allies = card.Effect.HitsAllAdjacent ? GetAdjacentAllies(_playerUnit) : new List<BaseUnit>();
+            var result = SpellCaster.Cast(card, _playerUnit, allies);
+
+            ShowCombatMessage(result.Message);
+            if (!result.Success)
+                return;
+
+            if (result.ConsumesCard)
+                RemoveCardFromHand(card);
+
+            _cardMenuActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        /// <summary>Every living unit on `unit`'s own team (see GetTeamRoot), adjacent to it, excluding itself - same adjacency AttackResolver.GetAdjacentTargets uses for an enemy-facing HitsAllAdjacent move, just filtered to allies instead.</summary>
+        private List<BaseUnit> GetAdjacentAllies(BaseUnit unit)
+        {
+            var hex = _hexGrid.WorldToHex(unit.Position);
+            var adjacentHexes = _hexGrid.GetNeighbors(hex.col, hex.row).ToHashSet();
+            var team = GetTeamRoot(unit);
+            return _units.Where(u => u != unit && u.IsAlive && GetTeamRoot(u) == team
+                    && adjacentHexes.Contains(_hexGrid.WorldToHex(u.Position)))
+                .ToList();
         }
 
         /// <summary>
@@ -2685,6 +2696,22 @@ namespace SagesOfOzvaram
                     Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 48f);
                     Color textColor = !unit.IsAlive ? Color.DarkRed : (unit.IsFainted ? Color.Gray : Color.White);
                     _spriteBatch.DrawString(_font, statusText, textPos, textColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+
+                    // Every active StatusEffect (Buffs cyan, Afflictions orange - e.g. Brace,
+                    // Deep Sleep, Meditate's live stacks, Stunned) shown as a small line right
+                    // above the name/HP text - the only persistent on-screen sign any is active,
+                    // beyond the fading combat-log message shown the moment one is applied. Fully
+                    // generic - a brand new StatusEffect shows up here automatically, no Game1
+                    // change needed.
+                    if (unit.StatusEffects.Count > 0)
+                    {
+                        string effectText = string.Join(", ", unit.StatusEffects.Select(e =>
+                            e.GrowsOverTime ? $"{e.Name} ({e.Stacks}/{e.MaxStacks})" : e.Name));
+                        Color effectColor = unit.Afflictions.Any() ? new Color(255, 150, 60) : Color.Cyan;
+                        Vector2 effectTextSize = _font.MeasureString(effectText) * 0.35f;
+                        Vector2 effectTextPos = unit.Position - new Vector2(effectTextSize.X / 2f, 68f);
+                        _spriteBatch.DrawString(_font, effectText, effectTextPos, effectColor, 0f, Vector2.Zero, 0.35f, SpriteEffects.None, 0f);
+                    }
                 }
             }
 
@@ -2719,8 +2746,8 @@ namespace SagesOfOzvaram
                 if (_turnMenuActive)
                     DrawTurnMenu(viewportSize);
 
-                if (_turnSystem.CurrentUnit == _playerUnit && _playerUnit.IsStunned)
-                    DrawStunnedMenu(viewportSize);
+                if (_turnSystem.CurrentUnit == _playerUnit && _playerUnit.GetRestrictingEffect() != null)
+                    DrawRestrictedMenu(viewportSize);
 
                 if (_attackMenuActive)
                     DrawAttackMenu(viewportSize);
@@ -2820,27 +2847,32 @@ namespace SagesOfOzvaram
             }
         }
 
-        /// <summary>The restricted menu shown while the player's unit is Stunned - "Break Stun" (3 AP, off cooldown, Summoner units only) or ending the turn without acting.</summary>
-        private void DrawStunnedMenu(Vector2 viewportSize)
+        /// <summary>The restricted menu shown while the player's unit has a restricting StatusEffect active - that effect's own EndEffectLabel (with its own EndEffectAPCost) or ending the turn without acting. Entirely data-driven off the active effect - no per-effect-name special casing, so it works the same for Stun, Deep Sleep, Meditate, or any future one.</summary>
+        private void DrawRestrictedMenu(Vector2 viewportSize)
         {
-            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, StunnedMenuOptions.Length);
+            var effect = _playerUnit.GetRestrictingEffect();
+            if (effect == null)
+                return;
 
-            for (int i = 0; i < StunnedMenuOptions.Length; i++)
+            var options = GetRestrictedMenuOptions(_playerUnit);
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, options.Length);
+
+            for (int i = 0; i < options.Length; i++)
             {
-                bool selected = i == _stunnedMenuIndex;
+                bool selected = i == _restrictedMenuIndex;
                 Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
                 Color textColor = selected ? Color.Black : Color.White;
 
-                string label = StunnedMenuOptions[i];
-                if (label == "Break Stun")
-                    label += $" ({BaseUnit.StunBreakAPCost} AP)";
+                string label = options[i] == effect.EndEffectLabel
+                    ? $"{options[i]} ({effect.EndEffectAPCost} AP)"
+                    : options[i];
 
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
                 _spriteBatch.DrawString(_font, label,
                     new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
             }
 
-            DrawBottomHint(viewportSize, "Stunned!");
+            DrawBottomHint(viewportSize, $"{effect.Name}!");
         }
 
         private void DrawAttackMenu(Vector2 viewportSize)
@@ -3433,9 +3465,9 @@ namespace SagesOfOzvaram
         /// Full-screen-ish hand-of-cards viewer: dims the background and shows the player's
         /// available spell + summon cards as a browsable hand - the selected card centered and
         /// large, with the previous/next cards peeking out smaller to either side (drawn first,
-        /// so the selected card overlaps them; a single click just selects a card, a second
-        /// quick click on that same card casts it, see HandleCardMenuInput), A/D to browse.
-        /// Hovering the center card shows a tooltip
+        /// so the selected card overlaps them; a click just selects a card, clicking that SAME
+        /// already-selected card again casts it - no time limit between the two clicks, see
+        /// HandleCardMenuInput), A/D to browse. Hovering the center card shows a tooltip
         /// explaining whatever number/icon the cursor is over. A "no cards" message shows if
         /// the class has neither spells nor summons available yet.
         /// </summary>
@@ -3512,8 +3544,8 @@ namespace SagesOfOzvaram
                 _combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage)
                     ? _combatLogMessage
                     : _availableHandCards.Count > 1
-                        ? "A/D to browse - double-click or Space to cast - F to draw - E to close"
-                        : "Double-click or Space to cast - F to draw - E to close");
+                        ? "A/D to browse - click twice (or Space) to cast - F to draw - E to close"
+                        : "Click twice (or Space) to cast - F to draw - E to close");
         }
 
         /// <summary>

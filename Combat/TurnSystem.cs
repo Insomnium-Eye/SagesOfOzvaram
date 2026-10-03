@@ -83,17 +83,20 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>
         /// Runs whenever a unit's turn starts (a normal advance or the first unit of a fresh
-        /// Turn): ticks bleed, ticks the Break Stun cooldown, refills AP, and clears any Guard
-        /// stance from their last turn. A Fainted unit skips its turn outright instead - no AP,
-        /// no choices, forced every time until HP recovers (see BaseUnit.IsFainted). A Stunned
-        /// (but not Fainted) unit still gets AP like normal - its turn is limited to just
-        /// attempting to Break Stun or ending without acting, which Game1 enforces; if it
-        /// doesn't break free, whoever ends that turn calls ConsumeStunTurn to use up one of
-        /// StunTurnsRemaining.
+        /// Turn): ticks bleed, ticks every active StatusEffect (per-turn heals like Deep Sleep,
+        /// stack growth like Meditate, and duration countdowns - see BaseUnit.TickStatusEffects),
+        /// ticks the Break Stun cooldown, ticks Speed reduction, refills AP (plus any
+        /// BonusAPNextTurn queued by Second Wind), and clears any Guard stance from their last
+        /// turn. A Fainted unit skips its turn outright instead - no AP, no choices, forced every
+        /// time until HP recovers (see BaseUnit.IsFainted). A unit with a restricting StatusEffect
+        /// (Stunned, Deep Sleep, Meditating - see BaseUnit.GetRestrictingEffect) but not Fainted
+        /// still gets AP like normal - its turn is limited to just attempting that effect's own
+        /// "end it early" action or ending without acting, which Game1 enforces.
         /// </summary>
         private void OnUnitTurnStart()
         {
             CurrentUnit.ApplyBleedTick();
+            CurrentUnit.TickStatusEffects();
             CurrentUnit.TickStunBreakCooldown();
             CurrentUnit.TickSpeedReduction();
 

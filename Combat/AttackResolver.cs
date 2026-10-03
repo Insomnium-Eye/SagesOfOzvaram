@@ -139,7 +139,7 @@ namespace SagesOfOzvaram.Combat
 
             if (move.InflictsStatusEffect != null && Rng.NextDouble() < move.GetStatusEffectChance(attacker, target))
             {
-                ApplyStatusEffect(target, move);
+                InflictMoveStatusEffect(target, move);
                 outcome.StatusApplied = move.InflictsStatusEffect;
             }
 
@@ -157,7 +157,7 @@ namespace SagesOfOzvaram.Combat
             return outcome;
         }
 
-        private static void ApplyStatusEffect(BaseUnit target, Move move)
+        private static void InflictMoveStatusEffect(BaseUnit target, Move move)
         {
             switch (move.InflictsStatusEffect)
             {
@@ -167,7 +167,18 @@ namespace SagesOfOzvaram.Combat
                     target.BleedPercentPerTurn = Math.Max(target.BleedPercentPerTurn, BleedEffect.GetPercent(move.BleedRank ?? StatusRank.Weak));
                     break;
                 case "Stunned":
-                    target.ApplyStun(move.StatusDurationTurns);
+                    // Take the longer of this and any Stun already active, rather than shortening
+                    // one a harder hit already applied.
+                    int turns = Math.Max(target.GetStatusEffectTurnsRemaining("Stunned"), move.StatusDurationTurns);
+                    target.ApplyStatusEffect(new StatusEffect
+                    {
+                        Name = "Stunned",
+                        Type = StatusEffectType.Affliction,
+                        TurnsRemaining = turns,
+                        RestrictsActions = true,
+                        EndEffectLabel = "Break Stun",
+                        EndEffectAPCost = BaseUnit.StunBreakAPCost,
+                    });
                     break;
                 case "Slowed":
                     target.ApplySpeedReduction(move.SpeedReductionPercent, move.StatusDurationTurns);
