@@ -37,6 +37,9 @@ namespace SagesOfOzvaram.Combat
         public string EndEffectLabel;
         public int EndEffectAPCost;
 
+        /// <summary>True = this effect blocks movement specifically WITHOUT restricting the rest of the turn menu (e.g. a future Rooted) - unlike RestrictsActions, the unit can still Attack/Cards/Items/End normally, it just never sees a Move option. See Combat.TurnMenuBuilder.</summary>
+        public bool PreventsMovement;
+
         /// <summary>% of max HP healed at the start of every one of the affected unit's own turns while this effect is active (e.g. Deep Sleep). 0 = no per-turn heal.</summary>
         public float HealPercentMaxHPPerTurn;
 

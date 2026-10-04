@@ -97,8 +97,10 @@ namespace SagesOfOzvaram
         private int _selectedCharacterIndex = 0;  // Sorcerer is the default selection
         private BaseUnit _playerUnit;
 
-        // Turn menu (shown, next to the player's unit, when it's their turn)
-        private static readonly string[] TurnMenuOptions = { "Attack", "Cards", "Items", "End", "Move", "View Map" };
+        // Turn menu (shown, next to the player's unit, when it's their turn) - its actual
+        // contents are built fresh on demand by Combat.TurnMenuBuilder (see GetTurnMenuOptions)
+        // rather than being one fixed list, so e.g. "Cards" never appears for a non-Summoner unit
+        // and "Move" disappears entirely once there's nowhere left to go.
         private int _turnMenuIndex = 0;
         private bool _turnMenuActive = false;
         private bool _viewingMap = false;
@@ -1172,15 +1174,28 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// This turn's actual menu options for _playerUnit, built fresh every call by
+        /// Combat.TurnMenuBuilder off its current Class/Inventory/Knocked-Down state and the
+        /// tiles around it - see TurnMenuBuilder for exactly what each option checks. Called from
+        /// every place the turn menu reads or draws its options, rather than cached, so it always
+        /// reflects whatever just changed (AP spent, a neighboring tile that opened up, ...).
+        /// </summary>
+        private List<TurnMenuOption> GetTurnMenuOptions() =>
+            TurnMenuBuilder.Build(_playerUnit, GameMode.Combat, _hexGrid, _map, _units);
+
+        /// <summary>
         /// Handle input on the player unit's turn menu: W/S or mouse-hover to highlight an
         /// option, click or E to confirm.
         /// </summary>
         private void HandleTurnMenuInput(KeyboardState keyboardState, MouseState mouseState)
         {
+            var options = GetTurnMenuOptions();
+            _turnMenuIndex = Math.Clamp(_turnMenuIndex, 0, options.Count - 1);
+
             if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
-                _turnMenuIndex = (_turnMenuIndex + 1) % TurnMenuOptions.Length;
+                _turnMenuIndex = (_turnMenuIndex + 1) % options.Count;
             if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
-                _turnMenuIndex = (_turnMenuIndex - 1 + TurnMenuOptions.Length) % TurnMenuOptions.Length;
+                _turnMenuIndex = (_turnMenuIndex - 1 + options.Count) % options.Count;
 
             Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
             Rectangle[] optionRects = GetTurnMenuOptionRects(viewportSize);
@@ -1201,12 +1216,16 @@ namespace SagesOfOzvaram
 
         private void ConfirmTurnMenuSelection()
         {
-            string option = TurnMenuOptions[_turnMenuIndex];
+            var options = GetTurnMenuOptions();
+            _turnMenuIndex = Math.Clamp(_turnMenuIndex, 0, options.Count - 1);
+            string optionId = options[_turnMenuIndex].Id;
 
-            // "End"/"Guard", "View Map", "Attack" (opens the attack submenu below) and "Move"
-            // are wired up - Spell/Items have no systems to act on yet (no spellbook or
-            // inventory-use exist yet).
-            if (option == "End")
+            // "End"/"Guard", "ViewMap", "Attack" (opens the attack submenu below) and "Move" are
+            // wired up - "Items" has no system to act on yet (no inventory-use UI exists), so
+            // selecting it (TurnMenuBuilder only even shows it once there's a weapon to manage)
+            // falls through to the implicit no-op below, same honest "nothing happens yet"
+            // treatment spells without an execution system get.
+            if (optionId == "End")
             {
                 _turnMenuActive = false;
 
@@ -1221,21 +1240,21 @@ namespace SagesOfOzvaram
 
                 _turnSystem.NextUnit();
             }
-            else if (option == "View Map")
+            else if (optionId == "ViewMap")
             {
                 _turnMenuActive = false;
                 _viewingMap = true;
             }
-            else if (option == "Attack")
+            else if (optionId == "Attack")
             {
                 _turnMenuActive = false;
                 OpenAttackMenu();
             }
-            else if (option == "Move")
+            else if (optionId == "Move")
             {
                 _turnMenuActive = false;
 
-                // The slot displays as "Stand Up" (see DrawTurnMenu) while Knocked Down, since
+                // The slot displays as "Stand Up" (see TurnMenuBuilder) while Knocked Down, since
                 // movement is disabled until the unit spends the AP to get back up.
                 if (_playerUnit.IsKnockedDown)
                 {
@@ -1248,7 +1267,7 @@ namespace SagesOfOzvaram
                     OpenMovementMode();
                 }
             }
-            else if (option == "Cards")
+            else if (optionId == "Cards")
             {
                 _turnMenuActive = false;
                 OpenCardMenu();
@@ -2440,7 +2459,7 @@ namespace SagesOfOzvaram
         /// screen position and clamped so the menu stays fully onscreen.
         /// </summary>
         private Rectangle[] GetTurnMenuOptionRects(Vector2 viewportSize) =>
-            GetMenuOptionRects(viewportSize, TurnMenuOptions.Length);
+            GetMenuOptionRects(viewportSize, GetTurnMenuOptions().Count);
 
         /// <summary>
         /// Compute a vertical menu's option rectangles, anchored just off the player unit's
@@ -2825,24 +2844,20 @@ namespace SagesOfOzvaram
 
         private void DrawTurnMenu(Vector2 viewportSize)
         {
+            var options = GetTurnMenuOptions();
+            _turnMenuIndex = Math.Clamp(_turnMenuIndex, 0, options.Count - 1);
             Rectangle[] optionRects = GetTurnMenuOptionRects(viewportSize);
 
-            for (int i = 0; i < TurnMenuOptions.Length; i++)
+            for (int i = 0; i < options.Count; i++)
             {
                 bool selected = i == _turnMenuIndex;
                 Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
                 Color textColor = selected ? Color.Black : Color.White;
 
-                // The "End" slot displays as "Guard" whenever the unit can afford to use it;
-                // "Move" displays as "Stand Up" while Knocked Down, since movement is disabled.
-                string label = TurnMenuOptions[i] == "End" && _playerUnit.CurrentAP >= _playerUnit.GuardAPCost
-                    ? "Guard"
-                    : TurnMenuOptions[i] == "Move" && _playerUnit.IsKnockedDown
-                        ? "Stand Up"
-                        : TurnMenuOptions[i];
-
+                // Label already reflects context (e.g. "Guard" vs "End", "Stand Up" vs "Move") -
+                // see TurnMenuBuilder.
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
-                _spriteBatch.DrawString(_font, label,
+                _spriteBatch.DrawString(_font, options[i].Label,
                     new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
             }
         }
