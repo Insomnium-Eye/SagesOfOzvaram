@@ -30,6 +30,9 @@ namespace SagesOfOzvaram.Combat
         /// <summary>Path under Content/, no extension - e.g. "imgs/Cards/Summons/DuskRoachlin_CardArt1".</summary>
         public string ArtAssetPath { get; }
 
+        /// <summary>True once this card has actually been play-tested - see Combat.TestedCards (the real tracking lives there, by Name; this just reads it). Drives Test Mode's deck ordering (Untested cards first).</summary>
+        public bool Tested => TestedCards.Names.Contains(Name);
+
         public SummonCard(string name, int manaCost, string unitType, string description,
             int attack, int intelligence, int defense, int resistance, int accuracy, int evasion, int speed,
             int minDamage, int maxDamage, int hp, string artAssetPath)

@@ -66,6 +66,15 @@ namespace SagesOfOzvaram
 
         // Character select
         private GameState _gameState = GameState.CharacterSelect;
+
+        /// <summary>
+        /// True once the dev console's "test mode" has been used (see EnterTestMode) - pre-
+        /// release dev tooling, meant to be removed/hidden before an official release. Suppresses
+        /// the FFA win check (so a stray AI hit between the 4 spawned classes can't end the
+        /// "match" early) and the placeholder AI's own movement step (RunSimpleAI) - it still
+        /// attacks if already in range, just never paths toward the player - while active.
+        /// </summary>
+        private bool _testModeActive = false;
         private static readonly string[] AvatarFileNames =
         {
             "ApprenticeSorc_Avatar",     // matches _units[0] (Sorcerer)
@@ -180,10 +189,30 @@ namespace SagesOfOzvaram
             public Vector2 From;
             public Vector2 To;
             public float Elapsed;
-            public float Duration;
+            public float Duration;        // total lifetime - the effect is removed once Elapsed reaches this
+            public float TravelDuration;  // Shooting only: time to actually cross from From to To: may be less than Duration, so the projectile then holds steady at To for the remainder (Duration - TravelDuration) instead of vanishing the instant it lands - a clearer "impact" beat. Equals Duration (no hold) for Slash.
+            public Color ProjectileColor; // Shooting only - see SpawnAttackAnimations
         }
 
         private readonly List<ActiveAttackEffect> _activeAttackEffects = new List<ActiveAttackEffect>();
+
+        /// <summary>A brief "took a hit" reaction on whichever unit actually got hit - a nudge away from the attacker plus a red flash on the sprite, both fading out over Duration. Spawned per-hit alongside the attack's own Slash/Shooting effect (see SpawnAttackAnimations), but tracked separately since it's keyed to the TARGET rather than the attack itself. StartDelay holds it off until the attack actually ARRIVES - zero for a Slash (already at the target), but a Shooting projectile's travel time for anything ranged, so a cast target doesn't flinch before the bolt/missile has even reached it.</summary>
+        private class ActiveHitReaction
+        {
+            public BaseUnit Target;
+            public float Elapsed;
+            public float StartDelay;
+            public float Duration;
+            public Vector2 NudgeDirection; // unit vector pointing away from the attacker
+        }
+
+        private readonly List<ActiveHitReaction> _activeHitReactions = new List<ActiveHitReaction>();
+        // Long enough to actually read: a sin(pi*t) intensity curve only spends a sliver of its
+        // total duration near full strength, so a short duration (the original 0.25s, matched to
+        // a melee Slash's own tiny window) made the flash/nudge nearly subliminal - same lesson
+        // as the missile animation needing a longer window to actually be seen.
+        private const float HitReactionDuration = 0.4f;
+        private const float HitReactionNudgeDistance = 14f; // pixels, world space
 
         // Movement mode (opened from the "Move" turn-menu option)
         private bool _movementModeActive = false;
@@ -203,22 +232,25 @@ namespace SagesOfOzvaram
 
         protected override void Initialize()
         {
-            // Initialize hex grid (20 cols x 15 rows, 32px tiles)
-            _hexGrid = new HexGrid(20, 15, tileSize: 32f);
-
-            // Generate procedural map with seed
-            int mapSeed = Environment.TickCount; // Or use a fixed seed like 12345 for reproducibility
-            MapGenerator generator = new MapGenerator(mapSeed);
-            _map = generator.GenerateMap(20, 15, scale: 0.08f, octaves: 4);
-
             // Asset registry
             _assetRegistry = new AssetRegistry();
             RegisterDefaultAssets();
+
+            // Initialize units list
+            _units = new List<BaseUnit>();
+
+            // Hex grid/map need SOME initial values to construct the console/renderer against -
+            // EnterTestMode (called below) immediately replaces both with the 3x3 test setup, so
+            // what's built here doesn't matter beyond being valid.
+            _hexGrid = new HexGrid(3, 3, tileSize: 32f);
+            _map = new Map(3, 3);
 
             // Dev console
             _console = new DevConsole(_map, _assetRegistry);
             _console.AddCardCallback = AddCardToHandCommand;
             _console.ListCardsCallback = ListCardsCommand;
+            _console.TestModeCallback = EnterTestMode;
+            _console.OriginalModeCallback = EnterOriginalMode;
 
             // Actual typed characters for the console - KeyboardState (polled in
             // HandleConsoleInput) only reports WHICH keys are held, not what character a key
@@ -226,24 +258,19 @@ namespace SagesOfOzvaram
             // typing. TextInput is keyboard-layout-aware and fires once per keystroke.
             Window.TextInput += OnConsoleTextInput;
 
-            // Initialize units list
-            _units = new List<BaseUnit>();
-
-            // Spawn the 4 apprentice units in random corners
-            SpawnUnits();
-
-            GenerateClassDecks();
-
-            // Initialize turn system
-            _turnSystem = new TurnSystem(_units);
-            _cameraTarget = _turnSystem.CurrentUnit.Position;
-            _cameraZoomTarget = 2.5f;  // Zoom in on units
-            _hasAutoAdvancedThisTurn = false;
-            _hasAiActedThisTurn = false;
-
             // Renderer
             _renderer = new HexGridRenderer(_hexGrid, _spriteBatch, GraphicsDevice);
-            _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
+
+            // Test Mode is currently what the game boots directly into, for this ongoing
+            // card-testing pass (see EnterTestMode's own doc comment) - the normal 20x15
+            // procedural map/character select/standard decks (BuildOriginalMap/EnterOriginalMode)
+            // are kept fully intact as a separate mode, just not the default right now; "original
+            // mode" in the dev console switches back.
+            EnterTestMode();
+            _cameraTarget = _turnSystem.CurrentUnit.Position;
+
+            _hasAutoAdvancedThisTurn = false;
+            _hasAiActedThisTurn = false;
 
             base.Initialize();
         }
@@ -323,13 +350,155 @@ namespace SagesOfOzvaram
             return _hexGrid.HexToWorld(0, 0);
         }
 
+        /// <summary>
+        /// Dev-console "test mode" handler (see DevConsole.TestModeCallback). Pre-release dev
+        /// tooling - meant to be removed/hidden entirely before an official release, per the
+        /// request that introduced it - kept as deliberately separate, self-contained state
+        /// (_testModeActive, this method, BuildTestDeck) rather than woven into the normal
+        /// match-setup path, so stripping it later only means deleting this and its few
+        /// _testModeActive checks elsewhere, not untangling it from real game logic. Swaps to a
+        /// small 3x3 all-grass map (the real procedural MapGenerator - see Initialize - is left
+        /// completely alone; this builds a Map directly, whose tiles already default to
+        /// grass/passable with no generator needed), spawns all 4 hero classes at its 4 corners
+        /// (reuses SpawnUnits/FindValidSpawnPosition exactly as a normal match does, just against
+        /// the swapped-in 3x3 grid), puts the player in control of the first one (Sorcerer - no
+        /// character select in Test Mode), gives every unit effectively unlimited AP/MP (999 -
+        /// "free" in every practical sense, since TurnSystem's normal ResetAP/RegenMana top back
+        /// up to that same inflated Max every turn with no extra code needed, rather than
+        /// threading a true zero-cost bypass through every cast path), and replaces the normal
+        /// ~30-card shuffled class deck with BuildTestDeck's "every card that exists, Untested
+        /// ones first" deck. Re-entering Test Mode (e.g. after a relaunch, once more cards have
+        /// been marked tested in Combat.TestedCards) resets everything fresh again.
+        /// </summary>
+        private string EnterTestMode()
+        {
+            _hexGrid = new HexGrid(3, 3, tileSize: 32f);
+            _map = new Map(3, 3);
+            _console.SetMap(_map);
+
+            _units.Clear();
+            SpawnUnits();
+            foreach (var unit in _units)
+                unit.LoadContent(Content, GraphicsDevice);
+
+            const int unlimited = 999;
+            foreach (var unit in _units)
+            {
+                unit.MaxAP = unlimited;
+                unit.CurrentAP = unlimited;
+                unit.MaxMP = unlimited;
+                unit.CurrentMP = unlimited;
+            }
+
+            _playerUnit = _units[0];
+            _testModeActive = true;
+
+            var testDeck = BuildTestDeck();
+            _classDecks[_playerUnit.Class] = testDeck;
+            _classHands[_playerUnit.Class] = new List<object>();
+            EnsurePlayerHandInitialized();
+
+            _turnSystem = new TurnSystem(_units);
+            _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
+
+            // Reset every input-mode flag - whatever was on screen before "test mode" was typed
+            // (a targeting mode, an open menu, ...) no longer refers to anything valid.
+            _gameState = GameState.Playing;
+            _turnMenuActive = false;
+            _cardMenuActive = false;
+            _attackMenuActive = false;
+            _targetingModeActive = false;
+            _coneAimingModeActive = false;
+            _teleportModeActive = false;
+            _allyTargetModeActive = false;
+            _summonPlacementModeActive = false;
+            _movementModeActive = false;
+            _viewingMap = false;
+
+            int untestedCount = testDeck.Count(c => !IsCardTested(c));
+            return $"Test Mode active - 3x3 grass map, {_units.Count} classes spawned, controlling {_playerUnit.Name}. "
+                + $"Deck: {testDeck.Count} cards ({untestedCount} untested, at the top). AP/MP effectively unlimited.";
+        }
+
+        /// <summary>Every SpellCard and SummonCard that exists, Untested ones first (stable within each group - catalog declaration order) - see Combat.TestedCards for what "tested" means and how a card gets marked. Deliberately ignores the normal ~30-card deck cap and class restrictions entirely; this is a testing deck, not a real one.</summary>
+        private List<object> BuildTestDeck()
+        {
+            var all = new List<object>();
+            all.AddRange(SpellCatalog.GetAllCards());
+            all.AddRange(SummonCatalog.AllSummons);
+            return all.OrderBy(IsCardTested).ToList();
+        }
+
+        private static bool IsCardTested(object card) => card switch
+        {
+            SpellCard spell => spell.Tested,
+            SummonCard summon => summon.Tested,
+            _ => false,
+        };
+
+        /// <summary>The original 20x15 procedural map this game shipped with, kept fully intact and callable - EnterOriginalMode uses it to switch back - even while Test Mode is the default boot configuration for now (see EnterTestMode/Initialize).</summary>
+        private Map BuildOriginalMap()
+        {
+            int mapSeed = Environment.TickCount; // Or use a fixed seed like 12345 for reproducibility
+            var generator = new MapGenerator(mapSeed);
+            return generator.GenerateMap(20, 15, scale: 0.08f, octaves: 4);
+        }
+
+        /// <summary>
+        /// Dev-console "original mode" handler (see DevConsole.OriginalModeCallback) - the
+        /// reverse of EnterTestMode: switches back to the normal 20x15 procedural map
+        /// (BuildOriginalMap), normal character select (rather than auto-picking the Sorcerer),
+        /// and standard ~30-card shuffled decks/AP/MP for all 4 classes.
+        /// </summary>
+        private string EnterOriginalMode()
+        {
+            _hexGrid = new HexGrid(20, 15, tileSize: 32f);
+            _map = BuildOriginalMap();
+            _console.SetMap(_map);
+
+            _units.Clear();
+            SpawnUnits();
+            foreach (var unit in _units)
+                unit.LoadContent(Content, GraphicsDevice);
+
+            _testModeActive = false;
+            _playerUnit = null; // back through character select
+            GenerateClassDecks();
+
+            _turnSystem = new TurnSystem(_units);
+            _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
+            _cameraZoomTarget = 2.5f;
+
+            _gameState = GameState.CharacterSelect;
+            _selectedCharacterIndex = 0;
+
+            // Reset every input-mode flag, same reasoning as EnterTestMode.
+            _turnMenuActive = false;
+            _cardMenuActive = false;
+            _attackMenuActive = false;
+            _targetingModeActive = false;
+            _coneAimingModeActive = false;
+            _teleportModeActive = false;
+            _allyTargetModeActive = false;
+            _summonPlacementModeActive = false;
+            _movementModeActive = false;
+            _viewingMap = false;
+
+            return "Original Mode restored - normal 20x15 procedural map, character select, standard decks/AP/MP.";
+        }
+
         protected override void LoadContent()
         {
             _spriteBatch = new SpriteBatch(GraphicsDevice);
 
             // Initialize renderer HERE (after SpriteBatch exists)
             _renderer = new HexGridRenderer(_hexGrid, _spriteBatch, GraphicsDevice);
-            _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
+
+            // Center on whichever unit's turn it is rather than a hardcoded hex (used to be
+            // HexToWorld(10, 7), a fixed point on the original 20x15 map specifically - once
+            // Test Mode's 3x3 map could also be the active one at this point, that fixed point
+            // would aim the camera at empty space off the edge of it).
+            _renderer.CameraPosition = _turnSystem.CurrentUnit.Position;
 
             // Load unit sprites
             foreach (var unit in _units)
@@ -637,9 +806,12 @@ namespace SagesOfOzvaram
                 // FFA win check - a unit's team is itself, or whoever summoned it (see
                 // GetTeamRoot/BaseUnit.Owner); the moment at most one team still has a living
                 // member, the match is over. A lone surviving summon still counts as its owner's
-                // team winning, even if the owner itself has already Fainted.
+                // team winning, even if the owner itself has already Fainted. Suppressed entirely
+                // in Test Mode - it spawns all 4 classes as separate "teams" with AI that can
+                // still attack if already in range, and a stray kill ending the "match" would cut
+                // a testing session short for no reason.
                 var stillStandingTeams = _units.Where(u => !u.IsFainted).Select(GetTeamRoot).Distinct().ToList();
-                if (stillStandingTeams.Count <= 1)
+                if (!_testModeActive && stillStandingTeams.Count <= 1)
                 {
                     _matchWinner = stillStandingTeams.Count == 1 ? stillStandingTeams[0] : null;
                     _gameState = GameState.MatchOver;
@@ -677,6 +849,17 @@ namespace SagesOfOzvaram
                         _activeAttackEffects[i].Elapsed += deltaTime;
                         if (_activeAttackEffects[i].Elapsed >= _activeAttackEffects[i].Duration)
                             _activeAttackEffects.RemoveAt(i);
+                    }
+
+                    // Advance (and drop once finished) every active hit-reaction (see SpawnAttackAnimations).
+                    // Elapsed counts from the moment the attack was spawned, not from when the
+                    // reaction itself starts playing - StartDelay (0 for Slash, the projectile's
+                    // travel time for Shooting) is what the reaction waits out before it begins.
+                    for (int i = _activeHitReactions.Count - 1; i >= 0; i--)
+                    {
+                        _activeHitReactions[i].Elapsed += deltaTime;
+                        if (_activeHitReactions[i].Elapsed >= _activeHitReactions[i].StartDelay + _activeHitReactions[i].Duration)
+                            _activeHitReactions.RemoveAt(i);
                     }
 
                     if (_combatLogTimer > 0f)
@@ -728,10 +911,14 @@ namespace SagesOfOzvaram
                     // finishes (2s). The camera still swoops in underneath it (that lerp is
                     // above, ungated), but this is what actually stops an AI unit from moving
                     // the instant a match/Turn starts, before the player's even had a chance to
-                    // register whose turn it is.
-                    if (_turnSystem.ShowingTurnAnnouncement)
+                    // register whose turn it is. Same freeze while any attack animation
+                    // (SpawnAttackAnimations - a swing or a traveling projectile like Arcane
+                    // Missile) is still playing, so the menu doesn't instantly reopen over it and
+                    // the game visibly pauses on the shot instead - see Draw's turn-menu check,
+                    // which uses the same _activeAttackEffects.Count condition to hide it.
+                    if (_turnSystem.ShowingTurnAnnouncement || _activeAttackEffects.Count > 0)
                     {
-                        // Waiting out the announcement - no input handling, no AI, no auto-advance.
+                        // Waiting out the announcement/animation - no input handling, no AI, no auto-advance.
                     }
                     else if (isPlayerTurn && !_turnSystem.TransitioningCamera)
                     {
@@ -979,7 +1166,10 @@ namespace SagesOfOzvaram
             var drawn = new List<object>();
             for (int i = 0; i < count && deck.Count > 0; i++)
             {
-                int cardIndex = _deckRandom.Next(deck.Count);
+                // Test Mode draws sequentially from the FRONT of the deck instead of randomly -
+                // BuildTestDeck sorts Untested cards there, so "Untested cards always come up
+                // first" actually holds; a random draw would make that ordering meaningless.
+                int cardIndex = _testModeActive ? 0 : _deckRandom.Next(deck.Count);
                 drawn.Add(deck[cardIndex]);
                 deck.RemoveAt(cardIndex);
             }
@@ -1593,11 +1783,23 @@ namespace SagesOfOzvaram
         /// toward the player as before, then check once more - it may have closed into range
         /// this turn - and attack if so. Also handles any restricting StatusEffect (Stun, Deep
         /// Sleep, Meditate, ...: always attempts that effect's own end-it-early action) and
-        /// Knockdown (always stands back up).
+        /// Knockdown (always stands back up). In Test Mode, this entire method is a no-op for
+        /// every AI unit (no movement, no attacking either) - see _testModeActive.
         /// </summary>
         private void RunSimpleAI(BaseUnit aiUnit)
         {
             if (aiUnit == _playerUnit || !aiUnit.IsAlive)
+                return;
+
+            // Test Mode: the other 3 spawned classes don't act at all - no movement (per the
+            // original request) AND no attacking either. Discovered why the attack half matters
+            // too by actually looking at a live screenshot: on a 3x3 map every corner is close
+            // enough to every other that the "attack if already in range" behavior alone let the
+            // 3 AI units kill each other, and the player's OWN unit, by turn 3 with the player
+            // never getting a turn - the opposite of a safe card-testing sandbox. Movement-only
+            // removal assumed units wouldn't already be in range of each other, which doesn't
+            // hold on a map this small.
+            if (_testModeActive)
                 return;
 
             // Restricted (Stunned, Deep Sleep, Meditating, ...): always attempt that effect's own
@@ -2323,17 +2525,38 @@ namespace SagesOfOzvaram
                 if (outcome.Target == null)
                     continue;
 
-                float duration;
+                float travelDuration;
+                float holdDuration;
                 if (move.AnimationType == AttackAnimationType.Shooting)
                 {
                     var toHex = _hexGrid.WorldToHex(outcome.Target.Position);
                     int distanceTiles = _hexGrid.GetDistance(fromHex.col, fromHex.row, toHex.col, toHex.row);
-                    duration = 0.15f + 0.03f * distanceTiles; // a longer shot takes a touch longer to land
+                    // Slower than the old 0.15 + 0.03/tile - the Update loop now actually pauses
+                    // the game on this (see the ShowingTurnAnnouncement gate and Draw's turn-menu
+                    // check), so it needs to be slow enough to actually SEE the shot travel
+                    // rather than a near-instant flash, for Arcane Missile in particular. Plus a
+                    // brief hold once it lands (see TravelDuration/Duration on ActiveAttackEffect)
+                    // so a short hop between two adjacent units - the common case on Test Mode's
+                    // 3x3 map - still gets a clearly visible pause, not just a flicker.
+                    travelDuration = 0.4f + 0.06f * distanceTiles;
+                    holdDuration = 0.25f;
                 }
                 else
                 {
-                    duration = 0.25f;
+                    // Was 0.25s/0f - long enough to resolve but too short to actually register
+                    // before the turn menu reopens (see the Update pause gate's
+                    // _activeAttackEffects.Count check), which also squeezed the hit-reaction
+                    // flash on the target into an almost-invisible sliver.
+                    travelDuration = 0.35f;
+                    holdDuration = 0.1f;
                 }
+
+                // A magical bolt (e.g. Arcane Missile, Frost Blast) reads as a glowing
+                // purple/blue orb instead of the plain yellow every physical projectile
+                // (arrow/bolt/bullet) uses - simple, but enough to tell them apart at a glance.
+                Color projectileColor = move.DamageType == DamageType.Magical
+                    ? new Color(170, 100, 255)
+                    : Color.Yellow;
 
                 _activeAttackEffects.Add(new ActiveAttackEffect
                 {
@@ -2341,8 +2564,32 @@ namespace SagesOfOzvaram
                     From = from,
                     To = outcome.Target.Position,
                     Elapsed = 0f,
-                    Duration = duration,
+                    Duration = travelDuration + holdDuration,
+                    TravelDuration = travelDuration,
+                    ProjectileColor = projectileColor,
                 });
+
+                // Only an actual hit gets a reaction - a miss shouldn't flinch. Shooting waits
+                // out the projectile's own travel time first, so the flash/nudge lands with the
+                // impact instead of the instant the spell/shot is cast.
+                if (outcome.Hit)
+                {
+                    Vector2 nudgeDirection = outcome.Target.Position - from;
+                    nudgeDirection = nudgeDirection.LengthSquared() > 0.001f
+                        ? Vector2.Normalize(nudgeDirection)
+                        : Vector2.UnitX;
+
+                    float hitReactionDelay = move.AnimationType == AttackAnimationType.Shooting ? travelDuration : 0f;
+
+                    _activeHitReactions.Add(new ActiveHitReaction
+                    {
+                        Target = outcome.Target,
+                        Elapsed = 0f,
+                        StartDelay = hitReactionDelay,
+                        Duration = HitReactionDuration,
+                        NudgeDirection = nudgeDirection,
+                    });
+                }
             }
         }
 
@@ -2502,14 +2749,34 @@ namespace SagesOfOzvaram
                     _renderer.PanCamera(Vector2.UnitX * panSpeed * deltaTime);   // D = right (positive X)
             }
 
-            // Zoom (mouse wheel)
+            // Zoom (mouse wheel) - _cameraZoomTarget has to move WITH ZoomLevel here, not just
+            // ZoomLevel alone: once the camera's initial swoop-in settles, Update's own
+            // camera-follow block locks ZoomLevel to _cameraZoomTarget every single frame (so the
+            // zoom stays put while a unit walks mid-turn) - without updating the target too, that
+            // lock would snap the zoom right back to its old value the very next frame, making
+            // the scroll wheel look like it does nothing beyond a 1-frame flicker.
+            //
+            // Outside free-look (_viewingMap/_movementModeActive), that SAME per-frame block also
+            // re-locks CameraPosition to the current unit every single frame - so zooming "toward
+            // the cursor" (Zoom's normal behavior, shifting CameraPosition along with ZoomLevel)
+            // fought that lock every frame while scrolling: one frame nudges the camera toward
+            // the cursor, the very next snaps it back to the unit, over and over, which is the
+            // "jitter" scrolling while unit-locked produced. Passing the camera's OWN current
+            // position as the "cursor" zeroes out that position shift (see HexGridRenderer.Zoom)
+            // so only ZoomLevel actually changes, matching what the position-lock already holds
+            // steady anyway. Free-look modes have no such lock fighting it, so the cursor-relative
+            // zoom (truly centered on the mouse) is kept there, where it works as intended.
+            bool cameraIsUnitLocked = !_viewingMap && !_movementModeActive;
+            Vector2 zoomOrigin = cameraIsUnitLocked ? _renderer.CameraPosition : new Vector2(mouseState.X, mouseState.Y);
             if (mouseState.ScrollWheelValue > _previousMouseState.ScrollWheelValue)
             {
-                _renderer.Zoom(0.1f, new Vector2(mouseState.X, mouseState.Y));
+                _renderer.Zoom(0.1f, zoomOrigin);
+                _cameraZoomTarget = _renderer.ZoomLevel;
             }
             if (mouseState.ScrollWheelValue < _previousMouseState.ScrollWheelValue)
             {
-                _renderer.Zoom(-0.1f, new Vector2(mouseState.X, mouseState.Y));
+                _renderer.Zoom(-0.1f, zoomOrigin);
+                _cameraZoomTarget = _renderer.ZoomLevel;
             }
 
             // Select hex (left click)
@@ -2597,7 +2864,16 @@ namespace SagesOfOzvaram
                 var attackerHexForRange = _hexGrid.WorldToHex(_playerUnit.Position);
                 int rangeForIndicator = _pendingMove.GetEffectiveRange(_playerUnit, _pendingSourceWeapon);
                 foreach (var (col, row) in _hexGrid.GetHexesInRadius(attackerHexForRange.col, attackerHexForRange.row, rangeForIndicator))
-                    DrawHexFilled(_hexGrid.HexToWorld(col, row), new Color(255, 255, 255, 40), new Color(255, 255, 255, 90));
+                {
+                    // GetHexesInRadius is a pure hex-distance circle with no map-bounds awareness
+                    // of its own - skip anything off the edge of the actual map, or the range
+                    // indicator spills out past the grid entirely (very visible on a small map,
+                    // e.g. Test Mode's 3x3 one, where an ordinary 5-range spell's circle is
+                    // several times the size of the map itself).
+                    if (!_hexGrid.IsInBounds(col, row))
+                        continue;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), new Color(200, 60, 60, 40), new Color(200, 60, 60, 90));
+                }
 
                 foreach (var candidate in _targetCandidates)
                     DrawHexFilled(candidate.Position, new Color(220, 40, 40, 140), Color.Red);
@@ -2617,7 +2893,13 @@ namespace SagesOfOzvaram
                     var direction = _hexGrid.GetDirectionTo(attackerHex.col, attackerHex.row, hoveredHex.col, hoveredHex.row);
                     int range = _pendingMove.GetEffectiveRange(_playerUnit, _pendingSourceWeapon);
                     foreach (var (col, row) in _hexGrid.GetHexesInCone(attackerHex.col, attackerHex.row, direction, range))
+                    {
+                        // GetHexesInCone has the same no-bounds-awareness issue GetHexesInRadius
+                        // does (see the attack-range indicator above) - skip anything off the map.
+                        if (!_hexGrid.IsInBounds(col, row))
+                            continue;
                         DrawHexFilled(_hexGrid.HexToWorld(col, row), new Color(120, 220, 255, 140), Color.CornflowerBlue);
+                    }
                 }
             }
 
@@ -2699,6 +2981,19 @@ namespace SagesOfOzvaram
                     // already uses for its HP text below, just applied to the sprite too.
                     Color spriteTint = unit.IsAlive ? Color.White : new Color(90, 90, 90);
 
+                    // Generic "took a hit" reaction (see SpawnAttackAnimations/ActiveHitReaction) -
+                    // a quick nudge away from the attacker plus a red flash, both eased in and out
+                    // over the reaction's lifetime via a single sin(pi*t) bump (0 at start/end, 1 at
+                    // the midpoint) rather than a linear fade, so it doesn't snap in/out abruptly.
+                    var hitReaction = _activeHitReactions.Find(h => h.Target == unit);
+                    if (hitReaction != null && hitReaction.Elapsed >= hitReaction.StartDelay)
+                    {
+                        float hitT = MathHelper.Clamp((hitReaction.Elapsed - hitReaction.StartDelay) / hitReaction.Duration, 0f, 1f);
+                        float intensity = (float)Math.Sin(hitT * MathHelper.Pi);
+                        spritePos += hitReaction.NudgeDirection * intensity * HitReactionNudgeDistance;
+                        spriteTint = Color.Lerp(spriteTint, Color.Red, intensity * 0.8f);
+                    }
+
                     _spriteBatch.Draw(unit.SpriteTexture, spritePos, null, spriteTint, 0f,
                                     Vector2.Zero, finalScale, SpriteEffects.None, 0f);
                 }
@@ -2734,14 +3029,18 @@ namespace SagesOfOzvaram
                 }
             }
 
-            // Simple slash/shooting attack effects (see SpawnAttackAnimations) - purely visual
+            // Simple slash/shooting attack effects (see SpawnAttackAnimations) - purely visual.
+            // t is against TravelDuration, not the full Duration - for Slash the two are equal
+            // (no change there), but a Shooting effect also holds at the target for a bit after
+            // actually arriving (Duration - TravelDuration), so it doesn't vanish the instant t
+            // would otherwise hit 1.
             foreach (var effect in _activeAttackEffects)
             {
-                float t = MathHelper.Clamp(effect.Elapsed / effect.Duration, 0f, 1f);
+                float t = MathHelper.Clamp(effect.Elapsed / effect.TravelDuration, 0f, 1f);
                 if (effect.Type == AttackAnimationType.Slash)
                     DrawSlashEffect(effect.To, t);
                 else
-                    DrawShootingEffect(effect.From, effect.To, t);
+                    DrawShootingEffect(effect.From, effect.To, t, effect.ProjectileColor);
             }
 
             _spriteBatch.End();
@@ -2762,7 +3061,12 @@ namespace SagesOfOzvaram
                 if (_turnSystem.ShowingTurnAnnouncement)
                     DrawTurnAnnouncement(viewportSize);
 
-                if (_turnMenuActive)
+                // Hidden while an attack animation is still playing (same condition the Update
+                // loop gates input on) - _turnMenuActive itself stays true the whole time (every
+                // Cast*/ExecutePendingAttack call site that reopens the menu doesn't need to know
+                // or care about animation timing), this just defers actually SHOWING it until the
+                // shot has landed, so it doesn't instantly reappear over a traveling projectile.
+                if (_turnMenuActive && _activeAttackEffects.Count == 0)
                     DrawTurnMenu(viewportSize);
 
                 if (_turnSystem.CurrentUnit == _playerUnit && _playerUnit.GetRestrictingEffect() != null)
@@ -3239,13 +3543,24 @@ namespace SagesOfOzvaram
             DrawLineSimple(target + new Vector2(-size, size), target + new Vector2(size, -size), color, 3f);
         }
 
-        /// <summary>A small projectile traveling straight from attacker to target - the ranged attack effect (see SpawnAttackAnimations). t goes 0 (just fired) to 1 (arrived).</summary>
-        private void DrawShootingEffect(Vector2 from, Vector2 to, float t)
+        /// <summary>A small projectile traveling straight from attacker to target, with a soft glow and a short motion trail behind it - the ranged attack effect (see SpawnAttackAnimations). t goes 0 (just fired) to 1 (arrived). color distinguishes a magical bolt (e.g. Arcane Missile) from a physical one (arrow/bolt/bullet). Sized to still read clearly at a fully zoomed-out camera or over a short hop (e.g. between two adjacent units on Test Mode's 3x3 map) - a single small square at the old size could get lost in either case.</summary>
+        private void DrawShootingEffect(Vector2 from, Vector2 to, float t, Color color)
         {
             Vector2 pos = Vector2.Lerp(from, to, t);
-            const float size = 6f;
+
+            // Trail: a fading line stretching back toward the start, capped so it never
+            // overshoots `from` even on a very short hop.
+            float trailT = MathHelper.Clamp(t - 0.15f, 0f, 1f);
+            Vector2 trailPos = Vector2.Lerp(from, to, trailT);
+            DrawLineSimple(trailPos, pos, color * 0.5f, 3f);
+
+            const float glowSize = 20f;
+            var glowRect = new Rectangle((int)(pos.X - glowSize / 2f), (int)(pos.Y - glowSize / 2f), (int)glowSize, (int)glowSize);
+            _spriteBatch.Draw(_whitePixel, glowRect, color * 0.45f);
+
+            const float size = 9f;
             var rect = new Rectangle((int)(pos.X - size / 2f), (int)(pos.Y - size / 2f), (int)size, (int)size);
-            _spriteBatch.Draw(_whitePixel, rect, Color.Yellow);
+            _spriteBatch.Draw(_whitePixel, rect, color);
         }
 
         // Dynamic regions on Content/imgs/Cards/Spells/SpellCard.png, as fractions of the card's

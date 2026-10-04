@@ -22,7 +22,8 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Sorcerer,
             new Move("Arcane Bolt", "A bolt of raw arcane force.",
                 apCost: 2, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 1,
-                intelligenceDivisor: 2f, damageType: DamageType.Magical),
+                intelligenceDivisor: 2f, damageType: DamageType.Magical,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ArcaneBolt_CardArt");
 
         // --- Generic Spells: RequiredClass null, available to any class ---
@@ -143,7 +144,8 @@ namespace SagesOfOzvaram.Combat
             new Move("Ice Spike", "A shard of ice, hard and fast enough to punch straight through.",
                 apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 7,
                 intelligenceDivisor: 2.5f, damageType: DamageType.Magical,
-                inflictsStatusEffect: "Frostbite", statusEffectChance: 0.25f),
+                inflictsStatusEffect: "Frostbite", statusEffectChance: 0.25f,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/IceSpike_CardArt");
 
         public static readonly SpellCard ChainLightning = new SpellCard(
@@ -153,7 +155,8 @@ namespace SagesOfOzvaram.Combat
             new Move("Chain Lightning", "Lightning that doesn't stop at just one target.",
                 apCost: 3, mpCost: 5, range: 4, baseAccuracy: 0.80f, baseDamage: 6,
                 intelligenceDivisor: 3f, damageType: DamageType.Magical,
-                inflictsStatusEffect: "Shocked", statusEffectChance: 0.15f),
+                inflictsStatusEffect: "Shocked", statusEffectChance: 0.15f,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ChainLightning_CardArt");
 
         public static readonly SpellCard EnchantWeapon = new SpellCard(
@@ -172,7 +175,8 @@ namespace SagesOfOzvaram.Combat
             new Move("Fireball", "Fire given form and hurled with intent.",
                 apCost: 4, mpCost: 6, range: 5, baseAccuracy: 0.80f, baseDamage: 12,
                 intelligenceDivisor: 2f, damageType: DamageType.Magical,
-                inflictsStatusEffect: "Burning", statusEffectChance: 0.25f),
+                inflictsStatusEffect: "Burning", statusEffectChance: 0.25f,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/Fireball_CardArt");
 
         public static readonly SpellCard FrostNova = new SpellCard(
@@ -220,7 +224,8 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Sorcerer,
             new Move("Mana Burn", "Set a target's own reserves alight.",
                 apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 4,
-                intelligenceDivisor: 4f, damageType: DamageType.Magical),
+                intelligenceDivisor: 4f, damageType: DamageType.Magical,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ManaBurn_CardArt");
 
         public static readonly SpellCard MagicMissile = new SpellCard(
@@ -229,7 +234,8 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Sorcerer,
             new Move("Magic Missile", "The first spell every apprentice learns to never miss.",
                 apCost: 1, mpCost: 1, range: 4, baseAccuracy: 0.95f, baseDamage: 3,
-                intelligenceDivisor: 4f, damageType: DamageType.Magical),
+                intelligenceDivisor: 4f, damageType: DamageType.Magical,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/MagicMissile_CardArt");
 
         public static readonly SpellCard ArcaneOrb = new SpellCard(
@@ -239,7 +245,8 @@ namespace SagesOfOzvaram.Combat
             new Move("Arcane Orb", "Raw arcane power, given time to gather before it's unleashed.",
                 apCost: 4, mpCost: 7, range: 5, baseAccuracy: 0.75f, baseDamage: 16,
                 intelligenceDivisor: 1.5f, damageType: DamageType.Magical,
-                critChance: 0.15f, critMultiplier: 2.5f),
+                critChance: 0.15f, critMultiplier: 2.5f,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ArcaneOrb_CardArt");
 
         // --- Cleric Spells: healing, cleansing, warding, and divine light damage ---
@@ -277,7 +284,8 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Cleric,
             new Move("Radiant Bolt", "A narrow shaft of pure, sacred light.",
                 apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 5,
-                intelligenceDivisor: 5f, damageType: DamageType.Magical),
+                intelligenceDivisor: 5f, damageType: DamageType.Magical,
+                animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/RadiantBolt_CardArt");
 
         public static readonly SpellCard BlessingOfLight = new SpellCard(

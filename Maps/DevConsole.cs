@@ -38,11 +38,30 @@ namespace SagesOfOzvaram.Maps
         /// </summary>
         public Func<int?, List<string>> ListCardsCallback { get; set; }
 
+        /// <summary>
+        /// Set by Game1 after construction - "test mode" hands off to Game1 entirely (swapping
+        /// to the 3x3 test map, spawning all 4 classes, building the "every card, Untested
+        /// first" test deck, giving everyone effectively unlimited AP/MP, ...) and prints back
+        /// whatever status line it returns. Pre-release dev tooling only - see Game1.EnterTestMode.
+        /// Test Mode is currently what the game boots directly into (see Game1.Initialize); use
+        /// "original mode" (OriginalModeCallback) to switch back to the normal map/setup.
+        /// </summary>
+        public Func<string> TestModeCallback { get; set; }
+
+        /// <summary>Set by Game1 after construction - "original mode" switches back to the normal 20x15 procedural map, character select, and standard decks/AP/MP, undoing "test mode" entirely. See Game1.EnterOriginalMode.</summary>
+        public Func<string> OriginalModeCallback { get; set; }
+
         public DevConsole(Map map, AssetRegistry assetRegistry)
         {
             _map = map;
             _assetRegistry = assetRegistry;
             AddOutput("Developer Console initialized. Type 'help' for commands.");
+        }
+
+        /// <summary>Point every tile/object/map command at a different Map instance - needed whenever Game1 swaps the active map out from under the console (e.g. EnterTestMode's 3x3 test map), since the console otherwise keeps operating on whatever Map it was constructed with.</summary>
+        public void SetMap(Map map)
+        {
+            _map = map;
         }
 
         /// <summary>
@@ -84,6 +103,12 @@ namespace SagesOfOzvaram.Maps
                         break;
                     case "list":
                         HandleListCommand(parts);
+                        break;
+                    case "test":
+                        HandleTestCommand(parts);
+                        break;
+                    case "original":
+                        HandleOriginalCommand(parts);
                         break;
                     default:
                         AddOutput($"Unknown command: {command}. Type 'help' for available commands.");
@@ -507,6 +532,56 @@ namespace SagesOfOzvaram.Maps
                 AddOutput(line);
         }
 
+        private void HandleTestCommand(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                AddOutput("Usage: test mode");
+                return;
+            }
+
+            string action = parts[1].ToLower();
+            switch (action)
+            {
+                case "mode":
+                    if (TestModeCallback == null)
+                    {
+                        AddOutput("Error: test mode not connected to the console.");
+                        break;
+                    }
+                    AddOutput(TestModeCallback());
+                    break;
+                default:
+                    AddOutput($"Unknown test action: {action}");
+                    break;
+            }
+        }
+
+        private void HandleOriginalCommand(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                AddOutput("Usage: original mode");
+                return;
+            }
+
+            string action = parts[1].ToLower();
+            switch (action)
+            {
+                case "mode":
+                    if (OriginalModeCallback == null)
+                    {
+                        AddOutput("Error: original mode not connected to the console.");
+                        break;
+                    }
+                    AddOutput(OriginalModeCallback());
+                    break;
+                default:
+                    AddOutput($"Unknown original action: {action}");
+                    break;
+            }
+        }
+
         private void HandleMapCommand(string[] parts)
         {
             if (parts.Length < 2)
@@ -549,6 +624,8 @@ namespace SagesOfOzvaram.Maps
             AddOutput("list cards all - list every spell/summon card's integer ID and name");
             AddOutput("list cards <ClassID> - list only that class's own cards, Generic excluded (0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter)");
             AddOutput("add card <CardID> - add a spell/summon card (by integer ID) to the player's hand for testing");
+            AddOutput("test mode - enter Test Mode: 3x3 grass map, all 4 classes spawned, unlimited AP/MP, deck has every card (Untested first) - pre-release dev tooling, currently the default on launch");
+            AddOutput("original mode - switch back to the normal 20x15 procedural map, character select, and standard decks/AP/MP");
             AddOutput("clear - Clear console output");
             AddOutput("help - Show this message");
         }

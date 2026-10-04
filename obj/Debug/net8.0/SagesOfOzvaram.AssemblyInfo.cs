@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SagesOfOzvaram")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+29381a38164a3059792bbfb6c4f5e96f7a308b56")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4dcbd5af92027eeb66d243f395911dcbd82723a4")]
 [assembly: System.Reflection.AssemblyProductAttribute("SagesOfOzvaram")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SagesOfOzvaram")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
