@@ -84,6 +84,9 @@ namespace SagesOfOzvaram
         };
         private Texture2D[] _avatarTextures;
 
+        /// <summary>One small icon per stat code ("STR"/"ACC"/"DEF"/"RES"/"INT") used by the on-screen stat-change display (see DrawUnitStatBonuses) - loaded once in LoadContent from Content/imgs/UI/StatIcons/{code}.png.</summary>
+        private Dictionary<string, Texture2D> _statIcons = new Dictionary<string, Texture2D>();
+
         // Spell cards
         private Texture2D _spellCardTemplate;
         private Dictionary<string, Texture2D> _cardArtCache = new Dictionary<string, Texture2D>();
@@ -390,12 +393,23 @@ namespace SagesOfOzvaram
                 unit.CurrentMP = unlimited;
             }
 
-            _playerUnit = _units[0];
             _testModeActive = true;
 
-            var testDeck = BuildTestDeck();
-            _classDecks[_playerUnit.Class] = testDeck;
-            _classHands[_playerUnit.Class] = new List<object>();
+            // Every class gets its own independent test deck/hand (not just whichever unit
+            // starts in control) - the player takes control of EACH unit on its own turn (see
+            // the _testModeActive follow in Update), so testing something that requires
+            // controlling more than one side - taking damage, breaking Meditate on the unit
+            // that's actually meditating, ... - needs every one of them to have cards to draw
+            // the moment control passes to it, not just the Sorcerer.
+            foreach (var unit in _units)
+            {
+                if (unit.Class == HeroClass.None)
+                    continue; // a summoned creature, not a "Summoner" - no deck/hand of its own
+                _classDecks[unit.Class] = BuildTestDeck(unit.Class);
+                _classHands[unit.Class] = new List<object>();
+            }
+
+            _playerUnit = _units[0];
             EnsurePlayerHandInitialized();
 
             _turnSystem = new TurnSystem(_units);
@@ -415,16 +429,17 @@ namespace SagesOfOzvaram
             _movementModeActive = false;
             _viewingMap = false;
 
-            int untestedCount = testDeck.Count(c => !IsCardTested(c));
-            return $"Test Mode active - 3x3 grass map, {_units.Count} classes spawned, controlling {_playerUnit.Name}. "
-                + $"Deck: {testDeck.Count} cards ({untestedCount} untested, at the top). AP/MP effectively unlimited.";
+            var playerDeck = _classDecks[_playerUnit.Class];
+            int untestedCount = playerDeck.Count(c => !IsCardTested(c));
+            return $"Test Mode active - 3x3 grass map, {_units.Count} classes spawned, every unit player-controlled on its own turn (starting with {_playerUnit.Name}). "
+                + $"Deck: {playerDeck.Count} cards each ({untestedCount} untested, at the top). AP/MP effectively unlimited.";
         }
 
-        /// <summary>Every SpellCard and SummonCard that exists, Untested ones first (stable within each group - catalog declaration order) - see Combat.TestedCards for what "tested" means and how a card gets marked. Deliberately ignores the normal ~30-card deck cap and class restrictions entirely; this is a testing deck, not a real one.</summary>
-        private List<object> BuildTestDeck()
+        /// <summary>Every SpellCard `heroClass` actually has access to (its own cards + every Generic one - same rule the real Cards menu uses, SpellCatalog.GetSpellsForClass) plus every SummonCard that exists (summons aren't class-gated - any Summoner can use any of them), Untested ones first (stable within each group - catalog declaration order) - see Combat.TestedCards for what "tested" means and how a card gets marked. Deliberately ignores the normal ~30-card deck cap, but NOT class restrictions - those stayed accurate even in Test Mode once every class became player-controlled on its own turn (see EnterTestMode); a per-class deck built from GetAllCards() instead would hand e.g. the Cleric Sorcerer-only spells like Mana Shield, which it could never actually draw in a real match.</summary>
+        private List<object> BuildTestDeck(HeroClass heroClass)
         {
             var all = new List<object>();
-            all.AddRange(SpellCatalog.GetAllCards());
+            all.AddRange(SpellCatalog.GetSpellsForClass(heroClass));
             all.AddRange(SummonCatalog.AllSummons);
             return all.OrderBy(IsCardTested).ToList();
         }
@@ -524,6 +539,14 @@ namespace SagesOfOzvaram
 
             // Same deal for the summon card template (see GetSummonCardArt/GetSummonCardComposite).
             _summonCardTemplate = LoadTextureFromDisk(Path.Combine("Content", "imgs", "Cards", "Summons", "SummonCard.png"));
+
+            // Load the per-stat icons used by the on-screen stat-change display.
+            foreach (string statCode in new[] { "STR", "ACC", "DEF", "RES", "INT" })
+            {
+                var texture = LoadTextureFromDisk(Path.Combine("Content", "imgs", "UI", "StatIcons", statCode + ".png"));
+                if (texture != null)
+                    _statIcons[statCode] = texture;
+            }
 
             // Load or create font (monospace for console)
             try
@@ -902,6 +925,31 @@ namespace SagesOfOzvaram
                             // Allow this unit's one AI move + the auto-advance that ends its turn
                             _hasAutoAdvancedThisTurn = false;
                             _hasAiActedThisTurn = false;
+
+                            // Test Mode: the player controls EVERY unit on its own turn, not just
+                            // whichever one EnterTestMode started with - needed to test taking
+                            // damage (attack a unit on someone ELSE's controlled turn) and
+                            // breaking Meditate (control the meditating unit directly instead of
+                            // watching a no-op AI sit there). EnterTestMode already gave every
+                            // class its own deck/hand for exactly this. Closing whatever UI
+                            // sub-mode the previous unit's turn left open (it shouldn't have left
+                            // one, but this is dev tooling - better safe) so the new unit starts
+                            // clean and its turn menu auto-opens via the normal path below.
+                            if (_testModeActive && _turnSystem.CurrentUnit != _playerUnit)
+                            {
+                                _playerUnit = _turnSystem.CurrentUnit;
+                                EnsurePlayerHandInitialized();
+
+                                _turnMenuActive = false;
+                                _cardMenuActive = false;
+                                _attackMenuActive = false;
+                                _targetingModeActive = false;
+                                _coneAimingModeActive = false;
+                                _teleportModeActive = false;
+                                _allyTargetModeActive = false;
+                                _summonPlacementModeActive = false;
+                                _movementModeActive = false;
+                            }
                         }
                     }
 
@@ -2963,6 +3011,12 @@ namespace SagesOfOzvaram
                 DrawHexFilled(worldPos, new Color(200, 255, 100, 128), Color.Yellow);
             }
 
+            // Whichever unit (if any) the mouse is currently over - drives which neutral/enemy
+            // units show their active stat-change icons below (DrawUnitStatBonuses); the
+            // player's own unit and its summons always show theirs regardless of hover.
+            var statHoverHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+            var statHoveredUnit = _units.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == statHoverHex);
+
             // Draw units
             foreach (var unit in _units)
             {
@@ -3027,6 +3081,14 @@ namespace SagesOfOzvaram
                         _spriteBatch.DrawString(_font, effectText, effectTextPos, effectColor, 0f, Vector2.Zero, 0.35f, SpriteEffects.None, 0f);
                     }
                 }
+
+                // Per-stat icon + signed value row (sword/book/shield/rune/crosshair for
+                // STR/INT/DEF/RES/ACC) for every stat an active StatusEffect is currently
+                // pushing off base - always shown for the player's own unit and its summons
+                // (Owner == _playerUnit), shown for anyone else only while hovered/targeted.
+                bool showStatBonuses = unit == _playerUnit || unit.Owner == _playerUnit || unit == statHoveredUnit;
+                if (showStatBonuses)
+                    DrawUnitStatBonuses(unit);
             }
 
             // Simple slash/shooting attack effects (see SpawnAttackAnimations) - purely visual.
@@ -3061,15 +3123,23 @@ namespace SagesOfOzvaram
                 if (_turnSystem.ShowingTurnAnnouncement)
                     DrawTurnAnnouncement(viewportSize);
 
+                // A restricting StatusEffect (Stunned, Deep Sleep, Meditating, ...) replaces the
+                // normal turn menu entirely - ResolveInstantCast sets _turnMenuActive = true right
+                // after a successful cast with no knowledge of whether that cast just restricted
+                // the caster (Meditate/Forced Sleep), so without this check both menus would draw
+                // at once (the full Attack/Cards/Items/... list AND the restricted one) the moment
+                // one of those is cast.
+                bool playerRestricted = _turnSystem.CurrentUnit == _playerUnit && _playerUnit.GetRestrictingEffect() != null;
+
                 // Hidden while an attack animation is still playing (same condition the Update
                 // loop gates input on) - _turnMenuActive itself stays true the whole time (every
                 // Cast*/ExecutePendingAttack call site that reopens the menu doesn't need to know
                 // or care about animation timing), this just defers actually SHOWING it until the
                 // shot has landed, so it doesn't instantly reappear over a traveling projectile.
-                if (_turnMenuActive && _activeAttackEffects.Count == 0)
+                if (_turnMenuActive && _activeAttackEffects.Count == 0 && !playerRestricted)
                     DrawTurnMenu(viewportSize);
 
-                if (_turnSystem.CurrentUnit == _playerUnit && _playerUnit.GetRestrictingEffect() != null)
+                if (playerRestricted)
                     DrawRestrictedMenu(viewportSize);
 
                 if (_attackMenuActive)
@@ -3330,6 +3400,49 @@ namespace SagesOfOzvaram
         /// dark/missing][20 blue], total visual width 120; a unit at full HP with the same
         /// shield just appends the 20 blue points past the already-full bar.
         /// </summary>
+        /// <summary>Draws a centered row of icon+signed-value badges above `unit` - one per stat an active StatusEffect is currently pushing off base (see BaseUnit.GetActiveStatBonuses): a sword for STR, a book for INT, a shield for DEF, a ward rune for RES, a crosshair for ACC. Positioned above the StatusEffect name list (see the "Draw units" loop) so the two never overlap. The caller decides WHETHER to show this for a given unit (always for the player/their summons, hover-only for anyone else) - this just draws it once asked to.</summary>
+        private void DrawUnitStatBonuses(BaseUnit unit)
+        {
+            if (_font == null)
+                return;
+
+            var bonuses = unit.GetActiveStatBonuses();
+            if (bonuses.Count == 0)
+                return;
+
+            const float iconSize = 14f;
+            const float iconTextGap = 2f;
+            const float entrySpacing = 4f;
+            const float textScale = 0.3f;
+
+            var labels = new string[bonuses.Count];
+            float totalWidth = 0f;
+            for (int i = 0; i < bonuses.Count; i++)
+            {
+                labels[i] = (bonuses[i].Bonus > 0 ? "+" : "") + bonuses[i].Bonus;
+                totalWidth += iconSize + iconTextGap + _font.MeasureString(labels[i]).X * textScale + entrySpacing;
+            }
+            totalWidth -= entrySpacing;
+
+            Vector2 origin = unit.Position - new Vector2(totalWidth / 2f, 92f);
+            float x = origin.X;
+
+            for (int i = 0; i < bonuses.Count; i++)
+            {
+                if (_statIcons.TryGetValue(bonuses[i].StatCode, out var icon))
+                {
+                    _spriteBatch.Draw(icon, new Vector2(x, origin.Y), null, Color.White, 0f,
+                        Vector2.Zero, iconSize / icon.Width, SpriteEffects.None, 0f);
+                }
+                x += iconSize + iconTextGap;
+
+                Color textColor = bonuses[i].Bonus > 0 ? new Color(120, 255, 140) : new Color(255, 110, 110);
+                _spriteBatch.DrawString(_font, labels[i], new Vector2(x, origin.Y + 1f), textColor, 0f,
+                    Vector2.Zero, textScale, SpriteEffects.None, 0f);
+                x += _font.MeasureString(labels[i]).X * textScale + entrySpacing;
+            }
+        }
+
         private void DrawUnitHealthBar(BaseUnit unit)
         {
             const float barWidth = 50f;

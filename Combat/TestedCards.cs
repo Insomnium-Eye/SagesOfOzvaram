@@ -16,6 +16,7 @@ namespace SagesOfOzvaram.Combat
         public static readonly HashSet<string> Names = new HashSet<string>
         {
             // Add a card's exact Name here once the user confirms they've tested it.
+            "Arcane Bolt", // reported as "Arcane Missile" - that's the Wand's weapon move, not a card; this is the actual SpellCard being tested
         };
     }
 }

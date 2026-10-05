@@ -117,10 +117,12 @@ namespace SagesOfOzvaram.Combat
             return CastResult.Ok($"{caster.Name} falls into a Deep Sleep.");
         }
 
-        // Meditate's per-stack bonus to every stat at once, and how many stacks it caps at -
-        // first-pass placeholders, pending a balance pass. Meditate is the only spell that
-        // stacks like this, so these live here rather than as more fields on Move.
-        private const int MeditateStackBonus = 5;
+        // Meditate's bonus to every stat at once for 1/2/3 stacks (+2/+5/+8 - not a flat
+        // per-stack multiple, rebalanced down from an earlier flat +5/stack that made 3 stacks
+        // of Meditate (+15 to everything) too strong) and how many stacks it caps at - first-pass
+        // placeholders, pending a further balance pass. Meditate is the only spell that stacks
+        // like this, so these live here rather than as more fields on Move.
+        private static readonly int[] MeditateStackBonuses = { 2, 5, 8 };
         private const int MeditateMaxStacks = 3;
 
         /// <summary>Meditate: if not already meditating, pays AP/MP and starts it - a "Meditating" StatusEffect (RestrictsActions, GrowsOverTime up to MeditateMaxStacks, interrupted outright by a hit for 10%+ of max HP). The card stays in hand (ConsumesCard: false) since it doubles as the off switch too: casting it again while already meditating ends it instead, no AP/MP spent (same "recast to toggle off" convention as Mana Shield), locking the current stack bonus in as a real, fixed-duration buff via BaseUnit.TryEndRestrictingEffect.</summary>
@@ -146,12 +148,20 @@ namespace SagesOfOzvaram.Combat
                 EndEffectLabel = "End Meditation",
                 EndEffectAPCost = 1,
                 GrowsOverTime = true,
+                // Starts at 1 stack, not 0 - TickStatusEffects only grows Stacks at the start of
+                // the caster's OWN next turn, which hasn't happened yet on the very turn Meditate
+                // is cast. Without this, the bonus fields below would have nothing to show until
+                // then despite the "begins meditating" message - the stat display should reflect
+                // the buff immediately. StackBonusTable is what TickStatusEffects reads to update
+                // these same fields as Stacks grows further (see StatusEffect.StackBonusTable).
+                Stacks = 1,
                 MaxStacks = MeditateMaxStacks,
-                StrengthBonus = MeditateStackBonus,
-                AccuracyBonus = MeditateStackBonus,
-                DefenseBonus = MeditateStackBonus,
-                ResistanceBonus = MeditateStackBonus,
-                IntelligenceBonus = MeditateStackBonus,
+                StackBonusTable = MeditateStackBonuses,
+                StrengthBonus = MeditateStackBonuses[0],
+                AccuracyBonus = MeditateStackBonuses[0],
+                DefenseBonus = MeditateStackBonuses[0],
+                ResistanceBonus = MeditateStackBonuses[0],
+                IntelligenceBonus = MeditateStackBonuses[0],
                 LockInDurationTurns = move.StatusDurationTurns,
                 InterruptDamagePercentMaxHP = 0.10f,
             });

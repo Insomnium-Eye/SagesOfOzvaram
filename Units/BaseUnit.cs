@@ -150,18 +150,20 @@ namespace SagesOfOzvaram.Units
 
             CurrentAP -= effect.EndEffectAPCost;
 
-            if (effect.LockInDurationTurns > 0 && effect.Magnitude > 0)
+            bool hasBuiltUpABonus = effect.StrengthBonus != 0 || effect.AccuracyBonus != 0 || effect.DefenseBonus != 0
+                || effect.ResistanceBonus != 0 || effect.IntelligenceBonus != 0;
+            if (effect.LockInDurationTurns > 0 && hasBuiltUpABonus)
             {
                 ApplyStatusEffect(new StatusEffect
                 {
                     Name = effect.Name,
                     Type = StatusEffectType.Buff,
                     TurnsRemaining = effect.LockInDurationTurns,
-                    StrengthBonus = effect.StrengthBonus * effect.Magnitude,
-                    AccuracyBonus = effect.AccuracyBonus * effect.Magnitude,
-                    DefenseBonus = effect.DefenseBonus * effect.Magnitude,
-                    ResistanceBonus = effect.ResistanceBonus * effect.Magnitude,
-                    IntelligenceBonus = effect.IntelligenceBonus * effect.Magnitude,
+                    StrengthBonus = effect.StrengthBonus,
+                    AccuracyBonus = effect.AccuracyBonus,
+                    DefenseBonus = effect.DefenseBonus,
+                    ResistanceBonus = effect.ResistanceBonus,
+                    IntelligenceBonus = effect.IntelligenceBonus,
                 });
             }
             else
@@ -190,7 +192,24 @@ namespace SagesOfOzvaram.Units
                     Heal((int)Math.Round(MaxHP * effect.HealPercentMaxHPPerTurn));
 
                 if (effect.GrowsOverTime)
+                {
                     effect.Stacks = Math.Min(effect.MaxStacks, effect.Stacks + 1);
+
+                    // Re-derive the bonus fields from the new stack count (e.g. Meditate:
+                    // +2/+5/+8 - not a flat per-stack multiple, so this is a table lookup, not
+                    // multiplication). Index 0 = 1 stack; clamp in case Stacks ever exceeds the
+                    // table (shouldn't happen - MaxStacks should match the table's length - but a
+                    // mismatch here should hold at the table's last entry, not throw).
+                    if (effect.StackBonusTable != null && effect.StackBonusTable.Length > 0)
+                    {
+                        int bonus = effect.StackBonusTable[Math.Min(effect.Stacks, effect.StackBonusTable.Length) - 1];
+                        effect.StrengthBonus = bonus;
+                        effect.AccuracyBonus = bonus;
+                        effect.DefenseBonus = bonus;
+                        effect.ResistanceBonus = bonus;
+                        effect.IntelligenceBonus = bonus;
+                    }
+                }
 
                 // A restricting effect (Stun, Deep Sleep, Meditate) only counts down via its own
                 // "End Turn" choice (see ConsumeRestrictingEffectTurn) - ticking it here, before
@@ -215,11 +234,26 @@ namespace SagesOfOzvaram.Units
                 RemoveStatusEffect(effect.Name);
         }
 
-        private int StatusStrengthBonus => StatusEffects.Sum(e => e.StrengthBonus * e.Magnitude);
-        private int StatusAccuracyBonus => StatusEffects.Sum(e => e.AccuracyBonus * e.Magnitude);
-        private int StatusDefenseBonus => StatusEffects.Sum(e => e.DefenseBonus * e.Magnitude);
-        private int StatusResistanceBonus => StatusEffects.Sum(e => e.ResistanceBonus * e.Magnitude);
-        private int StatusIntelligenceBonus => StatusEffects.Sum(e => e.IntelligenceBonus * e.Magnitude);
+        // Each StatusEffect's bonus fields already hold its CURRENT total contribution (for a
+        // GrowsOverTime effect like Meditate, TickStatusEffects keeps these up to date as Stacks
+        // grows - see StackBonusTable) - no further scaling needed here.
+        private int StatusStrengthBonus => StatusEffects.Sum(e => e.StrengthBonus);
+        private int StatusAccuracyBonus => StatusEffects.Sum(e => e.AccuracyBonus);
+        private int StatusDefenseBonus => StatusEffects.Sum(e => e.DefenseBonus);
+        private int StatusResistanceBonus => StatusEffects.Sum(e => e.ResistanceBonus);
+        private int StatusIntelligenceBonus => StatusEffects.Sum(e => e.IntelligenceBonus);
+
+        /// <summary>Every stat currently sitting away from its base value because of an active StatusEffect, as (StatCode, NetBonus) pairs - a stat with no active effect touching it is left out entirely rather than listed at 0. StatCode is one of "STR"/"ACC"/"DEF"/"RES"/"INT", matching Game1's per-stat icon lookup for the on-screen stat-change display. Negative values (a weakening Affliction) are included the same as positive ones.</summary>
+        public IReadOnlyList<(string StatCode, int Bonus)> GetActiveStatBonuses()
+        {
+            var bonuses = new List<(string StatCode, int Bonus)>();
+            if (StatusStrengthBonus != 0) bonuses.Add(("STR", StatusStrengthBonus));
+            if (StatusAccuracyBonus != 0) bonuses.Add(("ACC", StatusAccuracyBonus));
+            if (StatusDefenseBonus != 0) bonuses.Add(("DEF", StatusDefenseBonus));
+            if (StatusResistanceBonus != 0) bonuses.Add(("RES", StatusResistanceBonus));
+            if (StatusIntelligenceBonus != 0) bonuses.Add(("INT", StatusIntelligenceBonus));
+            return bonuses;
+        }
 
         // Combat stats (first-pass placeholder defaults; each hero overrides these)
         public int Strength { get; set; } = 10;
