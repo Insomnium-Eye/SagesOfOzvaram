@@ -548,6 +548,14 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public Weapon EquippedWeapon { get; set; }
 
+        private readonly List<ConsumableItem> _consumables = new List<ConsumableItem>();
+
+        /// <summary>Single-use items this unit is carrying (e.g. the potions Conjure Potions grants - see ConsumableItem/ConsumableCatalog). Unlike Inventory, not weight-capped - add/remove via AddConsumable/RemoveConsumable.</summary>
+        public IReadOnlyList<ConsumableItem> Consumables => _consumables;
+
+        public void AddConsumable(ConsumableItem item) => _consumables.Add(item);
+        public bool RemoveConsumable(ConsumableItem item) => _consumables.Remove(item);
+
         private readonly Dictionary<AmmoType, int> _ammo = new Dictionary<AmmoType, int>();
 
         /// <summary>How many of `type` this unit is carrying. 0 if none.</summary>

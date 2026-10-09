@@ -44,11 +44,11 @@ namespace SagesOfOzvaram.Combat
             if (unit.Class != HeroClass.None && SpellCatalog.GetSpellsForClass(unit.Class).Count > 0)
                 options.Add(new TurnMenuOption { Id = "Cards", Label = "Cards" });
 
-            // Items: only shown once the unit actually has something equipped/carried to manage.
-            // Weapons are the only "item" concept that exists today (no consumables/potions
-            // system yet - see Conjure Potions' Description in SpellCatalog), so this currently
-            // reads as "has at least one weapon in Inventory."
-            if (unit.Inventory.Count > 0)
+            // Items: shown once the unit actually has something to manage - a weapon in
+            // Inventory, a consumable (e.g. a potion from Conjure Potions), or (once it exists)
+            // a piece of Equipment. See Game1.OpenItemsMenu for where these get combined into
+            // one list.
+            if (unit.Inventory.Count > 0 || unit.Consumables.Count > 0)
                 options.Add(new TurnMenuOption { Id = "Items", Label = "Items" });
 
             // End always displays as Guard once it's affordable - same action either way

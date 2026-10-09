@@ -40,6 +40,7 @@ namespace SagesOfOzvaram.Combat
             get
             {
                 var sword = new Weapon("One-Handed Iron Sword",
+                    "A sturdy one-handed blade - reliable slashes and thrusts, plus a wide spinning strike for a specialist.",
                     new Move("Sword Slash", "Slashes with the blade - a small chance to miss, an even smaller chance to crit for 3x damage, and a small chance to draw blood.",
                         apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.88f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 4f,
                         critChance: 0.06f, critMultiplier: 3f,
@@ -69,7 +70,7 @@ namespace SagesOfOzvaram.Combat
         {
             get
             {
-                var shield = new Weapon("Iron Shield")
+                var shield = new Weapon("Iron Shield", "A heavy plated shield - a solid passive defense boost, even stronger while Guarding, with a staggering Bash for a specialist.")
                 { Type = WeaponType.Shield, Weight = 3, ShieldPassiveDefResBonusPercent = 0.15f, ShieldGuardBonusPercent = 0.25f, AttackPower = 4 };
 
                 shield.SpecialistAttacks.Add(new Move("Shield Bash", "A shove with the shield's edge - decent accuracy, low damage, but it reliably staggers the target for a full turn.",
@@ -81,7 +82,7 @@ namespace SagesOfOzvaram.Combat
         }
 
         // Sorcerer's shield - passive Guard-only bonus, no attack of its own (nobody specializes in it).
-        public static Weapon GlassShield => new Weapon("Glass Shield")
+        public static Weapon GlassShield => new Weapon("Glass Shield", "A light, half-translucent ward - a modest passive defense boost and no attack of its own, favored by casters who'd rather not carry the weight of steel.")
         { Type = WeaponType.Shield, ShieldPassiveDefResBonusPercent = 0.10f, ShieldGuardBonusPercent = 0.15f, Weight = 3 };
 
         /// <summary>
@@ -94,6 +95,7 @@ namespace SagesOfOzvaram.Combat
             get
             {
                 var dagger = new Weapon("Dagger",
+                    "A short, light blade - quick and precise up close, and a specialist can throw it for ranged damage at the cost of the dagger itself.",
                     new Move("Stab", "A quick, precise thrust - short reach, but reliably finds its mark, and a hit from behind is a guaranteed critical.",
                         apCost: 1, mpCost: 0, range: 1, baseAccuracy: 1.0f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 6f,
                         critChance: 0.05f, critMultiplier: 3f, guaranteedCritOnBackstab: true,
@@ -125,6 +127,7 @@ namespace SagesOfOzvaram.Combat
             get
             {
                 var staff = new Weapon("Rhinewood Staff",
+                    "A stout wooden staff - a clumsy free whack for anyone, or a chilling cone of frost for a Staff specialist.",
                     new Move("Bonk", "A clumsy overhead whack with the staff - low accuracy, low damage, but can rattle the target. No different from swinging any other blunt object - costs no mana.",
                         apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.55f, baseDamage: 2, damageType: DamageType.Blunt, strengthDivisor: 4f,
                         inflictsStatusEffect: "Stunned", statusEffectChance: 0.20f, statusDurationTurns: 1))
@@ -152,6 +155,7 @@ namespace SagesOfOzvaram.Combat
             get
             {
                 var wand = new Weapon("Willow Wand",
+                    "A slender spellcasting wand - a light free tap for anyone, or a bolt of raw arcane energy for a Wand specialist. The Sorcerer's actual spellcasting implement.",
                     new Move("Whack", "A quick rap with the wand's tip - barely stings, but reliably lands. No mana in a tap with a stick.",
                         apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.95f, baseDamage: 1, damageType: DamageType.Blunt, strengthDivisor: 6f))
                 { Type = WeaponType.Wand, Weight = 2 };
@@ -173,6 +177,7 @@ namespace SagesOfOzvaram.Combat
         /// AmmoType.Bolt / BaseUnit.TryConsumeAmmo) - 1 consumed per shot.
         /// </summary>
         public static Weapon Crossbow => new Weapon("Crossbow",
+            "A mechanically-loosed ranged weapon - weaker accuracy than a Pistol, but hits harder with a better chance to crit. Requires Bolts.",
             new Move("Bolt Shot", "A mechanically-loosed bolt that can punch clean through, drawing blood - clumsy at point-blank range, but reliably lands from there on out.",
                 apCost: 1, mpCost: 0, range: 4, baseAccuracy: 0.55f, baseDamage: 13, damageType: DamageType.Sharp, strengthDivisor: 5f,
                 critChance: 0.20f, critMultiplier: 3f,
@@ -190,6 +195,7 @@ namespace SagesOfOzvaram.Combat
         /// Shot on top of whichever band applies.
         /// </summary>
         public static Weapon Longbow => new Weapon("Longbow",
+            "A tall hunting bow - best at mid-range, with a weak melee fallback that costs no arrow. A Hunter (Bow specialist) gets a real accuracy edge with it. Requires Arrows.",
             new Move("Arrow Shot", "A well-aimed arrow, sharp enough to draw blood - hard to loose properly at point-blank range, most accurate at its intended mid-range, and only somewhat less reliable at long range.",
                 apCost: 1, mpCost: 0, range: 6, baseAccuracy: 0.65f, baseDamage: 9, damageType: DamageType.Sharp, strengthDivisor: 5f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.10f,
@@ -206,6 +212,7 @@ namespace SagesOfOzvaram.Combat
         // crits less - the trade-off. Low accuracy jammed up close, flat/consistent from range 2
         // on. Requires Bullets (AmmoType.Bullet) - 1 consumed per shot.
         public static Weapon FlintlockPistol => new Weapon("Flintlock Pistol",
+            "A single-shot black-powder pistol - no Strength or Intelligence scaling, it hits the same regardless of who's holding it. Requires Bullets.",
             new Move("Pistol Shot", "A loud shot - unreliable at point-blank range, but a clean, practiced draw from there on out; a solid hit can stagger, and it has a real chance to critically wound.",
                 apCost: 1, mpCost: 0, range: 3, baseAccuracy: 0.75f, baseDamage: 12, damageType: DamageType.Sharp,
                 critChance: 0.08f, critMultiplier: 3f, knockbackBase: 1,
@@ -222,6 +229,7 @@ namespace SagesOfOzvaram.Combat
         /// a different damage type than the mace's own Blunt hit.
         /// </summary>
         public static Weapon LightMace => new Weapon("Light Mace",
+            "A blunt, mediocre-in-every-way weapon on its own - a Mace specialist transforms it into something far more precise and dangerous.",
             new Move("Mace Bash", "A heavy strike, middling in every way on its own - a Mace specialist's weapon transforms it into something much more precise and dangerous.",
                 apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.70f, baseDamage: 0, damageType: DamageType.Blunt, strengthDivisor: 4f,
                 critChance: 0.15f, critMultiplier: 3f,

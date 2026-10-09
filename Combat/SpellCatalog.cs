@@ -54,7 +54,8 @@ namespace SagesOfOzvaram.Combat
             "Places 1 minor HP potion, 1 minor MP potion, and 1 minor AP potion directly into the caster's inventory.",
             requiredClass: null,
             new Move("Conjure Potions", "Scrounge together a few minor potions from what's on hand.",
-                apCost: 3, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0),
+                apCost: 3, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                isConjurePotions: true),
             "imgs/Cards/Spells/ConjurePotions_CardArt");
 
         public static readonly SpellCard BandageWound = new SpellCard(

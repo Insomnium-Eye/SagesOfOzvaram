@@ -49,7 +49,7 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>Whether Cast can resolve `move` entirely on its own, with no extra targeting step from Game1.</summary>
         public static bool CanResolveInstantly(Move move) =>
-            move.IsManaShield || move.IsSleepSpell || move.IsMeditateSpell || IsSelfUtility(move);
+            move.IsManaShield || move.IsSleepSpell || move.IsMeditateSpell || move.IsConjurePotions || IsSelfUtility(move);
 
         /// <summary>
         /// Cast one of the instant effects CanResolveInstantly recognizes. `adjacentAllies` is
@@ -64,6 +64,7 @@ namespace SagesOfOzvaram.Combat
             if (move.IsManaShield) return CastManaShield(caster);
             if (move.IsSleepSpell) return CastSleepSpell(card, caster);
             if (move.IsMeditateSpell) return CastMeditateSpell(card, caster);
+            if (move.IsConjurePotions) return CastConjurePotions(card, caster);
             if (IsSelfUtility(move)) return CastSelfUtility(card, caster, adjacentAllies);
 
             return CastResult.Fail($"{card.Name} can't be cast yet - no execution system for that effect.");
@@ -96,7 +97,7 @@ namespace SagesOfOzvaram.Combat
             return CastResult.Ok($"{caster.Name} raises a Mana Shield ({caster.ShieldPoints} points).");
         }
 
-        /// <summary>Deep Sleep (e.g. Forced Sleep): pays AP/MP, then applies a "Deep Sleep" StatusEffect - RestrictsActions, "Wake Up" for 1 AP to end it, healing Move.HealPercentMaxHP of max HP at the start of every one of the caster's own turns until then (BaseUnit.TickStatusEffects). No fixed duration - it persists until Wake Up actually clears it.</summary>
+        /// <summary>Deep Sleep (e.g. Forced Sleep): pays AP/MP, heals Move.HealPercentMaxHP of max HP immediately, then applies a "Deep Sleep" StatusEffect - RestrictsActions, "Wake Up" for 1 AP to end it, healing that same % again at the start of every one of the caster's own turns while it stays active (BaseUnit.TickStatusEffects). No fixed duration - it persists until Wake Up actually clears it. The immediate heal is what makes "cast, Wake Up right back up" a real quick-heal combo - without it the first heal wouldn't land until TickStatusEffects next ran at the start of the caster's NEXT turn, which never happens if Wake Up is used the same turn it was cast (the same gap Meditate's stacking had, fixed the same way).</summary>
         private static CastResult CastSleepSpell(SpellCard card, BaseUnit caster)
         {
             var move = card.Effect;
@@ -104,6 +105,7 @@ namespace SagesOfOzvaram.Combat
                 return CastResult.Fail($"Not enough AP/MP for {move.Name}.");
 
             PayCost(move, caster);
+            caster.Heal((int)System.Math.Round(caster.MaxHP * move.HealPercentMaxHP));
             caster.ApplyStatusEffect(new StatusEffect
             {
                 Name = "Deep Sleep",
@@ -114,7 +116,22 @@ namespace SagesOfOzvaram.Combat
                 HealPercentMaxHPPerTurn = move.HealPercentMaxHP,
             });
 
-            return CastResult.Ok($"{caster.Name} falls into a Deep Sleep.");
+            return CastResult.Ok($"{caster.Name} falls into a Deep Sleep, healing {move.HealPercentMaxHP:P0} of their max HP.");
+        }
+
+        /// <summary>Conjure Potions: pays AP/MP, then grants the caster one each of a Minor HP/MP/AP Potion (ConsumableCatalog) straight into its Consumables - see BaseUnit.AddConsumable. No targeting needed (always self), consumed from hand like any other card.</summary>
+        private static CastResult CastConjurePotions(SpellCard card, BaseUnit caster)
+        {
+            var move = card.Effect;
+            if (!CanAfford(move, caster))
+                return CastResult.Fail($"Not enough AP/MP for {move.Name}.");
+
+            PayCost(move, caster);
+            caster.AddConsumable(ConsumableCatalog.MinorHPPotion);
+            caster.AddConsumable(ConsumableCatalog.MinorMPPotion);
+            caster.AddConsumable(ConsumableCatalog.MinorAPPotion);
+
+            return CastResult.Ok($"{caster.Name} conjures a Minor HP Potion, a Minor MP Potion, and a Minor AP Potion.");
         }
 
         // Meditate's bonus to every stat at once for 1/2/3 stacks (+2/+5/+8 - not a flat

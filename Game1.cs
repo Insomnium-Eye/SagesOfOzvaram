@@ -181,6 +181,27 @@ namespace SagesOfOzvaram
         // Blast) - aimed by clicking any hex to set a direction, not by picking a unit.
         private bool _coneAimingModeActive = false;
 
+        // Items menu (opened from the "Items" turn-menu option) - a flat list of every Item the
+        // unit is carrying: equipped/carried weapons (Inventory), equipment (not yet implemented
+        // - Items.Category reserves a slot for it, but nothing ever populates one), and
+        // consumables (Consumables). See OpenItemsMenu/HandleItemsMenuInput/DrawItemsMenu.
+        private bool _itemsMenuActive = false;
+        private List<Item> _itemsMenuEntries = new List<Item>();
+        private List<string> _itemsMenuLabels = new List<string>();
+        private int _itemsMenuIndex = 0;
+
+        // Item detail view (opened by selecting an entry from the items list above) - shows that
+        // item's stats/granted-attacks/description (Weapon) or description (ConsumableItem),
+        // plus whichever actions BuildItemDetailActions decides apply to it. See
+        // HandleItemDetailInput/ConfirmItemDetailSelection/DrawItemDetail.
+        private bool _itemDetailActive = false;
+        private Item _selectedItem;
+        private List<string> _itemDetailActions = new List<string>();
+        private int _itemDetailIndex = 0;
+
+        /// <summary>How many lines of the item-detail info panel are scrolled past (0 = showing from the top) - a long weapon's full move list/descriptions can run taller than the screen, so DrawItemDetail only ever renders a window of its wrapped lines starting here. Scrolled with the mouse wheel while the panel is open (HandleItemDetailInput) and clamped against the real wrapped-line count in DrawItemDetail, the same split DevConsole's own scroll uses.</summary>
+        private int _itemDetailScrollOffset = 0;
+
         // Combat log - a short-lived line summarizing the last attack's outcome
         private string _combatLogMessage = "";
         private float _combatLogTimer = 0f;
@@ -420,6 +441,8 @@ namespace SagesOfOzvaram
             _gameState = GameState.Playing;
             _turnMenuActive = false;
             _cardMenuActive = false;
+            _itemsMenuActive = false;
+            _itemDetailActive = false;
             _attackMenuActive = false;
             _targetingModeActive = false;
             _coneAimingModeActive = false;
@@ -490,6 +513,8 @@ namespace SagesOfOzvaram
             // Reset every input-mode flag, same reasoning as EnterTestMode.
             _turnMenuActive = false;
             _cardMenuActive = false;
+            _itemsMenuActive = false;
+            _itemDetailActive = false;
             _attackMenuActive = false;
             _targetingModeActive = false;
             _coneAimingModeActive = false;
@@ -942,6 +967,8 @@ namespace SagesOfOzvaram
 
                                 _turnMenuActive = false;
                                 _cardMenuActive = false;
+                                _itemsMenuActive = false;
+                                _itemDetailActive = false;
                                 _attackMenuActive = false;
                                 _targetingModeActive = false;
                                 _coneAimingModeActive = false;
@@ -1017,6 +1044,14 @@ namespace SagesOfOzvaram
                         {
                             HandleCardMenuInput(keyboardState, mouseState);
                         }
+                        else if (_itemsMenuActive)
+                        {
+                            HandleItemsMenuInput(keyboardState, mouseState);
+                        }
+                        else if (_itemDetailActive)
+                        {
+                            HandleItemDetailInput(keyboardState, mouseState);
+                        }
                         else
                         {
                             // Pause auto-advance and let the player choose an action from the menu
@@ -1040,6 +1075,8 @@ namespace SagesOfOzvaram
                         _summonPlacementModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
+                        _itemsMenuActive = false;
+                        _itemDetailActive = false;
 
                         // Simple placeholder AI (GDD-pending): walk toward the player once per
                         // turn, so there's something in range to test attacks/spells against.
@@ -1458,11 +1495,6 @@ namespace SagesOfOzvaram
             _turnMenuIndex = Math.Clamp(_turnMenuIndex, 0, options.Count - 1);
             string optionId = options[_turnMenuIndex].Id;
 
-            // "End"/"Guard", "ViewMap", "Attack" (opens the attack submenu below) and "Move" are
-            // wired up - "Items" has no system to act on yet (no inventory-use UI exists), so
-            // selecting it (TurnMenuBuilder only even shows it once there's a weapon to manage)
-            // falls through to the implicit no-op below, same honest "nothing happens yet"
-            // treatment spells without an execution system get.
             if (optionId == "End")
             {
                 _turnMenuActive = false;
@@ -1509,6 +1541,11 @@ namespace SagesOfOzvaram
             {
                 _turnMenuActive = false;
                 OpenCardMenu();
+            }
+            else if (optionId == "Items")
+            {
+                _turnMenuActive = false;
+                OpenItemsMenu();
             }
         }
 
@@ -1613,6 +1650,182 @@ namespace SagesOfOzvaram
                 classDeck = classDeck.OrderBy(_ => _deckRandom.Next()).ToList();
                 _classDecks[heroClass] = classDeck;
             }
+        }
+
+        /// <summary>
+        /// Open the Items menu: every Weapon in Inventory plus every ConsumableItem in
+        /// Consumables, combined into one list (equipment has no concrete type yet - see
+        /// ItemCategory.Equipment - so it never contributes any entries). Selecting one opens its
+        /// detail view (OpenItemDetail); "Back" returns to the turn menu.
+        /// </summary>
+        private void OpenItemsMenu()
+        {
+            _itemsMenuEntries = new List<Item>();
+            _itemsMenuEntries.AddRange(_playerUnit.Inventory);
+            _itemsMenuEntries.AddRange(_playerUnit.Consumables);
+
+            _itemsMenuLabels = _itemsMenuEntries
+                .Select(item => item == _playerUnit.EquippedWeapon ? $"{item.Name} [Equipped]" : item.Name)
+                .ToList();
+            _itemsMenuLabels.Add("Back");
+
+            _itemsMenuIndex = 0;
+            _itemsMenuActive = true;
+        }
+
+        /// <summary>Handle input on the items list: W/S or mouse-hover to highlight an entry, click or E to confirm.</summary>
+        private void HandleItemsMenuInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
+                _itemsMenuIndex = (_itemsMenuIndex + 1) % _itemsMenuLabels.Count;
+            if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
+                _itemsMenuIndex = (_itemsMenuIndex - 1 + _itemsMenuLabels.Count) % _itemsMenuLabels.Count;
+
+            Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, _itemsMenuLabels.Count);
+
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                if (optionRects[i].Contains(mouseState.X, mouseState.Y))
+                {
+                    _itemsMenuIndex = i;
+                    if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+                        ConfirmItemsMenuSelection();
+                }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+                ConfirmItemsMenuSelection();
+        }
+
+        private void ConfirmItemsMenuSelection()
+        {
+            if (_itemsMenuLabels[_itemsMenuIndex] == "Back")
+            {
+                _itemsMenuActive = false;
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+                return;
+            }
+
+            OpenItemDetail(_itemsMenuEntries[_itemsMenuIndex]);
+        }
+
+        /// <summary>Open the detail view for a single item - its stats/attacks/description (see DrawItemDetail) plus whichever actions BuildItemDetailActions decides apply to it.</summary>
+        private void OpenItemDetail(Item item)
+        {
+            _selectedItem = item;
+            _itemDetailActions = BuildItemDetailActions(item);
+            _itemDetailIndex = 0;
+            _itemDetailScrollOffset = 0;
+            _itemsMenuActive = false;
+            _itemDetailActive = true;
+        }
+
+        /// <summary>A Weapon toggles between "Equip (1 AP)" and "Unequip (1 AP)" depending on whether it's the unit's current EquippedWeapon; a ConsumableItem gets "Use (1 AP)". Every item gets "Discard (1 AP)" (a stub for now - see ConfirmItemDetailSelection) and "Back".</summary>
+        private List<string> BuildItemDetailActions(Item item)
+        {
+            var actions = new List<string>();
+
+            if (item is Weapon weapon)
+                actions.Add(weapon == _playerUnit.EquippedWeapon ? "Unequip (1 AP)" : "Equip (1 AP)");
+            else if (item is ConsumableItem)
+                actions.Add("Use (1 AP)");
+
+            actions.Add("Discard (1 AP)");
+            actions.Add("Back");
+            return actions;
+        }
+
+        /// <summary>Handle input on an item's detail/action view: W/S or mouse-hover to highlight an action, click or E to confirm, mouse wheel to scroll the info panel (it claims the wheel entirely while open - see HandleMapControls' zoom suppression).</summary>
+        private void HandleItemDetailInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
+                _itemDetailIndex = (_itemDetailIndex + 1) % _itemDetailActions.Count;
+            if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
+                _itemDetailIndex = (_itemDetailIndex - 1 + _itemDetailActions.Count) % _itemDetailActions.Count;
+
+            // A few lines per notch - final clamping against the real wrapped-line count happens
+            // in DrawItemDetail, the same split DevConsole's own scroll uses.
+            int scrollDelta = mouseState.ScrollWheelValue - _previousMouseState.ScrollWheelValue;
+            if (scrollDelta != 0)
+                _itemDetailScrollOffset = Math.Max(0, _itemDetailScrollOffset - scrollDelta / 40);
+
+            Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            Rectangle[] optionRects = GetFixedBottomRightMenuOptionRects(viewportSize, _itemDetailActions.Count);
+
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                if (optionRects[i].Contains(mouseState.X, mouseState.Y))
+                {
+                    _itemDetailIndex = i;
+                    if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+                        ConfirmItemDetailSelection();
+                }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+                ConfirmItemDetailSelection();
+        }
+
+        private void ConfirmItemDetailSelection()
+        {
+            string action = _itemDetailActions[_itemDetailIndex];
+
+            if (action == "Back")
+            {
+                _itemDetailActive = false;
+                OpenItemsMenu(); // rebuild - an Equip/Unequip just done elsewhere could have changed labels
+                return;
+            }
+
+            if (action == "Discard (1 AP)")
+            {
+                // Stub, as requested - no tile-drop flow exists yet (will be: prompt the unit to
+                // pick an adjacent tile to drop the item on). No AP spent, item not removed -
+                // same honest "nothing happens yet" treatment Items itself had before this
+                // system existed.
+                ShowCombatMessage("Discarding isn't implemented yet.");
+                return;
+            }
+
+            if (_playerUnit.CurrentAP < 1)
+            {
+                ShowCombatMessage("Not enough AP.");
+                return;
+            }
+
+            if (action == "Equip (1 AP)")
+            {
+                _playerUnit.CurrentAP -= 1;
+                _playerUnit.EquippedWeapon = (Weapon)_selectedItem;
+                ShowCombatMessage($"{_playerUnit.Name} equips {_selectedItem.Name}.");
+                CloseItemsFlowToTurnMenu();
+            }
+            else if (action == "Unequip (1 AP)")
+            {
+                _playerUnit.CurrentAP -= 1;
+                _playerUnit.EquippedWeapon = null;
+                ShowCombatMessage($"{_playerUnit.Name} unequips {_selectedItem.Name}.");
+                CloseItemsFlowToTurnMenu();
+            }
+            else if (action == "Use (1 AP)")
+            {
+                var consumable = (ConsumableItem)_selectedItem;
+                _playerUnit.CurrentAP -= 1;
+                string message = consumable.Use(_playerUnit);
+                _playerUnit.RemoveConsumable(consumable);
+                ShowCombatMessage(message);
+                CloseItemsFlowToTurnMenu();
+            }
+        }
+
+        private void CloseItemsFlowToTurnMenu()
+        {
+            _itemDetailActive = false;
+            _itemsMenuActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
         }
 
         /// <summary>
@@ -2776,6 +2989,20 @@ namespace SagesOfOzvaram
             return rects;
         }
 
+        /// <summary>Same row-of-options layout as GetMenuOptionRects, but anchored to a fixed bottom-right screen position instead of the player's (moving) world position - used for the item-detail action list (Equip/Unequip/Use, Discard, Back) specifically, so it can never collide with that view's own info panel (DrawItemDetail), which is anchored top-left and can grow tall with a long weapon description.</summary>
+        private Rectangle[] GetFixedBottomRightMenuOptionRects(Vector2 viewportSize, int optionCount)
+        {
+            const int optionHeight = 28;
+            const int menuWidth = 200;
+
+            Vector2 anchor = new Vector2(viewportSize.X - menuWidth - 20, viewportSize.Y - optionCount * optionHeight - 20);
+
+            var rects = new Rectangle[optionCount];
+            for (int i = 0; i < optionCount; i++)
+                rects[i] = new Rectangle((int)anchor.X, (int)anchor.Y + i * optionHeight, menuWidth, optionHeight);
+            return rects;
+        }
+
         private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState, float deltaTime)
         {
             // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
@@ -2784,7 +3011,7 @@ namespace SagesOfOzvaram
             // one-time entry snap). Scaled by deltaTime (not a flat per-frame step) so it's
             // smooth and frame-rate-independent instead of speeding up or stuttering with the
             // frame rate - this was the actual cause of View Map feeling laggy/jittery.
-            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive)
+            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive && !_itemsMenuActive && !_itemDetailActive)
             {
                 float panSpeed = 400f; // pixels/second
                 if (keyboardState.IsKeyDown(Keys.W))
@@ -2814,17 +3041,24 @@ namespace SagesOfOzvaram
             // so only ZoomLevel actually changes, matching what the position-lock already holds
             // steady anyway. Free-look modes have no such lock fighting it, so the cursor-relative
             // zoom (truly centered on the mouse) is kept there, where it works as intended.
-            bool cameraIsUnitLocked = !_viewingMap && !_movementModeActive;
-            Vector2 zoomOrigin = cameraIsUnitLocked ? _renderer.CameraPosition : new Vector2(mouseState.X, mouseState.Y);
-            if (mouseState.ScrollWheelValue > _previousMouseState.ScrollWheelValue)
+            // Suppressed while the item-detail view is open - its own info panel claims the
+            // scroll wheel to scroll its (possibly overflowing) text instead (see
+            // HandleItemDetailInput/DrawItemDetail); without this, the same wheel notch would
+            // both scroll the panel AND zoom the camera underneath it.
+            if (!_itemDetailActive)
             {
-                _renderer.Zoom(0.1f, zoomOrigin);
-                _cameraZoomTarget = _renderer.ZoomLevel;
-            }
-            if (mouseState.ScrollWheelValue < _previousMouseState.ScrollWheelValue)
-            {
-                _renderer.Zoom(-0.1f, zoomOrigin);
-                _cameraZoomTarget = _renderer.ZoomLevel;
+                bool cameraIsUnitLocked = !_viewingMap && !_movementModeActive;
+                Vector2 zoomOrigin = cameraIsUnitLocked ? _renderer.CameraPosition : new Vector2(mouseState.X, mouseState.Y);
+                if (mouseState.ScrollWheelValue > _previousMouseState.ScrollWheelValue)
+                {
+                    _renderer.Zoom(0.1f, zoomOrigin);
+                    _cameraZoomTarget = _renderer.ZoomLevel;
+                }
+                if (mouseState.ScrollWheelValue < _previousMouseState.ScrollWheelValue)
+                {
+                    _renderer.Zoom(-0.1f, zoomOrigin);
+                    _cameraZoomTarget = _renderer.ZoomLevel;
+                }
             }
 
             // Select hex (left click)
@@ -3171,6 +3405,12 @@ namespace SagesOfOzvaram
                 if (_cardMenuActive)
                     DrawCardMenuOverlay(viewportSize);
 
+                if (_itemsMenuActive)
+                    DrawItemsMenu(viewportSize);
+
+                if (_itemDetailActive)
+                    DrawItemDetail(viewportSize);
+
                 if (_consoleOpen)
                     DrawConsole();
             }
@@ -3287,6 +3527,165 @@ namespace SagesOfOzvaram
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
                 _spriteBatch.DrawString(_font, _attackMenuLabels[i],
                     new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
+            }
+        }
+
+        /// <summary>The flat list of carried items (weapons + consumables, equipment once it exists) - same highlight-on-hover/selected list style as DrawAttackMenu, just with no AP/MP affordability to tint (viewing the list is free; only an action inside a specific item's detail view costs AP).</summary>
+        private void DrawItemsMenu(Vector2 viewportSize)
+        {
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, _itemsMenuLabels.Count);
+
+            // Carried weight vs capacity (Weapon-only - see BaseUnit.CurrentInventoryWeight;
+            // Consumables/Equipment aren't weight-capped), shown just above the list itself.
+            string weightText = $"Weight: {_playerUnit.CurrentInventoryWeight}/{_playerUnit.InventoryWeightCapacity}";
+            Vector2 weightPos = new Vector2(optionRects[0].X, Math.Max(10, optionRects[0].Y - 28));
+            Vector2 weightTextSize = _font.MeasureString(weightText);
+            var weightBoxRect = new Rectangle((int)weightPos.X - 8, (int)weightPos.Y - 4,
+                                              (int)weightTextSize.X + 16, (int)weightTextSize.Y + 8);
+            _spriteBatch.Draw(_whitePixel, weightBoxRect, new Color(0, 0, 0, 200));
+            _spriteBatch.DrawString(_font, weightText, weightPos, Color.White);
+
+            for (int i = 0; i < _itemsMenuLabels.Count; i++)
+            {
+                bool selected = i == _itemsMenuIndex;
+                Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
+                Color textColor = selected ? Color.Black : Color.White;
+
+                _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
+                _spriteBatch.DrawString(_font, _itemsMenuLabels[i],
+                    new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
+            }
+        }
+
+        /// <summary>
+        /// A selected item's info panel (stats + granted attacks + description for a Weapon,
+        /// just a description for a ConsumableItem - same top-right text-box style
+        /// DrawAttackPreview uses) plus its action list (Equip/Unequip or Use, Discard, Back -
+        /// same highlightable-option-row style DrawAttackMenu uses, positioned near the player
+        /// like every other submenu so it never collides with the info panel).
+        /// </summary>
+        private void DrawItemDetail(Vector2 viewportSize)
+        {
+            var lines = new List<string> { _selectedItem.Name };
+
+            if (_selectedItem is Weapon weapon)
+            {
+                if (weapon.Type.HasValue)
+                    lines.Add($"Type: {weapon.Type.Value}");
+                if (weapon.AttackPower.HasValue)
+                    lines.Add($"Attack Power: {weapon.AttackPower.Value}");
+                lines.Add($"Weight: {weapon.Weight}");
+                if (weapon.ShieldPassiveDefResBonusPercent.HasValue)
+                {
+                    string guardBonus = weapon.ShieldGuardBonusPercent.HasValue
+                        ? $" (+{weapon.ShieldGuardBonusPercent.Value * 100f:0}% while Guarding)"
+                        : "";
+                    lines.Add($"Passive DEF/RES: +{weapon.ShieldPassiveDefResBonusPercent.Value * 100f:0}%{guardBonus}");
+                }
+
+                // Stat modifiers a specialist gets using THIS weapon (see Weapon's own
+                // Specialist* fields) - distinct from the weapon's base Attacks/SpecialistAttacks
+                // list below, which are move names/descriptions rather than raw stat bonuses.
+                bool hasSpecialistBonus = weapon.SpecialistAccuracyBonus > 0f || weapon.SpecialistRangeBonus > 0
+                    || weapon.SpecialistIntDamageBonusDivisor > 0f || weapon.SpecialistFlatDamageBonus > 0;
+                if (hasSpecialistBonus)
+                {
+                    lines.Add("Specialist Bonuses:");
+                    if (weapon.SpecialistAccuracyBonus > 0f)
+                        lines.Add($" - Accuracy: +{weapon.SpecialistAccuracyBonus * 100f:0}%");
+                    if (weapon.SpecialistRangeBonus > 0)
+                        lines.Add($" - Range: +{weapon.SpecialistRangeBonus}");
+                    if (weapon.SpecialistIntDamageBonusDivisor > 0f)
+                        lines.Add($" - Magic Damage: +INT/{weapon.SpecialistIntDamageBonusDivisor:0.#}");
+                    if (weapon.SpecialistFlatDamageBonus > 0)
+                        lines.Add($" - Damage: +{weapon.SpecialistFlatDamageBonus} {weapon.SpecialistFlatDamageBonusType}");
+                }
+
+                // Per-move stat line: ATTACK is a weapon/race stat for FLAT physical damage
+                // before modifiers (Sharp/Blunt), MAGIC is the same for magical damage
+                // (Magical/Light) - weapon.AttackPower if this weapon has been migrated to it,
+                // else the move's own BaseDamage (see WeaponCatalog's migration note). STR/INT
+                // scaling shown alongside as "+STR/x"/"+INT/x" when the move actually uses that
+                // divisor - both can apply at once (rare, but the fields allow it).
+                string FormatMoveLine(Move move)
+                {
+                    int flatDamage = weapon.AttackPower ?? move.BaseDamage;
+                    bool isMagic = move.DamageType == DamageType.Magical || move.DamageType == DamageType.Light;
+                    string statLabel = isMagic ? "Magic" : "Attack";
+
+                    string scaling = "";
+                    if (move.StrengthDivisor > 0f)
+                        scaling += $" +STR/{move.StrengthDivisor:0.#}";
+                    if (move.IntelligenceDivisor > 0f)
+                        scaling += $" +INT/{move.IntelligenceDivisor:0.#}";
+
+                    return $" - {move.Name} [{statLabel} {flatDamage}{scaling}, Accuracy {move.BaseAccuracy * 100f:0}%]: {move.Description}";
+                }
+
+                if (weapon.Attacks.Count > 0)
+                {
+                    lines.Add("Attacks:");
+                    foreach (var move in weapon.Attacks)
+                        lines.Add(FormatMoveLine(move));
+                }
+                if (weapon.SpecialistAttacks.Count > 0)
+                {
+                    lines.Add("Specialist Attacks:");
+                    foreach (var move in weapon.SpecialistAttacks)
+                        lines.Add(FormatMoveLine(move));
+                }
+            }
+
+            lines.Add(_selectedItem.Description);
+
+            // Each logical line (a move's full-sentence description especially) is wrapped to a
+            // fixed max width BEFORE measuring the box, so the panel never has to grow wider than
+            // that regardless of content length - unwrapped, a single long description could
+            // measure wide enough to push the box's right-anchored X position off the left edge
+            // of the screen entirely, rendering it unreadable.
+            const float maxTextWidth = 420f;
+            var wrappedLines = new List<string>();
+            foreach (var line in lines)
+                wrappedLines.AddRange(WrapTextAtScale(line, maxTextWidth, 1f));
+
+            // A weapon with several moves (e.g. the Iron Sword's Slash/Pierce/Spin, each now with
+            // its own stat line - see FormatMoveLine) can wrap into more lines than fit on screen
+            // at once. Rather than let the panel grow past the bottom of the screen (unreadable,
+            // same problem the earlier unbounded-width version had, just on the other axis), only
+            // a vertical window of wrappedLines is actually drawn - scrolled with the mouse wheel
+            // (HandleItemDetailInput), clamped here against the real line/visible-window count,
+            // the same split DevConsole's own scroll uses.
+            Vector2 textPos = new Vector2(16f, 104f);
+            float lineHeight = _font.MeasureString("A").Y;
+            int visibleLineCount = Math.Max(1, (int)((viewportSize.Y - textPos.Y - 20f) / lineHeight));
+            int maxScroll = Math.Max(0, wrappedLines.Count - visibleLineCount);
+            _itemDetailScrollOffset = Math.Clamp(_itemDetailScrollOffset, 0, maxScroll);
+
+            var visibleLines = wrappedLines.Skip(_itemDetailScrollOffset).Take(visibleLineCount).ToList();
+            string text = string.Join("\n", visibleLines);
+            Vector2 textSize = _font.MeasureString(text);
+
+            var boxRect = new Rectangle((int)(textPos.X - 12), (int)(textPos.Y - 8),
+                                        (int)(maxTextWidth + 24), (int)(textSize.Y + 16));
+            _spriteBatch.Draw(_whitePixel, boxRect, new Color(0, 0, 0, 200));
+            _spriteBatch.DrawString(_font, text, textPos, Color.White);
+
+            if (maxScroll > 0)
+            {
+                string scrollHint = $"Scroll with mouse wheel ({_itemDetailScrollOffset}/{maxScroll})";
+                _spriteBatch.DrawString(_font, scrollHint, new Vector2(textPos.X, boxRect.Bottom + 4), Color.Yellow);
+            }
+
+            Rectangle[] actionRects = GetFixedBottomRightMenuOptionRects(viewportSize, _itemDetailActions.Count);
+            for (int i = 0; i < _itemDetailActions.Count; i++)
+            {
+                bool selected = i == _itemDetailIndex;
+                Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
+                Color textColor = selected ? Color.Black : Color.White;
+
+                _spriteBatch.Draw(_whitePixel, actionRects[i], bg);
+                _spriteBatch.DrawString(_font, _itemDetailActions[i],
+                    new Vector2(actionRects[i].X + 8, actionRects[i].Y + 6), textColor);
             }
         }
 

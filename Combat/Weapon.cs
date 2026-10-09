@@ -6,9 +6,10 @@ namespace SagesOfOzvaram.Combat
     /// An inventory item that grants its own attack(s) to whichever unit carries it, on top
     /// of that unit's innate racial move.
     /// </summary>
-    public class Weapon
+    public class Weapon : Item
     {
-        public string Name { get; }
+        public override ItemCategory Category => ItemCategory.Weapon;
+
         public List<Move> Attacks { get; }
 
         /// <summary>
@@ -79,9 +80,9 @@ namespace SagesOfOzvaram.Combat
         /// <summary>The DamageType of SpecialistFlatDamageBonus - null if SpecialistFlatDamageBonus is 0.</summary>
         public DamageType? SpecialistFlatDamageBonusType { get; set; }
 
-        public Weapon(string name, params Move[] attacks)
+        public Weapon(string name, string description, params Move[] attacks)
+            : base(name, description)
         {
-            Name = name;
             Attacks = new List<Move>(attacks);
         }
     }
