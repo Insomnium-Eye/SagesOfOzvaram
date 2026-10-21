@@ -15,6 +15,10 @@ namespace SagesOfOzvaram.Units
     public abstract class BaseUnit
     {
         public string Name { get; set; }
+
+        /// <summary>No leveling/XP system exists yet (GDD §4.2's Journeyman/Expert/Master/Transcendent tiers are still unimplemented) - every unit defaults to 1 as a display placeholder for the unit detail box until one does.</summary>
+        public int Level { get; set; } = 1;
+
         public int HP { get; set; }
         public int MaxHP { get; set; }
         public int Speed { get; set; }  // Determines turn order
@@ -302,6 +306,16 @@ namespace SagesOfOzvaram.Units
         public BaseUnit Owner { get; set; }
 
         /// <summary>
+        /// True for a stationary, non-acting battlefield structure (a Relic - e.g.
+        /// Units.Relics.Portal) rather than a normal combatant. Otherwise behaves exactly like
+        /// any other BaseUnit - HP/DEF/RES, Owner/team membership, valid as an attack target -
+        /// the one thing this actually changes is turn order: TurnSystem.StartNewTurn excludes
+        /// any Relic entirely, so it never becomes CurrentUnit and never gets AP/a turn of its
+        /// own.
+        /// </summary>
+        public virtual bool IsRelic => false;
+
+        /// <summary>
         /// Generic damage-absorption pool, reusable by any "health shield" effect (currently
         /// just Mana Shield) - ApplyRawDamage drains this before HP, so a 20-point shield on a
         /// unit at 50/100 HP absorbs the next 20 damage with HP untouched, same as a unit at
@@ -511,6 +525,42 @@ namespace SagesOfOzvaram.Units
 
         /// <summary>Total magical mitigation %: diminishing-returns Resistance, plus any passive shield bonus (always), plus the Guard bonus (only while Guarding) - the shield/Guard layers are still flat percentage-point adds, clamped 0-100 overall.</summary>
         public float EffectiveResistance => Math.Clamp(ResistanceMitigationPercent + GetPassiveShieldBonusPercent() + (IsGuarding ? GetGuardBonusPercent() : 0f), 0f, 100f);
+
+        /// <summary>
+        /// Converts a flat mitigation-percentage-point bonus (Guard's +20%, a shield's passive
+        /// bonus) into the equivalent raw DEF/RES stat points it would take to produce that same
+        /// mitigation increase from `currentTotalStat` - inverts the same diminishing-returns
+        /// curve DefenseMitigationPercent/ResistanceMitigationPercent use. Lets a percentage-based
+        /// bonus be shown in the same "+N" units as a raw stat buff (e.g. Brace's +4 DEF) instead
+        /// of a generic percentage that reads identically for every unit regardless of their
+        /// actual stats - see Game1.DrawUnitStatBonuses, the only caller. Clamps the target
+        /// mitigation just under 100% so an already near-capped unit doesn't produce an absurd or
+        /// infinite implied value.
+        /// </summary>
+        public static int MitigationPercentToStatDelta(int currentTotalStat, float mitigationBonusPercent)
+        {
+            if (mitigationBonusPercent == 0f)
+                return 0;
+
+            float currentMitigation = 100f * currentTotalStat / (currentTotalStat + ArmorDiminishingReturnsConstant);
+            float targetMitigation = Math.Clamp(currentMitigation + mitigationBonusPercent, 0f, 99.9f);
+            float impliedStat = ArmorDiminishingReturnsConstant * targetMitigation / (100f - targetMitigation);
+            return (int)Math.Round(impliedStat - currentTotalStat);
+        }
+
+        /// <summary>Guard's bonus (while Guarding) plus any passive shield bonus (always), combined into ONE flat DEF-equivalent number via MitigationPercentToStatDelta - see there. 0 if neither is active.</summary>
+        public int GetFlatDefenseBonusFromShieldAndGuard()
+        {
+            float percent = GetPassiveShieldBonusPercent() + (IsGuarding ? GetGuardBonusPercent() : 0f);
+            return MitigationPercentToStatDelta(TotalDefense, percent);
+        }
+
+        /// <summary>RES counterpart to GetFlatDefenseBonusFromShieldAndGuard - see there.</summary>
+        public int GetFlatResistanceBonusFromShieldAndGuard()
+        {
+            float percent = GetPassiveShieldBonusPercent() + (IsGuarding ? GetGuardBonusPercent() : 0f);
+            return MitigationPercentToStatDelta(TotalResistance, percent);
+        }
 
         private readonly List<Weapon> _inventory = new List<Weapon>();
 

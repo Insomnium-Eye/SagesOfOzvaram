@@ -23,6 +23,9 @@ namespace SagesOfOzvaram.Units
         Brambleboar,
         SiltfinMawpike,
         GloamravenOssuary,
-        RootmossStonegloom
+        RootmossStonegloom,
+
+        /// <summary>Not a creature at all - used by Units.Relics.Portal so it still has a Race to satisfy BaseUnit's constructor; falls back to RaceCatalog's zero-bonus default (no entry needed there), which is exactly right for a structure with no racial perks.</summary>
+        GenericPortal
     }
 }

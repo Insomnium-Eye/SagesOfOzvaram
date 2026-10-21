@@ -5,6 +5,7 @@ using SagesOfOzvaram.Maps;
 using SagesOfOzvaram.Units;
 using SagesOfOzvaram.Units.Heroes;
 using SagesOfOzvaram.Units.Summons;
+using SagesOfOzvaram.Units.Relics;
 using SagesOfOzvaram.Combat;
 using System;
 using System.Collections.Generic;
@@ -168,14 +169,27 @@ namespace SagesOfOzvaram
         private bool _allyTargetModeActive = false;
         private List<BaseUnit> _allyTargetCandidates = new List<BaseUnit>();
 
-        // Summon placement (opened for a SummonCard) - click any highlighted tile adjacent to
-        // the caster to spawn the summoned creature there; see CastSummon/ExecuteSummon.
+        // Summon placement (opened for a SummonCard) - click any highlighted tile to spawn the
+        // summoned creature there (within SummonPlacementRange of its owner's Generic Portal,
+        // or of the caster directly if it somehow has none - see OpenSummonCreaturePlacement);
+        // see CastSummon/ExecuteSummon.
         private bool _summonPlacementModeActive = false;
         private HashSet<(int col, int row)> _summonPlacementValidTiles = new HashSet<(int col, int row)>();
         private SummonCard _pendingSummonCard;
 
+        // Generic Portal placement - Phase 1 of CastSummon for a caster with no Generic Portal
+        // of their own standing yet (see PlayerHasActiveGenericPortal); click any highlighted
+        // tile within GenericPortalPlacementRange of the caster to conjure the portal there,
+        // which then opens Phase 2 (the normal summon-placement mode above) for the actual
+        // creature - see ExecutePortalPlacement/OpenSummonCreaturePlacement.
+        private bool _portalPlacementModeActive = false;
+        private HashSet<(int col, int row)> _portalPlacementValidTiles = new HashSet<(int col, int row)>();
+
         /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
         private BaseUnit _hoveredAttackTarget;
+
+        /// <summary>Whichever unit's buff/debuff source breakdown is currently open (see DrawUnitDetailBox/HandleMapControls) - null means the box is closed. Set by clicking a unit, cleared by clicking it again or clicking empty space; purely an inspection tool, doesn't belong to anyone's turn.</summary>
+        private BaseUnit _unitDetailBoxUnit;
 
         // Cone aiming (opened instead of _targetingModeActive for a HitsCone move, e.g. Frost
         // Blast) - aimed by clicking any hex to set a direction, not by picking a unit.
@@ -449,6 +463,7 @@ namespace SagesOfOzvaram
             _teleportModeActive = false;
             _allyTargetModeActive = false;
             _summonPlacementModeActive = false;
+            _portalPlacementModeActive = false;
             _movementModeActive = false;
             _viewingMap = false;
 
@@ -464,7 +479,21 @@ namespace SagesOfOzvaram
             var all = new List<object>();
             all.AddRange(SpellCatalog.GetSpellsForClass(heroClass));
             all.AddRange(SummonCatalog.AllSummons);
-            return all.OrderBy(IsCardTested).ToList();
+            var ordered = all.OrderBy(IsCardTested).ToList();
+
+            // Dusk Roachlin forced to the very front - EnsurePlayerHandInitialized draws the
+            // starting hand off the front of this deck, so without this it'd only show up once
+            // every untested spell ahead of it (in catalog order) had already been drawn/tested,
+            // rather than being available to test-summon right away.
+            int roachlinIndex = ordered.FindIndex(c => c is SummonCard summon && summon.Name == "Dusk Roachlin");
+            if (roachlinIndex > 0)
+            {
+                var roachlin = ordered[roachlinIndex];
+                ordered.RemoveAt(roachlinIndex);
+                ordered.Insert(0, roachlin);
+            }
+
+            return ordered;
         }
 
         private static bool IsCardTested(object card) => card switch
@@ -521,6 +550,7 @@ namespace SagesOfOzvaram
             _teleportModeActive = false;
             _allyTargetModeActive = false;
             _summonPlacementModeActive = false;
+            _portalPlacementModeActive = false;
             _movementModeActive = false;
             _viewingMap = false;
 
@@ -975,6 +1005,7 @@ namespace SagesOfOzvaram
                                 _teleportModeActive = false;
                                 _allyTargetModeActive = false;
                                 _summonPlacementModeActive = false;
+                                _portalPlacementModeActive = false;
                                 _movementModeActive = false;
                             }
                         }
@@ -1036,6 +1067,10 @@ namespace SagesOfOzvaram
                         {
                             HandleSummonPlacementInput(keyboardState, mouseState);
                         }
+                        else if (_portalPlacementModeActive)
+                        {
+                            HandlePortalPlacementInput(keyboardState, mouseState);
+                        }
                         else if (_movementModeActive)
                         {
                             HandleMovementInput(keyboardState, mouseState);
@@ -1073,6 +1108,7 @@ namespace SagesOfOzvaram
                         _teleportModeActive = false;
                         _allyTargetModeActive = false;
                         _summonPlacementModeActive = false;
+                        _portalPlacementModeActive = false;
                         _movementModeActive = false;
                         _cardMenuActive = false;
                         _itemsMenuActive = false;
@@ -2538,11 +2574,36 @@ namespace SagesOfOzvaram
             }
         }
 
-        /// <summary>Flat AP cost to summon a creature - first-pass placeholder, pending a balance pass (see GDD Portal System/Summon Cards).</summary>
+        /// <summary>Flat AP cost to summon a creature - first-pass placeholder, pending a balance pass (see GDD Portal System/Summon Cards). Unchanged whether or not a Generic Portal also needs conjuring first - that only ever costs extra mana (GenericPortalSummonManaSurcharge), never extra AP.</summary>
         private const int SummonAPCost = 2;
 
-        /// <summary>How far from the caster a summoned creature can be placed.</summary>
+        /// <summary>How far from its anchor point a summoned creature can be placed - normally its owner's Generic Portal (see OpenSummonCreaturePlacement), or the caster directly in the fallback case where a creature somehow needs placing with no portal present.</summary>
         private const int SummonPlacementRange = 1;
+
+        /// <summary>How far from the caster a Generic Portal itself can be placed - Phase 1 of CastSummon, only needed the caster's first Generic summon (see GenericPortalSummonManaSurcharge/PlayerHasActiveGenericPortal).</summary>
+        private const int GenericPortalPlacementRange = 5;
+
+        /// <summary>
+        /// Extra mana a Generic summon (every SummonCard today - no non-Generic portal type
+        /// exists yet) costs on top of its own ManaCost, charged ONLY the first time a caster
+        /// summons one with no Generic Portal of their own currently standing - it conjures that
+        /// portal in the same action. 0 extra once the portal exists; back to this if it's ever
+        /// destroyed (see PlayerHasActiveGenericPortal, checked fresh every CastSummon/card-cost
+        /// display - nothing caches "already paid").
+        /// </summary>
+        private const int GenericPortalSummonManaSurcharge = 5;
+
+        private const int GenericPortalHP = 20;
+        private const int GenericPortalDefense = 10;
+        private const int GenericPortalResistance = 10;
+
+        /// <summary>True if `summoner` currently has a living Generic Portal of their own on the battlefield - see GenericPortalSummonManaSurcharge/CastSummon/OpenSummonCreaturePlacement. Checked fresh every time (not cached), so destroying a portal mid-match correctly brings the surcharge right back.</summary>
+        private bool PlayerHasActiveGenericPortal(BaseUnit summoner) =>
+            _units.Any(u => u is Portal && u.IsAlive && u.Owner == summoner);
+
+        /// <summary>GenericPortalSummonManaSurcharge if `card` would need a fresh Generic Portal right now, else 0 - every SummonCard today is Generic (no non-Generic portal type exists yet to check `card` against), so this currently only depends on the player's own portal status.</summary>
+        private int GetGenericPortalSurcharge(SummonCard card) =>
+            PlayerHasActiveGenericPortal(_playerUnit) ? 0 : GenericPortalSummonManaSurcharge;
 
         /// <summary>
         /// Build the actual battlefield BaseUnit for a given SummonCard - one Units.Summons.*
@@ -2565,38 +2626,132 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Cast a SummonCard: pays SummonAPCost + the card's own ManaCost up front (same
-        /// afford-first convention as every other card/move), then opens placement targeting -
-        /// every passable, unoccupied tile within SummonPlacementRange of the caster, same
-        /// mechanics as teleport targeting (CastBlinkSpell) just for picking where the new unit
-        /// appears instead of where the caster goes.
+        /// Cast a SummonCard: pays SummonAPCost + the card's own ManaCost (plus
+        /// GenericPortalSummonManaSurcharge on top if the caster has no Generic Portal standing
+        /// yet) up front (same afford-first convention as every other card/move). If a portal's
+        /// needed, opens Phase 1 (portal placement - HandlePortalPlacementInput) first; otherwise
+        /// goes straight to Phase 2 (OpenSummonCreaturePlacement) for the creature itself.
         /// </summary>
         private void CastSummon(SummonCard card)
         {
-            if (SummonAPCost > _playerUnit.CurrentAP || card.ManaCost > _playerUnit.CurrentMP)
+            bool needsPortal = !PlayerHasActiveGenericPortal(_playerUnit);
+            int totalManaCost = card.ManaCost + (needsPortal ? GenericPortalSummonManaSurcharge : 0);
+
+            if (SummonAPCost > _playerUnit.CurrentAP || totalManaCost > _playerUnit.CurrentMP)
             {
                 ShowCombatMessage($"Not enough AP/MP to summon {card.Name}.");
                 return;
             }
 
+            _pendingSummonCard = card;
+            _cardMenuActive = false;
+
+            if (needsPortal)
+            {
+                var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+                var occupied = GetOccupiedTiles(_playerUnit);
+                _portalPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, GenericPortalPlacementRange)
+                    .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                    .ToHashSet();
+
+                if (_portalPlacementValidTiles.Count == 0)
+                {
+                    ShowCombatMessage($"Nowhere to place a portal for {card.Name}.");
+                    _pendingSummonCard = null;
+                    _cardMenuActive = true;
+                    return;
+                }
+
+                _portalPlacementModeActive = true;
+            }
+            else
+            {
+                OpenSummonCreaturePlacement();
+            }
+        }
+
+        /// <summary>Handle input while picking a Generic Portal's placement tile (Phase 1 - see CastSummon): click a highlighted tile to conjure it there, E to cancel the WHOLE summon (nothing's been spent yet at this point).</summary>
+        private void HandlePortalPlacementInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelSummonPlacement();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_portalPlacementValidTiles.Contains(clickedHex))
+                    ExecutePortalPlacement(clickedHex);
+            }
+        }
+
+        /// <summary>
+        /// Spend GenericPortalSummonManaSurcharge, conjure a Portal at destHex owned by the
+        /// caster, add it to the battlefield (it never takes a turn of its own - see
+        /// BaseUnit.IsRelic), then immediately open Phase 2 (OpenSummonCreaturePlacement) for
+        /// the creature itself - the caster may still cancel THAT step and keep only the portal
+        /// (see HandleSummonPlacementInput's E handling; the card stays in hand uncast either
+        /// way, since RemoveCardFromHand only runs from ExecuteSummon).
+        /// </summary>
+        private void ExecutePortalPlacement((int col, int row) destHex)
+        {
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - GenericPortalSummonManaSurcharge);
+
+            var position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            var portal = new Portal("Generic Portal", GenericPortalHP, GenericPortalDefense, GenericPortalResistance, position);
+            portal.Owner = _playerUnit;
+            portal.LoadContent(Content, GraphicsDevice);
+            _units.Add(portal);
+
+            ShowCombatMessage($"{_playerUnit.Name} conjures a Generic Portal.");
+
+            _portalPlacementModeActive = false;
+            _portalPlacementValidTiles.Clear();
+
+            OpenSummonCreaturePlacement();
+        }
+
+        /// <summary>
+        /// Phase 2 of CastSummon: open placement targeting for the creature itself - every
+        /// passable, unoccupied tile within SummonPlacementRange of the caster's Generic Portal
+        /// (just conjured in Phase 1, or already standing from an earlier summon), same mechanics
+        /// as teleport targeting (CastBlinkSpell) just for picking where the new unit appears.
+        /// Falls back to the caster's own position as the anchor in the (not normally reachable)
+        /// case of no portal at all, rather than crashing.
+        /// </summary>
+        private void OpenSummonCreaturePlacement()
+        {
+            var portal = _units.OfType<Portal>().FirstOrDefault(p => p.IsAlive && p.Owner == _playerUnit);
+            var anchorHex = portal != null ? _hexGrid.WorldToHex(portal.Position) : _hexGrid.WorldToHex(_playerUnit.Position);
+
+            // GetOccupiedTiles(_playerUnit) deliberately leaves the caster's OWN tile out (it's
+            // meant for pathfinding FROM that unit, where excluding the tile you're leaving is
+            // correct) - every other caller that places something at a specific DESTINATION
+            // (the old single-step summon placement, CastBlinkSpell's teleport targeting) always
+            // paired it with an explicit `hex != casterHex` for exactly this reason. Anchoring on
+            // the portal instead of the caster here dropped that guard, which is what let a
+            // creature be placed directly on top of the summoner whenever they stood within 1
+            // tile of their own portal.
             var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
             var occupied = GetOccupiedTiles(_playerUnit);
-            _summonPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, SummonPlacementRange)
-                .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+            _summonPlacementValidTiles = _hexGrid.GetHexesInRadius(anchorHex.col, anchorHex.row, SummonPlacementRange)
+                .Where(hex => hex != anchorHex && hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
                 .ToHashSet();
 
             if (_summonPlacementValidTiles.Count == 0)
             {
-                ShowCombatMessage($"Nowhere to place {card.Name}.");
+                ShowCombatMessage($"Nowhere to place {_pendingSummonCard.Name}.");
+                CancelSummonPlacement(returnToCardMenu: false);
                 return;
             }
 
-            _pendingSummonCard = card;
-            _cardMenuActive = false;
             _summonPlacementModeActive = true;
         }
 
-        /// <summary>Handle input while picking a summon's placement tile: click a highlighted tile to spawn it there, E to cancel back to the Cards menu.</summary>
+        /// <summary>Handle input while picking a summon's placement tile (Phase 2): click a highlighted tile to spawn it there, E to cancel - if a portal was already conjured this cast, it's kept (only the creature is cancelled).</summary>
         private void HandleSummonPlacementInput(KeyboardState keyboardState, MouseState mouseState)
         {
             if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
@@ -2615,7 +2770,8 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Spend SummonAPCost/the card's MP, spawn the creature at destHex owned by the caster
+        /// Spend SummonAPCost/the card's own MP (the portal's surcharge, if any, was already
+        /// spent in ExecutePortalPlacement), spawn the creature at destHex owned by the caster
         /// (see BaseUnit.Owner - keeps it off the caster's own valid-attack-target lists and
         /// counted as the caster's team for the FFA win check), load its sprite (a no-op if it
         /// has none yet), add it to the battlefield, consume the card, and return to the turn
@@ -2642,8 +2798,10 @@ namespace SagesOfOzvaram
         private void CancelSummonPlacement(bool returnToCardMenu = true)
         {
             _summonPlacementModeActive = false;
+            _portalPlacementModeActive = false;
             _pendingSummonCard = null;
             _summonPlacementValidTiles.Clear();
+            _portalPlacementValidTiles.Clear();
 
             if (returnToCardMenu)
             {
@@ -3004,6 +3162,20 @@ namespace SagesOfOzvaram
             return rects;
         }
 
+        /// <summary>
+        /// True only while free-looking the map (_viewingMap) - the unit detail box is a View
+        /// Map-only inspection tool. Originally this excluded every other click-driven mode
+        /// individually (movement/targeting/cone/teleport/ally-target/summon-placement/items/
+        /// cards/console) instead, but that still let it pop up over an attack: HandleTargetingInput
+        /// runs BEFORE HandleMapControls each Update(), so clicking a target resolved the attack
+        /// AND cleared _targetingModeActive back to false in the same frame, before
+        /// HandleMapControls' own click check ran - by then the exclusion list no longer excluded
+        /// anything, so that same click re-read as "click a unit, open its box." Gating on
+        /// _viewingMap specifically sidesteps that ordering issue entirely, since nothing about
+        /// resolving an attack or casting a spell ever touches that flag.
+        /// </summary>
+        private bool CanShowUnitDetailBox => _viewingMap;
+
         private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState, float deltaTime)
         {
             // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
@@ -3067,6 +3239,16 @@ namespace SagesOfOzvaram
             {
                 Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
                 _selectedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+
+                // Click a unit to open its stat sheet / buff-debuff source breakdown (see
+                // DrawUnitDetailBox) - clicking the same unit again, or empty space, closes it.
+                // View Map only (CanShowUnitDetailBox) - see its own doc comment for why it's
+                // restricted to just that one mode instead of excluding every other mode by name.
+                if (CanShowUnitDetailBox)
+                {
+                    var clickedUnit = _units.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == _selectedHex);
+                    _unitDetailBoxUnit = (clickedUnit != null && clickedUnit != _unitDetailBoxUnit) ? clickedUnit : null;
+                }
             }
 
             // Place test object (right click)
@@ -3228,6 +3410,22 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Generic Portal placement (Phase 1 of CastSummon) - every valid placement tile
+            // highlighted purple (distinct from the orange creature-placement highlight above,
+            // since they're two different steps of the same cast), whichever one the mouse is
+            // over highlighted brighter.
+            if (_portalPlacementModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _portalPlacementValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(190, 140, 255, 180) : new Color(140, 90, 220, 110);
+                    Color outline = hovered ? Color.White : new Color(170, 110, 255);
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
             // Draw hover hex
             if (!_consoleOpen)
             {
@@ -3286,6 +3484,10 @@ namespace SagesOfOzvaram
                     _spriteBatch.Draw(unit.SpriteTexture, spritePos, null, spriteTint, 0f,
                                     Vector2.Zero, finalScale, SpriteEffects.None, 0f);
                 }
+                else if (unit is Portal)
+                {
+                    DrawPortalPlaceholder(unit.Position);
+                }
 
                 DrawFacingIndicator(unit);
 
@@ -3319,9 +3521,17 @@ namespace SagesOfOzvaram
 
                 // Per-stat icon + signed value row (sword/book/shield/rune/crosshair for
                 // STR/INT/DEF/RES/ACC) for every stat an active StatusEffect is currently
-                // pushing off base - always shown for the player's own unit and its summons
-                // (Owner == _playerUnit), shown for anyone else only while hovered/targeted.
-                bool showStatBonuses = unit == _playerUnit || unit.Owner == _playerUnit || unit == statHoveredUnit;
+                // pushing off base - shown for the currently-ACTING team (whoever _turnSystem.
+                // CurrentUnit's team is - its summoner and every one of that summoner's allies/
+                // summons alike, matching "the summoner and all allied units show stat changes
+                // whenever it's that summoner's turn"), and for anyone else only while hovered/
+                // targeted. Deliberately keyed off CurrentUnit's team rather than `_playerUnit ==
+                // unit.Owner` - in Test Mode _playerUnit is reassigned to whoever's turn it is
+                // (see EnterTestMode), so a summon's badge would vanish the instant control
+                // passed to a DIFFERENT team even though its buff was still genuinely active;
+                // CurrentUnit's team doesn't have that problem, and gives identical results to
+                // the old check in a normal (non-Test-Mode) match where _playerUnit never moves.
+                bool showStatBonuses = GetTeamRoot(unit) == GetTeamRoot(_turnSystem.CurrentUnit) || unit == statHoveredUnit;
                 if (showStatBonuses)
                     DrawUnitStatBonuses(unit);
             }
@@ -3400,6 +3610,8 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Select a target to shield (yourself included) - E to cancel");
                 else if (_summonPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
+                else if (_portalPlacementModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted tile to place your Generic Portal - E to cancel");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 
@@ -3411,6 +3623,9 @@ namespace SagesOfOzvaram
 
                 if (_itemDetailActive)
                     DrawItemDetail(viewportSize);
+
+                if (_unitDetailBoxUnit != null && CanShowUnitDetailBox)
+                    DrawUnitDetailBox(_unitDetailBoxUnit, viewportSize);
 
                 if (_consoleOpen)
                     DrawConsole();
@@ -3705,9 +3920,13 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Damage/crit/hit%/affliction preview for _pendingMove against `target`, shown while
-        /// targeting mode has it hovered - everything here reuses the exact same Move/AttackResolver
-        /// formulas the actual attack resolves with, just without rolling or spending anything.
+        /// Damage/damage-type/crit/hit%/affliction tooltip for _pendingMove against `target`,
+        /// shown while targeting mode has it hovered - this fires identically for a weapon
+        /// attack and a damage-dealing spell (both route through the same _pendingMove/
+        /// _targetingModeActive mechanism - see HandleAttackMenuInput and the Cards menu's cast
+        /// path), so one tooltip covers both. Everything here reuses the exact same Move/
+        /// AttackResolver formulas the actual attack resolves with, just without rolling or
+        /// spending anything.
         /// </summary>
         private void DrawAttackPreview(BaseUnit target, Vector2 viewportSize)
         {
@@ -3723,10 +3942,12 @@ namespace SagesOfOzvaram
                 ? "Crit: 100% (backstab)"
                 : $"Crit: {_pendingMove.CritChance * 100f:0}%";
 
+            string damageTypeLabel = _pendingMove.DamageType.IsPhysical() ? "Physical" : "Magical";
+
             var lines = new List<string>
             {
                 $"Target: {target.Name}",
-                $"Damage: {damage}",
+                $"Damage: {damage} ({damageTypeLabel})",
                 $"Hit: {hitChance * 100f:0}%",
                 critLine,
             };
@@ -3752,6 +3973,111 @@ namespace SagesOfOzvaram
             _spriteBatch.Draw(_whitePixel, boxRect, new Color(0, 0, 0, 200));
             _spriteBatch.DrawString(_font, text, textPos, Color.White);
         }
+
+        /// <summary>
+        /// The "simple box" opened by clicking a unit (see HandleMapControls) - unlike the
+        /// compact hover badges (DrawUnitStatBonuses), which only show the net flat DEF/RES
+        /// number, this lists exactly where each current buff/debuff comes from: a named
+        /// StatusEffect (a spell, Guard, ...), a carried item's passive bonus, or an active
+        /// health shield. Same plain dark-box-plus-text style as DrawAttackPreview/DrawBottomHint.
+        /// </summary>
+        private void DrawUnitDetailBox(BaseUnit unit, Vector2 viewportSize)
+        {
+            var lines = new List<string> { unit.Name };
+            lines.AddRange(GetUnitStatLines(unit));
+
+            lines.Add(new string('-', 28));
+            lines.Add("Active Effects:");
+            var sourceLines = GetBuffDebuffSourceLines(unit);
+            lines.AddRange(sourceLines.Count > 0 ? sourceLines : new List<string> { "None" });
+
+            string text = string.Join("\n", lines);
+            Vector2 textSize = _font.MeasureString(text);
+            Vector2 textPos = new Vector2((viewportSize.X - textSize.X) / 2f, 100f);
+
+            var boxRect = new Rectangle((int)(textPos.X - 14), (int)(textPos.Y - 10),
+                                        (int)(textSize.X + 28), (int)(textSize.Y + 20));
+            _spriteBatch.Draw(_whitePixel, boxRect, new Color(15, 15, 20, 230));
+            _spriteBatch.DrawString(_font, text, textPos, Color.White);
+        }
+
+        /// <summary>
+        /// The unit detail box's stat sheet - Race ("type"), Class (omitted for a classless
+        /// summon, e.g. the Dusk Roachlin), Level (a display placeholder - see BaseUnit.Level,
+        /// no leveling system exists yet), HP/MP/AP, and every combat stat. STR/ACC/INT/Evasion
+        /// show the Effective* value (racial + any active status bonus already folded in) and
+        /// DEF/RES show TotalDefense/TotalResistance (same inclusions, pre-diminishing-curve raw
+        /// armor rating) rather than the raw base field, so a unit currently buffed reads its
+        /// real current stat here - the Active Effects breakdown right below explains why it's
+        /// elevated, rather than this duplicating that explanation.
+        /// </summary>
+        private List<string> GetUnitStatLines(BaseUnit unit)
+        {
+            var lines = new List<string>
+            {
+                $"Type: {unit.Race}",
+            };
+
+            if (unit.Class != HeroClass.None)
+                lines.Add($"Class: {unit.Class}");
+
+            lines.Add($"Level: {unit.Level}");
+            lines.Add($"HP: {unit.HP}/{unit.MaxHP}    MP: {unit.CurrentMP}/{unit.MaxMP}    AP: {unit.CurrentAP}/{unit.MaxAP}");
+            lines.Add($"STR: {unit.EffectiveStrength}    INT: {unit.EffectiveIntelligence}    DEF: {unit.TotalDefense}    RES: {unit.TotalResistance}");
+            lines.Add($"ACC: {unit.EffectiveAccuracy}    EVA: {unit.EffectiveEvasion}    SPD: {unit.EffectiveSpeed}");
+
+            return lines;
+        }
+
+        /// <summary>
+        /// One line per active buff/debuff SOURCE on `unit`, for DrawUnitDetailBox - every
+        /// StatusEffect by name (spells, afflictions, and Guard's own zero-stat marker, which
+        /// gets special-cased since its real bonus lives in GetGuardBonusPercent rather than on
+        /// the effect itself - see ApplyGuard's doc comment), plus the passive DEF/RES bonus from
+        /// whichever shield is carried (not a StatusEffect at all, so it needs its own line), plus
+        /// any active health shield (ShieldPoints).
+        /// </summary>
+        private List<string> GetBuffDebuffSourceLines(BaseUnit unit)
+        {
+            var lines = new List<string>();
+
+            foreach (var effect in unit.StatusEffects)
+                lines.Add(DescribeStatusEffectSource(unit, effect));
+
+            var passiveShield = unit.Inventory
+                .Where(w => w.ShieldPassiveDefResBonusPercent.HasValue)
+                .OrderByDescending(w => w.ShieldPassiveDefResBonusPercent.Value)
+                .FirstOrDefault();
+            if (passiveShield != null)
+                lines.Add($"{passiveShield.Name} (item): +{passiveShield.ShieldPassiveDefResBonusPercent.Value * 100f:0}% DEF/RES (passive)");
+
+            if (unit.ShieldPoints > 0)
+                lines.Add($"Shield: {unit.ShieldPoints} damage absorbed before HP");
+
+            return lines;
+        }
+
+        private string DescribeStatusEffectSource(BaseUnit unit, StatusEffect effect)
+        {
+            if (effect.Name == "Guarding")
+                return $"Guard: +{unit.GetGuardBonusPercent():0}% DEF/RES";
+
+            var parts = new List<string>();
+            if (effect.StrengthBonus != 0) parts.Add($"{SignedNumber(effect.StrengthBonus)} STR");
+            if (effect.AccuracyBonus != 0) parts.Add($"{SignedNumber(effect.AccuracyBonus)} ACC");
+            if (effect.DefenseBonus != 0) parts.Add($"{SignedNumber(effect.DefenseBonus)} DEF");
+            if (effect.ResistanceBonus != 0) parts.Add($"{SignedNumber(effect.ResistanceBonus)} RES");
+            if (effect.IntelligenceBonus != 0) parts.Add($"{SignedNumber(effect.IntelligenceBonus)} INT");
+            if (effect.HealPercentMaxHPPerTurn > 0f) parts.Add($"heals {effect.HealPercentMaxHPPerTurn * 100f:0}% max HP/turn");
+            if (effect.RestrictsActions) parts.Add("restricts actions");
+            if (effect.PreventsMovement) parts.Add("prevents movement");
+
+            string summary = parts.Count > 0 ? string.Join(", ", parts) : "no stat effect";
+            string duration = effect.TurnsRemaining < 0 ? "" : $" ({effect.TurnsRemaining} turn{(effect.TurnsRemaining == 1 ? "" : "s")} left)";
+            return $"{effect.Name}: {summary}{duration}";
+        }
+
+        private static string SignedNumber(int value) => value > 0 ? $"+{value}" : value.ToString();
 
         private Color GetTileColor(string tileType)
         {
@@ -3806,23 +4132,35 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
+            // Every stat shows ONE merged flat ("+N", never a "%") number - a raw StatusEffect
+            // bonus (e.g. Brace's +4 DEF) and Guard/a shield's passive bonus (both really a flat
+            // MITIGATION PERCENTAGE added after the diminishing-returns curve, not a raw stat -
+            // see ApplyGuard's own doc comment) used to show as two differently-formatted entries
+            // under the same icon ("+4" next to "+20%"), which read as the same kind of number
+            // but weren't. BaseUnit.GetFlatDefenseBonusFromShieldAndGuard/...Resistance... converts
+            // that percentage into the equivalent raw stat points FOR THIS UNIT'S OWN CURRENT
+            // STATS (inverting the same curve), so two units with different base Defense show
+            // different numbers for the identical "+20%" Guard bonus, rather than a generic figure
+            // that reads the same for everyone regardless of their actual build.
+            var statOrder = new[] { "STR", "ACC", "DEF", "RES", "INT" };
+            var merged = new Dictionary<string, int>();
+            foreach (var (statCode, bonus) in unit.GetActiveStatBonuses())
+                merged[statCode] = bonus;
+
+            int defExtra = unit.GetFlatDefenseBonusFromShieldAndGuard();
+            if (defExtra != 0)
+                merged["DEF"] = merged.GetValueOrDefault("DEF") + defExtra;
+
+            int resExtra = unit.GetFlatResistanceBonusFromShieldAndGuard();
+            if (resExtra != 0)
+                merged["RES"] = merged.GetValueOrDefault("RES") + resExtra;
+
             // (StatCode for the icon, the label text, whether it reads as a gain for coloring).
             var entries = new List<(string StatCode, string Label, bool Positive)>();
-            foreach (var (statCode, bonus) in unit.GetActiveStatBonuses())
-                entries.Add((statCode, (bonus > 0 ? "+" : "") + bonus, bonus > 0));
-
-            // Guarding always shows its own DEF/RES bonus, with or without any StatusEffect-based
-            // bonus (e.g. Brace) also active - shown as a SEPARATE "+N%" entry under the same
-            // DEF/RES icons above, not summed into the same number as the raw stat bonuses: Guard's
-            // bonus (GetGuardBonusPercent) is a flat mitigation PERCENTAGE added after the
-            // diminishing-returns curve, a fundamentally different unit than a raw pre-curve stat
-            // point like Brace's +4 DEF (see ApplyGuard's own doc comment) - this still lets both
-            // be visible, and visually stack, at once without conflating what they each mean.
-            if (unit.IsGuarding)
+            foreach (var statCode in statOrder)
             {
-                string guardLabel = $"+{unit.GetGuardBonusPercent():0}%";
-                entries.Add(("DEF", guardLabel, true));
-                entries.Add(("RES", guardLabel, true));
+                if (merged.TryGetValue(statCode, out int bonus) && bonus != 0)
+                    entries.Add((statCode, (bonus > 0 ? "+" : "") + bonus, bonus > 0));
             }
 
             if (entries.Count == 0)
@@ -3905,6 +4243,30 @@ namespace SagesOfOzvaram
             Vector2 direction = Vector2.Normalize(neighborCenter - tileCenter);
 
             DrawArrowhead(unit.Position + direction * 18f, direction, Color.Cyan, 6f);
+        }
+
+        /// <summary>
+        /// No real portal sprite exists yet (see Units.Relics.Portal), so a simple placeholder
+        /// stands in: 3 concentric violet discs, decreasing radius and increasing opacity drawn
+        /// on top of each other, approximating a glowing swirl - same "procedural, not an actual
+        /// asset" approach the Spell/Summon cards' own placeholder art already uses elsewhere.
+        /// </summary>
+        private void DrawPortalPlaceholder(Vector2 position)
+        {
+            for (int ring = 3; ring >= 1; ring--)
+            {
+                float radius = ring * 9f;
+                Color discColor = new Color(150, 70, 230, 90 + (4 - ring) * 50);
+                const int segments = 12;
+                Vector2 previous = position + new Vector2(radius, 0f);
+                for (int i = 1; i <= segments; i++)
+                {
+                    float angle = MathHelper.TwoPi * i / segments;
+                    Vector2 next = position + new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle)) * radius;
+                    DrawFilledTriangle(position, previous, next, discColor);
+                    previous = next;
+                }
+            }
         }
 
         /// <summary>A small filled triangle pointing along direction, tip at the given point.</summary>
@@ -4218,9 +4580,17 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
-            bool canAffordMana = _playerUnit.CurrentMP >= card.ManaCost;
+            // Showing the actual total mana this cast will spend, including the Generic Portal
+            // surcharge if the player has no portal standing yet - always in red when that
+            // surcharge applies (distinct signal from "can't afford," which stays red too but
+            // for a different reason) so it reads as "this costs more right now," not a plain
+            // affordability warning.
+            int portalSurcharge = GetGenericPortalSurcharge(card);
+            int displayManaCost = card.ManaCost + portalSurcharge;
+            bool canAffordMana = _playerUnit.CurrentMP >= displayManaCost;
+            Color manaCostColor = portalSurcharge > 0 ? Color.Red : (canAffordMana ? Color.Black : Color.Red);
             DrawTextCentered(card.Name, FractionalRect(destRect, SummonNameBarRegion), Color.White);
-            DrawTextCentered(card.ManaCost.ToString(), FractionalRect(destRect, SummonManaCostCircleRegion), canAffordMana ? Color.Black : Color.Red);
+            DrawTextCentered(displayManaCost.ToString(), FractionalRect(destRect, SummonManaCostCircleRegion), manaCostColor);
 
             DrawTextCentered(card.Attack.ToString(), FractionalRect(destRect, SummonAttackBarRegion), Color.White);
             DrawTextCentered(card.Intelligence.ToString(), FractionalRect(destRect, SummonIntelligenceBarRegion), Color.White);
@@ -4340,15 +4710,6 @@ namespace SagesOfOzvaram
             {
                 var layout = GetHandCardLayout(viewportSize);
                 Point mousePos = Mouse.GetState().Position;
-                int hoveredCardIndex = -1;
-                for (int i = layout.Count - 1; i >= 0; i--)
-                {
-                    if (layout[i].Contains(mousePos))
-                    {
-                        hoveredCardIndex = i;
-                        break;
-                    }
-                }
 
                 int? focusedCardIndex = GetFocusedHandCardIndex(viewportSize, mousePos);
                 for (int i = 0; i < _availableHandCards.Count; i++)
@@ -4380,9 +4741,17 @@ namespace SagesOfOzvaram
                         _playerUnit.CurrentAP >= drawCost ? Color.Gold : Color.Gray);
                 }
 
-                if (hoveredCardIndex >= 0)
+                // Gated on focusedRect (the actually-rendered, 2.1x-enlarged card), not on
+                // hoveredCardIndex's small original footprint (layout[i]) - a field like the
+                // mana-cost circle sits near the TOP of the card, which is well above that small
+                // footprint once the card's enlarged (ScaleCardRect grows entirely upward,
+                // anchored to the same bottom edge - see its own doc comment). Gating on the
+                // small footprint meant the cursor could never actually be "inside" it while
+                // pointing at a field that high up, so no tooltip could ever show for one -
+                // reported as "I'm not seeing the tooltip over the summon cost."
+                if (focusedCardIndex.HasValue && focusedRect.Contains(mousePos))
                 {
-                    string tooltip = GetHoveredCardTooltip(_availableHandCards[hoveredCardIndex], focusedRect, mousePos);
+                    string tooltip = GetHoveredCardTooltip(_availableHandCards[focusedCardIndex.Value], focusedRect, mousePos);
                     if (tooltip != null)
                         DrawTooltip(tooltip, mousePos, viewportSize);
                 }
@@ -4423,10 +4792,15 @@ namespace SagesOfOzvaram
                 if (FractionalRect(destRect, CardDamageCircleRegion).Contains(mousePos))
                     return GetSpellHeadlineTooltip(spellCard.Effect);
             }
-            else if (card is SummonCard)
+            else if (card is SummonCard summonCard)
             {
                 if (FractionalRect(destRect, SummonManaCostCircleRegion).Contains(mousePos))
-                    return "Mana Cost: mana required to summon this creature.";
+                {
+                    int portalSurcharge = GetGenericPortalSurcharge(summonCard);
+                    return portalSurcharge > 0
+                        ? $"Mana Cost: {summonCard.ManaCost} + Portal Summon Cost {portalSurcharge} - summons a GENERIC portal first (you have none standing yet)."
+                        : "Mana Cost: mana required to summon this creature.";
+                }
                 if (FractionalRect(destRect, SummonAttackBarRegion).Contains(mousePos))
                     return "Attack: base physical attack power.";
                 if (FractionalRect(destRect, SummonIntelligenceBarRegion).Contains(mousePos))

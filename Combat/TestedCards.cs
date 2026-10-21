@@ -21,6 +21,9 @@ namespace SagesOfOzvaram.Combat
             "Forced Sleep",
             "Second Wind",
             "Conjure Potions",
+            "Brace",
+            "Dusk Roachlin",
+            "Rally Cry",
         };
     }
 }

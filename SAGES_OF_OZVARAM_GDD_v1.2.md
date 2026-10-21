@@ -404,11 +404,11 @@ This approach creates a richer, more believable world where cultural misundersta
 
 #### Summon Cards
 - **Current Implementation**: `SummonCard` holds a creature's presentation data and full stat block (mana cost, unit type, description, ATT/INT/DEF/RES/Accuracy/Evasion/Speed, min-max damage, HP, art). Every card in `SummonCatalog` is included in the "Cards" hand (see Card/Deck System above) alongside spell cards, rendered dynamically through `DrawSummonCard`, and summons aren't class-gated the way spells are. Casting one now actually spawns the creature - see "Summon-to-Battlefield" below
-- **Summon-to-Battlefield**: casting a SummonCard (`CastSummon`) pays a flat `SummonAPCost` (2 AP, first-pass placeholder) plus the card's own ManaCost up front, then opens placement targeting - every passable, unoccupied tile within `SummonPlacementRange` (1, i.e. adjacent) of the caster highlighted orange, exactly the same mechanics as Blink's teleport targeting just for picking where the new unit appears (`HandleSummonPlacementInput`/`ExecuteSummon`). This is a simpler, flat cost - it does NOT yet implement the Generic Portal's one-time +5 mana/placement-step rule from the Portal System below; that's still design-only, to be layered onto this same CastSummon path later. The spawned unit (`CreateSummonUnit`, one `Units.Summons.*` class per card) gets `BaseUnit.Owner` set to its caster, is added straight to `_units` (so it draws, animates, and - starting the following Turn, once `TurnSystem` next rebuilds its order - acts in turn order like any other unit) and its sprite is loaded immediately (a no-op for the 9 with no art yet, same graceful fallback as everything else missing art). **Teams**: `Owner` is also what the rest of combat now reads as team identity (`Game1.GetTeamRoot`: a unit's team is itself, or its Owner) - a summon is never a valid target for its own caster's attacks (`GetValidAttackTargets` excludes same-team units, not just `!= _playerUnit` any more), and the FFA win check (previously "last unit standing") now ends the match once at most one TEAM still has a living member, so a caster whose own hero unit Faints can still win through a surviving summon. No AI yet decides what a summon does on its own turn - it simply sits in turn order (GDD-pending, same placeholder-AI gap every non-player unit already has)
+- **Summon-to-Battlefield**: casting a SummonCard (`CastSummon`) pays a flat `SummonAPCost` (2 AP, first-pass placeholder) plus the card's own ManaCost, PLUS the Generic Portal's one-time +5 mana surcharge if the caster has no Generic Portal of their own standing yet - see Portal System below, now fully implemented rather than design-only. The spawned unit (`CreateSummonUnit`, one `Units.Summons.*` class per card) gets `BaseUnit.Owner` set to its caster, is added straight to `_units` (so it draws, animates, and - starting the following Turn, once `TurnSystem` next rebuilds its order - acts in turn order like any other unit) and its sprite is loaded immediately (a no-op for the 9 with no art yet, same graceful fallback as everything else missing art). **Teams**: `Owner` is also what the rest of combat now reads as team identity (`Game1.GetTeamRoot`: a unit's team is itself, or its Owner) - a summon is never a valid target for its own caster's attacks (`GetValidAttackTargets` excludes same-team units, not just `!= _playerUnit` any more), and the FFA win check (previously "last unit standing") now ends the match once at most one TEAM still has a living member, so a caster whose own hero unit Faints can still win through a surviving summon. No AI yet decides what a summon does on its own turn - it simply sits in turn order (GDD-pending, same placeholder-AI gap every non-player unit already has)
 - **Rendering**: composited at runtime from `Content/imgs/Cards/Summons/SummonCard.png` (the shared template - a per-theme template, "ground" for now, more to come) plus the card's art and dynamic text/values, using the same flood-fill masking approach as Spell Cards (see above) - the Summon template's art window is a flat maroon fill (matched by color distance from a seed pixel rather than a "near white" test) with seven notches down its left edge clearing the stat-icon bars, which a rectangular region would have overlapped
 - **Dynamic Fields**: name (top bar), mana cost (top-right white "star" circle - the top-left stone medallion is pure decoration and gets no text), the seven stat values placed into their icon-labelled bars (fist=Attack, book=Intelligence, shield=Defense, meditating figure=Resistance, crosshair=Accuracy, feather=Evasion, lightning bolt=Speed - the icons themselves are baked into the template), unit type (bottom bar), description (cream box), damage range as "min-max" (bottom-left bar, next to a sword badge baked into the template), and HP (bottom-right circle over a heart badge)
 - **Description Fit**: `DrawWrappedText` shrinks its font scale in steps (re-wrapping at each step, since fewer/longer lines fit at a smaller scale) until the whole wrapped block fits inside its box's height, rather than just wrapping to width and letting a long description spill out the bottom
-- **Current Cards** *(first-pass numbers, pending a balance pass)* - all 10 now have a matching `Units.Summons.*` class off `BaseUnit`, each using its own summon-only `Race` (not playable, grants no Race Perk bonus/vulnerability) and `HeroClass.None` (no weapon specializations), with stats copied straight from the card, and all 10 are spawnable via the Summon-to-Battlefield path above (see Portal System below for the mana/placement rules a later pass will layer onto that same path). Only Dusk Roachlin has unique CARD art (`DuskRoachlin_CardArt1`) and its own battlefield sprite (`Roachlin_Sprite_1`); the other 9 share a placeholder card art (`GenericSummon_CardArt`) until real art exists, and on the battlefield they all share one generic **Pawn** sprite (`Content/imgs/sprites/units/Pawn_Sprite_1.png` - a simple shaded chess-pawn silhouette, stone-grey, transparent background) rather than being invisible - a visible stand-in beats nothing while each one's real art is still pending:
+- **Current Cards** *(first-pass numbers, pending a balance pass)* - all 10 now have a matching `Units.Summons.*` class off `BaseUnit`, each using its own summon-only `Race` (not playable, grants no Race Perk bonus/vulnerability) and `HeroClass.None` (no weapon specializations), with stats copied straight from the card, and all 10 are spawnable via the Summon-to-Battlefield path above, Generic Portal requirement included (see Portal System below). Only Dusk Roachlin has unique CARD art (`DuskRoachlin_CardArt1`) and its own battlefield sprite (`Roachlin_Sprite_1`); the other 9 share a placeholder card art (`GenericSummon_CardArt`) until real art exists, and on the battlefield they all share one generic **Pawn** sprite (`Content/imgs/sprites/units/Pawn_Sprite_1.png` - a simple shaded chess-pawn silhouette, stone-grey, transparent background) rather than being invisible - a visible stand-in beats nothing while each one's real art is still pending:
   - **Dusk Roachlin** - 5 mana, ATT 8 / INT 3 / DEF 6 / RES 4 / Accuracy 7 / Evasion 6 / Speed 9, 3-12 damage, 12 HP. `Race.Roachlin`, innate move **Roachlin Slash** (Sharp, STR/5)
   - **Aetherfluff Beetle** - 1 mana, ATT 0 / INT 2 / DEF 4 / RES 4 / Accuracy 5 / Evasion 8 / Speed 5, 0 damage, 10 HP. A pure support creature - generates 5 mana for every allied unit within 4 tiles at the start of each turn (not implemented yet, no per-turn aura/mana-generation system exists). `Race.AetherfluffBeetle`, innate move **Nudge** (0 damage - it isn't built to fight)
   - **Dusk Roachlin Priest** - 15 mana, ATT 4 / INT 11 / DEF 5 / RES 10 / Accuracy 7 / Evasion 6 / Speed 5, 3-9 damage, 18 HP. Heals a random ally at the start of its turn (double for Roachlin targets) - not implemented, no AI-side heal-cast behavior exists yet. `Race.DuskRoachlinPriest` (its own Race, not shared with Dusk Roachlin, since `RaceAttacks` only holds one Move per Race and this unit needs a distinct ranged magic attack), innate move **Shadow Weave** (Magical, range 3, INT/3.5)
@@ -420,15 +420,19 @@ This approach creates a richer, more believable world where cultural misundersta
   - **Gloamraven Ossuary** - 7 mana, ATT 8 / INT 6 / DEF 5 / RES 6 / Accuracy 10 / Evasion 8 / Speed 9, 3-11 damage, 14 HP. `Race.GloamravenOssuary`, innate move **Precision Strike** (Sharp, STR/2, elevated 30% crit chance)
   - **Rootmoss Stonegloom** - 9 mana, ATT 9 / INT 3 / DEF 12 / RES 7 / Accuracy 6 / Evasion 3 / Speed 3, 5-13 damage, 30 HP. `Race.RootmossStonegloom`, innate move **Stone Slam** (Blunt, STR/2.25)
 
-#### Portal System *(design only - not implemented in code yet)*
-- **Concept**: every summon requires an active portal on the field before it can be summoned; portals themselves cost mana and a placement tile, adding a strategic layer (an active portal can be dispelled, denying further summons from it until a new one is made)
-- **Generic Portal**: covers all 10 cards in `SummonCatalog` above, since none of them have a special requirement. Any class can open one - not gated by HeroClass, same as the summons themselves
-  - The first time a caster plays ANY generic summon card, before the summon resolves they must first pick a tile to place their Generic Portal on (their own targeting/placement step, separate from choosing the summon's own arrival tile)
-  - That first cast costs the summon's own mana cost **plus a one-time +5 mana** for the portal itself - e.g. summoning a Dusk Roachlin (5 mana) the very first time costs 5 + 5 = 10 mana total
-  - Once a caster's Generic Portal is active, every subsequent generic summon from that caster costs only its own listed mana cost - no repeated +5 charge - as long as that portal survives
-  - If the portal is dispelled, the next generic summon cast re-triggers the whole placement-and-+5-mana sequence (a new portal has to be opened again)
-- **Special Portals** *(future work, design only)*: some summons will require a specific portal type instead of (or in addition to) the Generic Portal - e.g. a **Dark Aethereal Portal** or **Light Aethereal Portal** - each granted by its own dedicated Spell Card rather than being automatic like the Generic Portal, and each may carry its own cast requirements (e.g. class, stat threshold, or location). No such cards, creatures, or portal types are defined yet - this is a placeholder for a later pass once the Generic Portal mechanic above actually exists in code
-- **Not yet implemented**: none of this is wired up - there's no portal entity/tile-ownership tracking, no placement-targeting mode (would mirror the existing teleport/ally-shield targeting-mode pattern in `Game1`), no dispel mechanic, and no summon-to-battlefield spawning at all yet. This section exists purely so the mana/placement rules are written down before any of it is built
+#### Portal System
+- **Concept**: every summon requires an active portal on the field before it can be summoned; portals themselves cost mana and a placement tile, adding a strategic layer (an active portal can be destroyed in combat, denying further summons from it until a new one is made)
+- **Relics**: a portal is the first example of a **Relic** - a stationary, attackable battlefield structure rather than a normal combatant. A Relic has HP/DEF/RES and is a fully valid attack target like any unit (same team/`Owner` rules as a summoned creature - its owner's own attacks can't target it, anyone else's can), but it never takes a turn of its own - it's excluded from turn order entirely (`BaseUnit.IsRelic`, checked by `TurnSystem.StartNewTurn`) rather than sitting there with a no-op turn every cycle. `Units.Relics.Portal` is the implementation
+- **Generic Portal**: covers all 10 cards in `SummonCatalog` above, since none of them have a special requirement yet. Any class can open one - not gated by HeroClass, same as the summons themselves. **20 HP, 10 DEF, 10 RES** - sturdy enough to need real effort to bring down, but not invincible
+  - The first time a caster plays ANY generic summon card with no Generic Portal of their own currently standing, casting it (`CastSummon`) opens a two-phase placement instead of going straight to the usual single step:
+    1. **Portal placement**: pick any passable, unoccupied tile within 5 tiles of the caster (`GenericPortalPlacementRange`, highlighted violet) to conjure the Generic Portal there - this costs **5 mana** on its own (`GenericPortalSummonManaSurcharge`), deducted the moment the tile is confirmed (`ExecutePortalPlacement`)
+    2. **Creature placement**: immediately afterward, pick a tile within 1 tile of the JUST-PLACED portal (highlighted orange, same as any other summon placement) to place the actual creature - the caster MAY cancel this second step instead (E to cancel) and keep only the portal; the summon card stays in hand uncast either way, ready to be played again (now portal-free, since the portal persists)
+  - So a caster's very first Dusk Roachlin (5 mana) costs 5 (portal) + 5 (creature) = 10 mana total if they go through with both steps, or just 5 if they place the portal and then cancel the creature
+  - Once a caster's Generic Portal is active, every subsequent generic summon from that caster skips Phase 1 entirely and costs only its own listed mana cost - no repeated +5 charge - and is placed within 1 tile of that SAME existing portal (not of the caster) - as long as it survives
+  - If the portal is destroyed, the next generic summon cast re-triggers the whole two-phase placement-and-+5-mana sequence (a new portal has to be conjured again) - checked fresh every cast (`PlayerHasActiveGenericPortal`), nothing is cached
+  - **UI**: a summon card that needs a fresh portal shows its total mana cost (base + 5) in RED in its mana-cost circle, and hovering that circle shows a "Summons GENERIC portal" tooltip explaining why; once the caster's portal exists, the card goes back to showing (and costing) just its own listed amount
+  - **Placeholder Art**: no portal sprite exists yet, so it renders as a simple procedural placeholder (3 concentric violet discs, same "programmatic, not an actual asset" approach the Spell/Summon cards' own placeholder art already uses) rather than a real texture
+- **Special Portals** *(future work, design only)*: some summons will require a specific portal type instead of (or in addition to) the Generic Portal - e.g. a **Dark Aethereal Portal** or **Light Aethereal Portal** - each granted by its own dedicated Spell Card rather than being automatic like the Generic Portal, and each may carry its own cast requirements (e.g. class, stat threshold, or location). No such cards, creatures, or portal types are defined yet, and `SummonCard` has no field distinguishing "Generic" from some future non-Generic type - every card currently in the catalog is treated as Generic
 
 #### Aggro System
 - **Range**: 0-20 aggro per enemy
@@ -666,8 +670,11 @@ SagesOfOzvaram/
 │   │   ├── ApprenticeWarrior.cs
 │   │   ├── ApprenticeCleric.cs
 │   │   └── ApprenticeHunter.cs
-│   └── Summons/
-│       └── DuskRoachlin.cs
+│   ├── Summons/
+│   │   ├── DuskRoachlin.cs
+│   │   └── ...               (9 more - one Units.Summons.* class per SummonCatalog entry, see Summon Cards §4.1)
+│   └── Relics/
+│       └── Portal.cs         (BaseUnit.IsRelic - see Portal System §4.1)
 ├── Combat/
 │   ├── TurnSystem.cs
 │   ├── Move.cs
@@ -764,6 +771,7 @@ SagesOfOzvaram/
 - Death visuals: a dead unit's sprite tints gray and its label reads "DEAD," distinct from Fainted
 - FFA victory condition (last player with a non-Fainted unit wins)
 - Health display on units (name + HP/MaxHP text)
+- Portal System fully implemented (see Portal System §4.1): Generic Portal two-phase placement, +5 mana surcharge with red cost display/tooltip, 1-tile-of-portal creature placement, and Relics (`BaseUnit.IsRelic`) as a general concept - a stationary, attackable, non-turn-taking battlefield structure
 
 #### 🔄 IN PROGRESS
 - UI polish (turn display, current unit info)
@@ -1011,6 +1019,22 @@ SagesOfOzvaram/
 
 ---
 
+### Session 7: Portal System Implemented, Dusk Roachlin Sprite Fix
+**Goals**: Implement the Portal System this GDD already specified (§4.1) but that hadn't been built in code yet, and fix an oversized summon sprite
+
+**Note on gap between sessions**: substantial work (card casting, Test Mode, a Summon Catalog expansion from 1 to 10 creatures, a unit detail/stat inspection box, several targeting/camera fixes) landed in between Session 6 and this one without a matching GDD/Dev Journal update - that work is reflected in the sections above (Card/Deck System, Summon Cards, Combat System) as of right now, but isn't individually logged session-by-session the way earlier work was
+
+**Accomplishments**:
+- **Portal System**: implemented exactly as this GDD's own Portal System section already specified - a Generic Portal, two-phase placement (conjure the portal within 5 tiles of the caster, then place the creature within 1 tile of it, with the creature step cancelable while keeping the portal), the one-time +5 mana surcharge (shown as a red cost on the card, with a "Summons GENERIC portal" tooltip explaining why) that drops away once a caster's portal exists and comes back if it's destroyed
+- **Relics**: introduced as a general concept, not just a one-off for portals - `BaseUnit.IsRelic` marks a stationary, attackable, non-turn-taking structure; `TurnSystem` excludes any Relic from turn order entirely. `Units.Relics.Portal` (20 HP, 10 DEF, 10 RES) is the first one, drawn as a simple procedural placeholder (3 concentric violet discs) since no real portal art exists yet
+- **Dusk Roachlin Sprite Fix**: its sprite had no per-unit `Scale` set, defaulting to 1.0 - the same multiplier as the Sorcerer's much smaller source art - despite its own source image being closer in size to the Warrior's; it rendered far larger than any hero and spilled out of its hex tile. Set to 0.4, landing it around the Hunter's on-screen size
+
+**Notes**:
+- Verified the same way as always here - `dotnet build` (compiles clean) plus a short smoke-test launch - not an actual interactive playthrough
+- Special (non-Generic) Portal types remain design-only, as this GDD already noted before this session
+
+---
+
 ## 9. UPCOMING MILESTONES
 
 ### Immediate (Next 1-2 sessions)
@@ -1194,10 +1218,11 @@ SagesOfOzvaram/
 | 1.2 | Latest | Dave | Unit system, turn system, dev journal, status update |
 | 1.2 (Session 5 update) | September 2026 | Dave | Full attack system (targeting/resolution/AI/status effects), complete weapon-by-weapon balance pass, damage types, ammo, DEF/RES diminishing returns, Evasion, Race Perks, movement animation + camera follow, View Map jitter fix - see Combat System §4.1 and Dev Journal Session 5 |
 | 1.2 (Session 6 update) | September 2026 | Dave | AI attacks (highest-damage affordable in-range move, before/after moving), turn-start gate blocking all turn logic during the announcement, Slash/Shooting weapon attack animations, Move-mode camera bug fix (one-time cursor snap, no more divergent chase), death visuals (gray tint + "DEAD" label) - see Combat System §4.1, Known Issues, and Dev Journal Session 6 |
+| 1.2 (Session 7 update) | October 2026 | Dave | Portal System implemented (Generic Portal two-phase placement, +5 mana surcharge, Relics as a general concept), Dusk Roachlin sprite-scale fix - see Portal System §4.1 and Dev Journal Session 7 |
 
 ---
 
 **END OF DOCUMENT**
 
-Last Updated: September 2026 (Session 6)  
+Last Updated: October 2026 (Session 7)  
 Next Review: After Phase 1 completion or major design changes

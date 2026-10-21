@@ -113,12 +113,15 @@ namespace SagesOfOzvaram.Combat
         }
 
         /// <summary>
-        /// Rebuild the turn order from currently-alive units, sorted by effective SPEED
-        /// (descending) - a Slowed unit (see BaseUnit.EffectiveSpeed) acts later starting next Turn.
+        /// Rebuild the turn order from currently-alive, non-Relic units (a Relic - e.g. a
+        /// Portal - is a stationary structure with no actions to take, so it's excluded
+        /// entirely rather than needing a no-op turn skipped every cycle), sorted by effective
+        /// SPEED (descending) - a Slowed unit (see BaseUnit.EffectiveSpeed) acts later starting
+        /// next Turn.
         /// </summary>
         private void StartNewTurn()
         {
-            _turnOrder = _allUnits.Where(u => u.IsAlive).OrderByDescending(u => u.EffectiveSpeed).ToList();
+            _turnOrder = _allUnits.Where(u => u.IsAlive && !u.IsRelic).OrderByDescending(u => u.EffectiveSpeed).ToList();
             _currentIndex = 0;
             TurnAnnouncementElapsed = 0f;
             UnitTurnElapsed = 0f;

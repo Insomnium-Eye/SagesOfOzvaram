@@ -2,14 +2,14 @@
   "version": 3,
   "targets": {
     "net8.0": {
-      "MonoGame.Content.Builder.Task/3.8.5.1": {
+      "MonoGame.Content.Builder.Task/3.8.6": {
         "type": "package",
         "build": {
           "build/MonoGame.Content.Builder.Task.props": {},
           "build/MonoGame.Content.Builder.Task.targets": {}
         }
       },
-      "MonoGame.Framework.DesktopGL/3.8.5.1": {
+      "MonoGame.Framework.DesktopGL/3.8.6": {
         "type": "package",
         "dependencies": {
           "MonoGame.Library.OpenAL": "1.24.3.4",
@@ -146,24 +146,24 @@
     }
   },
   "libraries": {
-    "MonoGame.Content.Builder.Task/3.8.5.1": {
-      "sha512": "9isFjZSi87Fy8Hv0qLeol27xUNdt3EzGYdBabR/qHVT7ujVGebWQzfgjDhJaT3M8tJEazpeA+ftYAgokmIZUbQ==",
+    "MonoGame.Content.Builder.Task/3.8.6": {
+      "sha512": "YzlwPtEGn5wlxToias3I/dW7ZyRJZLr2uMYKgrkwm/gpYyxWg4eI9f5+ih2CdLoCm5Daqvpf8w5PvwwzGsR1Og==",
       "type": "package",
-      "path": "monogame.content.builder.task/3.8.5.1",
+      "path": "monogame.content.builder.task/3.8.6",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "Icon.png",
         "build/MonoGame.Content.Builder.Task.props",
         "build/MonoGame.Content.Builder.Task.targets",
-        "monogame.content.builder.task.3.8.5.1.nupkg.sha512",
+        "monogame.content.builder.task.3.8.6.nupkg.sha512",
         "monogame.content.builder.task.nuspec"
       ]
     },
-    "MonoGame.Framework.DesktopGL/3.8.5.1": {
-      "sha512": "za6tOSYT2xpks932wU/WcpPu2xkUyKwn251gkRuiJ/3XPZBdwds7RPXRhtcrZGnZ2jtjtwh4upRLd+EGrrWtFw==",
+    "MonoGame.Framework.DesktopGL/3.8.6": {
+      "sha512": "pVAwFo+wNCco7881v8VAkPcls/jYVyfzxx/eSBMuT45ZqZcTFqptsZxd8KwBEE5PQc5UxbX5erGh0rwtFGsKVg==",
       "type": "package",
-      "path": "monogame.framework.desktopgl/3.8.5.1",
+      "path": "monogame.framework.desktopgl/3.8.6",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
@@ -172,7 +172,7 @@
         "build/MonoGame.Framework.DesktopGL.targets",
         "lib/net8.0/MonoGame.Framework.dll",
         "lib/net8.0/MonoGame.Framework.xml",
-        "monogame.framework.desktopgl.3.8.5.1.nupkg.sha512",
+        "monogame.framework.desktopgl.3.8.6.nupkg.sha512",
         "monogame.framework.desktopgl.nuspec"
       ]
     },
@@ -310,19 +310,19 @@
     ]
   },
   "packageFolders": {
-    "/home/zog/.nuget/packages/": {}
+    "C:\\Users\\ebm22\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/SagesOfOzvaram.csproj",
+      "projectUniqueName": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\SagesOfOzvaram.csproj",
       "projectName": "SagesOfOzvaram",
-      "projectPath": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/SagesOfOzvaram.csproj",
-      "packagesPath": "/home/zog/.nuget/packages/",
-      "outputPath": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/",
+      "projectPath": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\SagesOfOzvaram.csproj",
+      "packagesPath": "C:\\Users\\ebm22\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/home/zog/.nuget/NuGet/NuGet.Config"
+        "C:\\Users\\ebm22\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -376,7 +376,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/home/zog/.dotnet/sdk/8.0.424/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.425/PortableRuntimeIdentifierGraph.json"
       }
     }
   }
