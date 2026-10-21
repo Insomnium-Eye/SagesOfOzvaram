@@ -78,12 +78,12 @@ namespace SagesOfOzvaram.Combat
 
         public static readonly SpellCard Brace = new SpellCard(
             "Brace",
-            "Plant your feet and tense every muscle: +DEF/+RES for 1 turn. No shield required, just instinct.",
+            "Plant your feet and tense every muscle: +4 DEF/+4 RES for 1 turn. No shield required, just instinct.",
             requiredClass: null,
             new Move("Brace", "Brace for the incoming blow.",
                 apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 inflictsStatusEffect: "Braced", statusDurationTurns: 1,
-                defenseBuff: 15, resistanceBuff: 15),
+                defenseBuff: 4, resistanceBuff: 4),
             "imgs/Cards/Spells/Brace_CardArt");
 
         public static readonly SpellCard RallyCry = new SpellCard(

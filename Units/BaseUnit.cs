@@ -427,10 +427,31 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public bool IsGuarding { get; private set; }
 
-        public void ApplyGuard() => IsGuarding = true;
+        /// <summary>
+        /// Starts Guarding. Also applies a zero-stat "Guarding" marker StatusEffect purely so it
+        /// shows up on-screen the same way every other buff does (the existing StatusEffects
+        /// name list above a unit, and - since StatusEffects sit in one shared list - alongside
+        /// any other active buff, e.g. Brace's "Braced", rather than replacing or hiding it).
+        /// Deliberately carries no DefenseBonus/ResistanceBonus of its own: Guard's actual DEF/RES
+        /// bonus (GetGuardBonusPercent) is a flat MITIGATION PERCENTAGE added after the
+        /// diminishing-returns curve (see EffectiveDefense/EffectiveResistance), not a raw
+        /// pre-curve stat point like StatusEffect.DefenseBonus means everywhere else it's used
+        /// (e.g. Brace) - folding Guard's bonus into that field would run it through the curve a
+        /// second time and silently misreport its real size, so the actual bonus still flows
+        /// entirely through the existing IsGuarding path; this marker is presentation only.
+        /// </summary>
+        public void ApplyGuard()
+        {
+            IsGuarding = true;
+            ApplyStatusEffect(new StatusEffect { Name = "Guarding", Type = StatusEffectType.Buff });
+        }
 
-        /// <summary>Clear any active Guard stance. Called automatically when this unit's turn starts.</summary>
-        public void ClearGuard() => IsGuarding = false;
+        /// <summary>Clear any active Guard stance (and its display marker - see ApplyGuard). Called automatically when this unit's turn starts.</summary>
+        public void ClearGuard()
+        {
+            IsGuarding = false;
+            RemoveStatusEffect("Guarding");
+        }
 
         /// <summary>
         /// Passive DEF/RES bonus (percentage points) from any shield in Inventory - applies

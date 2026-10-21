@@ -2309,6 +2309,7 @@ namespace SagesOfOzvaram
         /// separate path instead (see SpellIsSelfUtility/CastSelfUtilitySpell); everything else
         /// (heals, taming, summoning via spell, ...) has no execution path yet at all; see
         /// TryCastSelectedCard.
+
         /// </summary>
         private static bool SpellCastsAsAttack(SpellCard card)
         {
@@ -3805,8 +3806,26 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
-            var bonuses = unit.GetActiveStatBonuses();
-            if (bonuses.Count == 0)
+            // (StatCode for the icon, the label text, whether it reads as a gain for coloring).
+            var entries = new List<(string StatCode, string Label, bool Positive)>();
+            foreach (var (statCode, bonus) in unit.GetActiveStatBonuses())
+                entries.Add((statCode, (bonus > 0 ? "+" : "") + bonus, bonus > 0));
+
+            // Guarding always shows its own DEF/RES bonus, with or without any StatusEffect-based
+            // bonus (e.g. Brace) also active - shown as a SEPARATE "+N%" entry under the same
+            // DEF/RES icons above, not summed into the same number as the raw stat bonuses: Guard's
+            // bonus (GetGuardBonusPercent) is a flat mitigation PERCENTAGE added after the
+            // diminishing-returns curve, a fundamentally different unit than a raw pre-curve stat
+            // point like Brace's +4 DEF (see ApplyGuard's own doc comment) - this still lets both
+            // be visible, and visually stack, at once without conflating what they each mean.
+            if (unit.IsGuarding)
+            {
+                string guardLabel = $"+{unit.GetGuardBonusPercent():0}%";
+                entries.Add(("DEF", guardLabel, true));
+                entries.Add(("RES", guardLabel, true));
+            }
+
+            if (entries.Count == 0)
                 return;
 
             const float iconSize = 14f;
@@ -3814,11 +3833,11 @@ namespace SagesOfOzvaram
             const float entrySpacing = 4f;
             const float textScale = 0.3f;
 
-            var labels = new string[bonuses.Count];
+            var labels = new string[entries.Count];
             float totalWidth = 0f;
-            for (int i = 0; i < bonuses.Count; i++)
+            for (int i = 0; i < entries.Count; i++)
             {
-                labels[i] = (bonuses[i].Bonus > 0 ? "+" : "") + bonuses[i].Bonus;
+                labels[i] = entries[i].Label;
                 totalWidth += iconSize + iconTextGap + _font.MeasureString(labels[i]).X * textScale + entrySpacing;
             }
             totalWidth -= entrySpacing;
@@ -3826,16 +3845,16 @@ namespace SagesOfOzvaram
             Vector2 origin = unit.Position - new Vector2(totalWidth / 2f, 92f);
             float x = origin.X;
 
-            for (int i = 0; i < bonuses.Count; i++)
+            for (int i = 0; i < entries.Count; i++)
             {
-                if (_statIcons.TryGetValue(bonuses[i].StatCode, out var icon))
+                if (_statIcons.TryGetValue(entries[i].StatCode, out var icon))
                 {
                     _spriteBatch.Draw(icon, new Vector2(x, origin.Y), null, Color.White, 0f,
                         Vector2.Zero, iconSize / icon.Width, SpriteEffects.None, 0f);
                 }
                 x += iconSize + iconTextGap;
 
-                Color textColor = bonuses[i].Bonus > 0 ? new Color(120, 255, 140) : new Color(255, 110, 110);
+                Color textColor = entries[i].Positive ? new Color(120, 255, 140) : new Color(255, 110, 110);
                 _spriteBatch.DrawString(_font, labels[i], new Vector2(x, origin.Y + 1f), textColor, 0f,
                     Vector2.Zero, textScale, SpriteEffects.None, 0f);
                 x += _font.MeasureString(labels[i]).X * textScale + entrySpacing;
