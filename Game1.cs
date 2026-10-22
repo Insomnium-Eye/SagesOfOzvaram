@@ -18,6 +18,7 @@ namespace SagesOfOzvaram
     {
         private enum GameState
         {
+            StartMenu,
             CharacterSelect,
             Playing,
             MatchOver
@@ -65,8 +66,16 @@ namespace SagesOfOzvaram
         // Selected hex
         private (int col, int row) _selectedHex = (-1, -1);
 
-        // Character select
-        private GameState _gameState = GameState.CharacterSelect;
+        // Start menu (the game's actual boot screen - see Initialize) - "Arena" (EnterOriginalMode,
+        // the full 20x15 map + character select, controlling only the chosen character) or
+        // "Debug" (EnterTestMode, the small 3x3 map, controlling every unit) - see
+        // HandleStartMenuInput/ConfirmStartMenuSelection/DrawStartMenu.
+        private int _startMenuIndex = 0;
+        private static readonly string[] StartMenuLabels = { "Arena", "Debug" };
+
+        // Current screen - Initialize always sets this explicitly to StartMenu; the field default
+        // here only matters if something somehow read it before Initialize runs.
+        private GameState _gameState = GameState.StartMenu;
 
         /// <summary>
         /// True once the dev console's "test mode" has been used (see EnterTestMode) - pre-
@@ -108,7 +117,12 @@ namespace SagesOfOzvaram
         private readonly Dictionary<HeroClass, List<object>> _classHands = new Dictionary<HeroClass, List<object>>();
 
         private int _selectedCharacterIndex = 0;  // Sorcerer is the default selection
+
+        /// <summary>Whichever unit the player currently has turn-menu control of - the real player hero on its own turn, or (see the per-turn handoff in Update) one of that hero's own ControllableBySummoner summons on ITS turn instead. Everywhere else in Game1 that reads "the player's unit" (AP/MP display, attack/move/cast execution, ...) means THIS, not necessarily the hero.</summary>
         private BaseUnit _playerUnit;
+
+        /// <summary>The actual player-chosen hero (Arena: whoever was picked at character select; Debug/Test Mode: whichever unit currently has its turn, same "control everyone" rule Test Mode already had) - stays fixed across a controllable summon's turn so Update knows who to hand control BACK to once that summon's turn ends, and whose summons even count as "the player's own" for the handoff in the first place (see IsPlayerControllableSummon). Null before character select resolves it (Arena) or before EnterTestMode picks a first unit (Debug).</summary>
+        private BaseUnit _playerHero;
 
         // Turn menu (shown, next to the player's unit, when it's their turn) - its actual
         // contents are built fresh on demand by Combat.TurnMenuBuilder (see GetTurnMenuOptions)
@@ -299,16 +313,13 @@ namespace SagesOfOzvaram
             // Renderer
             _renderer = new HexGridRenderer(_hexGrid, _spriteBatch, GraphicsDevice);
 
-            // Test Mode is currently what the game boots directly into, for this ongoing
-            // card-testing pass (see EnterTestMode's own doc comment) - the normal 20x15
-            // procedural map/character select/standard decks (BuildOriginalMap/EnterOriginalMode)
-            // are kept fully intact as a separate mode, just not the default right now; "original
-            // mode" in the dev console switches back.
-            EnterTestMode();
-            _cameraTarget = _turnSystem.CurrentUnit.Position;
-
-            _hasAutoAdvancedThisTurn = false;
-            _hasAiActedThisTurn = false;
+            // The game boots into a Start Menu (Arena / Debug - see DrawStartMenu) rather than
+            // straight into either mode - EnterTestMode/EnterOriginalMode (and everything that
+            // depends on one of them having run, e.g. _turnSystem/_units/_playerUnit) only fire
+            // once the player actually picks one (ConfirmStartMenuSelection), so nothing past
+            // this point may assume either has happened yet while _gameState is StartMenu.
+            _gameState = GameState.StartMenu;
+            _startMenuIndex = 0;
 
             base.Initialize();
         }
@@ -445,6 +456,7 @@ namespace SagesOfOzvaram
             }
 
             _playerUnit = _units[0];
+            _playerHero = _playerUnit; // unused while _testModeActive (that branch always wins first - see Update), kept in sync anyway
             EnsurePlayerHandInitialized();
 
             _turnSystem = new TurnSystem(_units);
@@ -530,6 +542,7 @@ namespace SagesOfOzvaram
 
             _testModeActive = false;
             _playerUnit = null; // back through character select
+            _playerHero = null;
             GenerateClassDecks();
 
             _turnSystem = new TurnSystem(_units);
@@ -567,8 +580,14 @@ namespace SagesOfOzvaram
             // Center on whichever unit's turn it is rather than a hardcoded hex (used to be
             // HexToWorld(10, 7), a fixed point on the original 20x15 map specifically - once
             // Test Mode's 3x3 map could also be the active one at this point, that fixed point
-            // would aim the camera at empty space off the edge of it).
-            _renderer.CameraPosition = _turnSystem.CurrentUnit.Position;
+            // would aim the camera at empty space off the edge of it). MonoGame calls LoadContent
+            // automatically right after Initialize() returns - before the Start Menu has had a
+            // chance to show, let alone before the player has picked Arena/Debug - so _turnSystem
+            // doesn't exist yet at this point any more (EnterTestMode/EnterOriginalMode haven't
+            // run). Skipping this is safe either way: whichever mode the player picks sets
+            // _renderer.CameraPosition itself once it actually runs.
+            if (_turnSystem != null)
+                _renderer.CameraPosition = _turnSystem.CurrentUnit.Position;
 
             // Load unit sprites
             foreach (var unit in _units)
@@ -871,7 +890,11 @@ namespace SagesOfOzvaram
             var keyboardState = Keyboard.GetState();
             var mouseState = Mouse.GetState();
 
-            if (_gameState == GameState.CharacterSelect)
+            if (_gameState == GameState.StartMenu)
+            {
+                HandleStartMenuInput(keyboardState, mouseState);
+            }
+            else if (_gameState == GameState.CharacterSelect)
             {
                 HandleCharacterSelectInput(keyboardState, mouseState);
             }
@@ -1007,6 +1030,42 @@ namespace SagesOfOzvaram
                                 _summonPlacementModeActive = false;
                                 _portalPlacementModeActive = false;
                                 _movementModeActive = false;
+                            }
+                            // Normal (Arena) play: the player's own hero controls its own turn as
+                            // always, but a ControllableBySummoner summon of THEIRS (see
+                            // BaseUnit.Behavior/SummonBehavior) also gets handed control for its
+                            // own turn, instead of falling to the placeholder AI (RunSimpleAI),
+                            // which has no concept of teams and would simply attack whoever
+                            // _playerUnit happens to be - exactly the "summons attack their own
+                            // summoner" bug this fixes. Every OTHER unit's turn (an enemy hero, or
+                            // some future non-ControllableBySummoner summon) hands control back to
+                            // the real hero, so isPlayerTurn below is false for it and it falls
+                            // through to RunSimpleAI as it always has.
+                            else if (!_testModeActive)
+                            {
+                                BaseUnit desiredController = IsPlayerControllableSummon(_turnSystem.CurrentUnit)
+                                    ? _turnSystem.CurrentUnit
+                                    : _playerHero;
+
+                                if (desiredController != null && desiredController != _playerUnit)
+                                {
+                                    _playerUnit = desiredController;
+                                    if (desiredController.Class != HeroClass.None)
+                                        EnsurePlayerHandInitialized();
+
+                                    _turnMenuActive = false;
+                                    _cardMenuActive = false;
+                                    _itemsMenuActive = false;
+                                    _itemDetailActive = false;
+                                    _attackMenuActive = false;
+                                    _targetingModeActive = false;
+                                    _coneAimingModeActive = false;
+                                    _teleportModeActive = false;
+                                    _allyTargetModeActive = false;
+                                    _summonPlacementModeActive = false;
+                                    _portalPlacementModeActive = false;
+                                    _movementModeActive = false;
+                                }
                             }
                         }
                     }
@@ -1206,6 +1265,55 @@ namespace SagesOfOzvaram
             }
         }
 
+        /// <summary>Handle input on the boot-time Start Menu (see DrawStartMenu): W/S or mouse-hover to highlight "Arena" or "Debug", click or E to confirm.</summary>
+        private void HandleStartMenuInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
+                _startMenuIndex = (_startMenuIndex + 1) % StartMenuLabels.Length;
+            if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
+                _startMenuIndex = (_startMenuIndex - 1 + StartMenuLabels.Length) % StartMenuLabels.Length;
+
+            Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            Rectangle[] optionRects = GetStartMenuOptionRects(viewportSize);
+
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                if (optionRects[i].Contains(mouseState.X, mouseState.Y))
+                {
+                    _startMenuIndex = i;
+                    if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+                        ConfirmStartMenuSelection();
+                }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+                ConfirmStartMenuSelection();
+        }
+
+        /// <summary>
+        /// "Arena" (index 0) routes to EnterOriginalMode - the full 20x15 procedural map, which
+        /// itself opens character select (GameState.CharacterSelect), so the player ends up
+        /// controlling only whichever single character they then pick, same as the game's
+        /// original pre-Test-Mode flow. "Debug" (index 1) routes straight to EnterTestMode - the
+        /// small 3x3 map with every unit player-controlled on its own turn - mirroring exactly
+        /// what Initialize() used to do unconditionally before this menu existed, including the
+        /// one-time camera/auto-advance setup EnterTestMode's caller is responsible for.
+        /// </summary>
+        private void ConfirmStartMenuSelection()
+        {
+            if (_startMenuIndex == 0) // Arena
+            {
+                EnterOriginalMode();
+            }
+            else // Debug
+            {
+                EnterTestMode();
+                _cameraTarget = _turnSystem.CurrentUnit.Position;
+                _hasAutoAdvancedThisTurn = false;
+                _hasAiActedThisTurn = false;
+            }
+        }
+
         /// <summary>
         /// Handle input on the character-select screen: WASD/mouse-hover to highlight a
         /// portrait, click or E to confirm and start the game with that unit as the player's.
@@ -1243,6 +1351,7 @@ namespace SagesOfOzvaram
         private void ConfirmCharacterSelection()
         {
             _playerUnit = _units[_selectedCharacterIndex];
+            _playerHero = _playerUnit;
             EnsurePlayerHandInitialized();
             _gameState = GameState.Playing;
         }
@@ -1481,6 +1590,22 @@ namespace SagesOfOzvaram
                     (int)(origin.Y + row * (portraitSize + spacing)),
                     portraitSize, portraitSize);
             }
+            return rects;
+        }
+
+        /// <summary>A centered vertical list of StartMenuLabels.Length option boxes - unlike GetMenuOptionRects/GetFixedBottomRightMenuOptionRects, this can't anchor off the player's position (none exists yet at the Start Menu) or a fixed screen corner (this is a full-screen title-style menu, not an in-game submenu).</summary>
+        private Rectangle[] GetStartMenuOptionRects(Vector2 viewportSize)
+        {
+            const int optionWidth = 220;
+            const int optionHeight = 44;
+            const int spacing = 16;
+
+            float totalHeight = StartMenuLabels.Length * optionHeight + (StartMenuLabels.Length - 1) * spacing;
+            Vector2 origin = new Vector2((viewportSize.X - optionWidth) / 2f, (viewportSize.Y - totalHeight) / 2f);
+
+            var rects = new Rectangle[StartMenuLabels.Length];
+            for (int i = 0; i < rects.Length; i++)
+                rects[i] = new Rectangle((int)origin.X, (int)(origin.Y + i * (optionHeight + spacing)), optionWidth, optionHeight);
             return rects;
         }
 
@@ -2322,6 +2447,10 @@ namespace SagesOfOzvaram
         /// <summary>A unit's team identity - itself, or whoever summoned it (see BaseUnit.Owner). Two units are allied iff this is equal for both.</summary>
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
 
+        /// <summary>True if `unit` is a summon the real player hero (_playerHero) should get a normal turn with - owned by the player's hero AND still set to the default SummonBehavior.ControllableBySummoner (see Update's per-turn control handoff). False for the hero itself (Owner is null, not _playerHero), an enemy's own summon, or any summon using one of the other 5 not-yet-implemented behaviors.</summary>
+        private bool IsPlayerControllableSummon(BaseUnit unit) =>
+            unit.Owner != null && unit.Owner == _playerHero && unit.Behavior == SummonBehavior.ControllableBySummoner;
+
         /// <summary>Every living enemy unit (not on the player's own team - see GetTeamRoot) within the move's effective Range (see Move.GetEffectiveRange) of the player's current position.</summary>
         private List<BaseUnit> GetValidAttackTargets(Move move, Weapon sourceWeapon)
         {
@@ -2775,8 +2904,9 @@ namespace SagesOfOzvaram
         /// (see BaseUnit.Owner - keeps it off the caster's own valid-attack-target lists and
         /// counted as the caster's team for the FFA win check), load its sprite (a no-op if it
         /// has none yet), add it to the battlefield, consume the card, and return to the turn
-        /// menu. It joins the turn order starting next Turn (TurnSystem rebuilds from the same
-        /// _units list each new Turn), not mid-cycle.
+        /// menu. It gets a turn THIS SAME Turn - spliced into the already-built turn order via
+        /// TurnSystem.AddUnitMidTurn, landing at the very end (see Summoning Curse below) - not
+        /// held off until the next one.
         /// </summary>
         private void ExecuteSummon((int col, int row) destHex)
         {
@@ -2787,7 +2917,16 @@ namespace SagesOfOzvaram
             var summon = CreateSummonUnit(_pendingSummonCard, position);
             summon.Owner = _playerUnit;
             summon.LoadContent(Content, GraphicsDevice);
+
+            // Summoning Curse: forces it to act after every non-cursed unit THIS Turn regardless
+            // of its own Speed (see TurnSystem.AddUnitMidTurn, called below), speed only
+            // mattering against other units summoned this same Turn - cleared automatically the
+            // moment its own first turn starts (TurnSystem.OnUnitTurnStart), so EffectiveSpeed
+            // applies normally starting next Turn.
+            summon.ApplyStatusEffect(new StatusEffect { Name = "Summoning Curse", Type = StatusEffectType.Affliction });
+
             _units.Add(summon);
+            _turnSystem.AddUnitMidTurn(summon);
 
             ShowCombatMessage($"{_playerUnit.Name} summons a {summon.Name}.");
             RemoveCardFromHand(_pendingSummonCard);
@@ -3275,6 +3414,16 @@ namespace SagesOfOzvaram
 
             Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
 
+            if (_gameState == GameState.StartMenu)
+            {
+                _spriteBatch.Begin();
+                DrawStartMenu(viewportSize);
+                _spriteBatch.End();
+
+                base.Draw(gameTime);
+                return;
+            }
+
             if (_gameState == GameState.CharacterSelect)
             {
                 _spriteBatch.Begin();
@@ -3634,6 +3783,40 @@ namespace SagesOfOzvaram
             _spriteBatch.End();
 
             base.Draw(gameTime);
+        }
+
+        /// <summary>The game's actual boot screen (see Initialize/GameState.StartMenu) - "Arena" (the full map, character select, one controlled unit) or "Debug" (the small map, every unit controlled) - same dark-background/centered-list style DrawCharacterSelect uses.</summary>
+        private void DrawStartMenu(Vector2 viewportSize)
+        {
+            _spriteBatch.Draw(_whitePixel, new Rectangle(0, 0, (int)viewportSize.X, (int)viewportSize.Y), new Color(20, 20, 30));
+
+            if (_font == null)
+                return;
+
+            string title = "Sages of Ozvaram";
+            Vector2 titleSize = _font.MeasureString(title);
+            _spriteBatch.DrawString(_font, title, new Vector2((viewportSize.X - titleSize.X) / 2f, 160), Color.White);
+
+            Rectangle[] optionRects = GetStartMenuOptionRects(viewportSize);
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                bool selected = i == _startMenuIndex;
+                Color bg = selected ? new Color(255, 200, 0, 220) : new Color(60, 60, 70);
+                Color textColor = selected ? Color.Black : Color.White;
+
+                _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
+
+                string label = StartMenuLabels[i];
+                Vector2 labelSize = _font.MeasureString(label);
+                Vector2 labelPos = new Vector2(
+                    optionRects[i].X + (optionRects[i].Width - labelSize.X) / 2f,
+                    optionRects[i].Y + (optionRects[i].Height - labelSize.Y) / 2f);
+                _spriteBatch.DrawString(_font, label, labelPos, textColor);
+            }
+
+            string hint = "WASD or mouse to choose - Click or E to confirm";
+            Vector2 hintSize = _font.MeasureString(hint);
+            _spriteBatch.DrawString(_font, hint, new Vector2((viewportSize.X - hintSize.X) / 2f, viewportSize.Y - 60), Color.Gray);
         }
 
         private void DrawCharacterSelect(Vector2 viewportSize)

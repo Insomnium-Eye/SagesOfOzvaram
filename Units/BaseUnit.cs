@@ -306,6 +306,14 @@ namespace SagesOfOzvaram.Units
         public BaseUnit Owner { get; set; }
 
         /// <summary>
+        /// How this unit acts on its own turn if it's a summon (Owner != null) - see
+        /// SummonBehavior for what each value means and which are actually wired up to anything
+        /// yet (today: only ControllableBySummoner is). Meaningless for a hero (Owner == null);
+        /// defaults to ControllableBySummoner since every summon defined right now uses it.
+        /// </summary>
+        public SummonBehavior Behavior { get; set; } = SummonBehavior.ControllableBySummoner;
+
+        /// <summary>
         /// True for a stationary, non-acting battlefield structure (a Relic - e.g.
         /// Units.Relics.Portal) rather than a normal combatant. Otherwise behaves exactly like
         /// any other BaseUnit - HP/DEF/RES, Owner/team membership, valid as an attack target -
