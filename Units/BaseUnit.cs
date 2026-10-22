@@ -323,6 +323,27 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public virtual bool IsRelic => false;
 
+        private readonly Dictionary<BaseUnit, int> _aggro = new Dictionary<BaseUnit, int>();
+
+        /// <summary>
+        /// How much THIS unit wants to attack `toward` right now (0-20, see Aggro System) - a
+        /// separate value per potential enemy, not one global number. 0 if nothing has ever
+        /// raised it. Changed via AddAggro (attacking, taking damage, healing - see
+        /// Combat.AttackResolver for the actual trigger points) and wiped via ClearAggro (a new
+        /// match starting).
+        /// </summary>
+        public int GetAggro(BaseUnit toward) => _aggro.TryGetValue(toward, out int value) ? value : 0;
+
+        /// <summary>Raise (or lower, with a negative amount, though nothing does yet) this unit's aggro toward `toward` by `amount`, clamped to the Aggro System's 0-20 range.</summary>
+        public void AddAggro(BaseUnit toward, int amount)
+        {
+            int current = GetAggro(toward);
+            _aggro[toward] = Math.Clamp(current + amount, 0, 20);
+        }
+
+        /// <summary>Wipe every aggro value this unit holds - called when a new match starts (EnterOriginalMode/EnterTestMode), matching the GDD's "resets between map sections/chapters" rule (the closest existing equivalent until real sections/chapters exist).</summary>
+        public void ClearAggro() => _aggro.Clear();
+
         /// <summary>
         /// Generic damage-absorption pool, reusable by any "health shield" effect (currently
         /// just Mana Shield) - ApplyRawDamage drains this before HP, so a 20-point shield on a

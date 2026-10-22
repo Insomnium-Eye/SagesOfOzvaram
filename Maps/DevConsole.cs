@@ -64,6 +64,9 @@ namespace SagesOfOzvaram.Maps
             _map = map;
         }
 
+        /// <summary>Append a line to the console's own output log (visible with `~`) from outside a typed command - e.g. Game1's per-turn Aggro System summary. Same output list/history a typed command's own result lands in, just reachable without one.</summary>
+        public void Log(string text) => AddOutput(text);
+
         /// <summary>
         /// Execute a console command.
         /// </summary>

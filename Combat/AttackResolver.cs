@@ -112,9 +112,15 @@ namespace SagesOfOzvaram.Combat
 
             float hitChance = move.GetHitChance(attacker, target, sourceWeapon, distanceTiles);
             if (Rng.NextDouble() > hitChance)
+            {
+                // Aggro System: simply being attacked raises the target's aggro toward the
+                // attacker, hit or miss - a miss still reads as "this one's coming for me."
+                target.AddAggro(attacker, 5);
                 return outcome; // miss - nothing else happens
+            }
 
             outcome.Hit = true;
+            target.AddAggro(attacker, 5); // same base "I was attacked" aggro a miss gets
 
             bool crit = move.IsGuaranteedCrit(isBackstab) || Rng.NextDouble() < move.CritChance;
             outcome.Crit = crit;
@@ -125,6 +131,8 @@ namespace SagesOfOzvaram.Combat
             outcome.Damage = damage;
 
             target.TakeDamage(damage, move.DamageType);
+            if (damage > 0)
+                target.AddAggro(attacker, 2); // Aggro System: ADDITIONAL aggro for actually drawing blood, on top of the +5 above
 
             // A specialist's bonus flat damage (possibly a different DamageType, e.g. the
             // Cleric's +3 Light on Mace Bash) is mitigated separately from the main hit.

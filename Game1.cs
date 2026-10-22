@@ -460,6 +460,8 @@ namespace SagesOfOzvaram
             EnsurePlayerHandInitialized();
 
             _turnSystem = new TurnSystem(_units);
+            _turnSystem.UnitTurnStarted += LogUnitAggro;
+            LogUnitAggro(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
 
             // Reset every input-mode flag - whatever was on screen before "test mode" was typed
@@ -546,6 +548,8 @@ namespace SagesOfOzvaram
             GenerateClassDecks();
 
             _turnSystem = new TurnSystem(_units);
+            _turnSystem.UnitTurnStarted += LogUnitAggro;
+            LogUnitAggro(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
             _cameraZoomTarget = 2.5f;
 
@@ -904,6 +908,15 @@ namespace SagesOfOzvaram
             }
             else
             {
+                // A summoned creature doesn't leave a corpse the way a hero does - the instant
+                // one's HP reaches 0 (a direct hit, a Bleed tick, anything else that can zero out
+                // HP), it's removed from the battlefield outright instead of lingering with the
+                // gray "DEAD" tint/label a hero gets (see Draw's unit-rendering loop). A
+                // per-frame sweep catches every death cause uniformly rather than hunting down
+                // each individual path that can reduce HP to 0. A hero (Owner == null) is
+                // deliberately left alone here - its corpse stays exactly as it already did.
+                _units.RemoveAll(u => u.Owner != null && !u.IsAlive);
+
                 // FFA win check - a unit's team is itself, or whoever summoned it (see
                 // GetTeamRoot/BaseUnit.Owner); the moment at most one team still has a living
                 // member, the match is over. A lone surviving summon still counts as its owner's
@@ -1356,23 +1369,30 @@ namespace SagesOfOzvaram
             _gameState = GameState.Playing;
         }
 
+        /// <summary>Ensure `heroClass` has an initialized hand (drawing a starting 3-card hand from its own deck - see GenerateClassDecks - if it's currently empty). The class-keyed `_classHands`/`_classDecks` dictionaries work identically whether that class happens to be the player's or an AI-controlled hero's (each of the 4 classes belongs to exactly one unit at a time) - this just guarantees one actually exists before anything (the player's own hand UI, or now AI decision-making - see Game1.TryAiSummon) reads it.</summary>
+        private List<object> EnsureHandInitialized(HeroClass heroClass)
+        {
+            if (!_classHands.TryGetValue(heroClass, out var hand) || hand == null)
+            {
+                hand = new List<object>();
+                _classHands[heroClass] = hand;
+            }
+
+            if (hand.Count == 0)
+            {
+                hand.AddRange(DrawCardsFromDeck(heroClass, 3));
+                _classHands[heroClass] = hand;
+            }
+
+            return hand;
+        }
+
         private void EnsurePlayerHandInitialized()
         {
             if (_playerUnit == null)
                 return;
 
-            if (!_classHands.TryGetValue(_playerUnit.Class, out var hand) || hand == null)
-            {
-                hand = new List<object>();
-                _classHands[_playerUnit.Class] = hand;
-            }
-
-            if (hand.Count == 0)
-            {
-                var startingHand = DrawCardsFromDeck(_playerUnit.Class, 3);
-                hand.AddRange(startingHand);
-                _classHands[_playerUnit.Class] = hand;
-            }
+            var hand = EnsureHandInitialized(_playerUnit.Class);
 
             _availableHandCards = new List<object>(hand);
             if (_availableHandCards.Count > 0)
@@ -2097,7 +2117,8 @@ namespace SagesOfOzvaram
             var start = _hexGrid.WorldToHex(_playerUnit.Position);
             float displayApBudget = _playerUnit.CurrentAP + 2f; // show a bit beyond current reach too, in red
 
-            _reachableTiles = Pathfinder.GetReachableTiles(_hexGrid, _map, start, _playerUnit.TilesPerAP, displayApBudget, GetOccupiedTiles(_playerUnit));
+            _reachableTiles = Pathfinder.GetReachableTiles(_hexGrid, _map, start, _playerUnit.TilesPerAP, displayApBudget,
+                GetPassageBlockingTiles(_playerUnit), GetDestinationBlockingTiles(_playerUnit));
             _reachableTiles.Remove(start);
 
             var mouseState = Mouse.GetState();
@@ -2108,10 +2129,36 @@ namespace SagesOfOzvaram
             _movementModeActive = true;
         }
 
-        /// <summary>Every tile currently occupied by a unit other than the given one.</summary>
-        private HashSet<(int col, int row)> GetOccupiedTiles(BaseUnit excluding)
+        /// <summary>
+        /// Tiles `mover` may not ROUTE THROUGH at all - a living unit on a DIFFERENT team from
+        /// `mover` (an enemy or a neutral). Allied units (same team, via GetTeamRoot - this
+        /// includes mover's own summons, and a summon's own summoner) are deliberately NOT
+        /// included: they're always passable for pathfinding purposes, so a path can freely route
+        /// through an ally's tile on the way to somewhere else, even though (see
+        /// GetDestinationBlockingTiles) it still can't actually be where the route ENDS. A dead
+        /// unit (either team) was never included here either way - it stops blocking movement the
+        /// instant it dies (see Pathfinder.FindPath/GetReachableTiles for how the two sets are used).
+        /// </summary>
+        private HashSet<(int col, int row)> GetPassageBlockingTiles(BaseUnit mover)
         {
-            return _units.Where(u => u != excluding)
+            var moverTeam = GetTeamRoot(mover);
+            return _units.Where(u => u != mover && u.IsAlive && GetTeamRoot(u) != moverTeam)
+                          .Select(u => _hexGrid.WorldToHex(u.Position))
+                          .ToHashSet();
+        }
+
+        /// <summary>
+        /// Tiles nothing may actually END its move on (or be placed/teleported onto) - every
+        /// LIVING unit regardless of team, so two units (allied or not) can never occupy the same
+        /// tile even though an ally doesn't block simply passing through (see
+        /// GetPassageBlockingTiles). A dead unit never blocks a destination either - once it dies,
+        /// its tile is free to land on too (a hero's corpse remains on screen, but a summon is
+        /// removed from the battlefield outright - see the death-cleanup sweep in Update - either
+        /// way the tile itself was never a destination blocker here).
+        /// </summary>
+        private HashSet<(int col, int row)> GetDestinationBlockingTiles(BaseUnit mover)
+        {
+            return _units.Where(u => u != mover && u.IsAlive)
                           .Select(u => _hexGrid.WorldToHex(u.Position))
                           .ToHashSet();
         }
@@ -2165,7 +2212,8 @@ namespace SagesOfOzvaram
         private void MoveUnitTowards(BaseUnit unit, (int col, int row) destination)
         {
             var start = _hexGrid.WorldToHex(unit.Position);
-            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, unit.TilesPerAP, GetOccupiedTiles(unit));
+            var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, unit.TilesPerAP,
+                GetPassageBlockingTiles(unit), GetDestinationBlockingTiles(unit));
             if (path == null || path.Count == 0)
                 return;
 
@@ -2196,17 +2244,20 @@ namespace SagesOfOzvaram
             unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
         }
 
+        /// <summary>Minimum aggro (of the Aggro System's 0-20 range) before a unit is forced to target whoever it's held against - see Aggro System.</summary>
+        private const int AggroForcedTargetThreshold = 10;
+
         /// <summary>
         /// Placeholder AI (GDD-pending - no real tactical depth yet): always targets the
-        /// player specifically (matches the FFA's current scope - AI-vs-AI isn't handled).
-        /// If the player is already in range of some affordable move, use the hardest-hitting
-        /// one instead of moving - no point closing distance you don't need to (this is what
-        /// keeps ranged units from walking into melee range for no reason). Otherwise walk
-        /// toward the player as before, then check once more - it may have closed into range
-        /// this turn - and attack if so. Also handles any restricting StatusEffect (Stun, Deep
-        /// Sleep, Meditate, ...: always attempts that effect's own end-it-early action) and
-        /// Knockdown (always stands back up). In Test Mode, this entire method is a no-op for
-        /// every AI unit (no movement, no attacking either) - see _testModeActive.
+        /// enemy hero - now genuinely aggro/multi-target aware, see RunHeroAI. A summon using
+        /// SummonBehavior.NeutralAggressionBased or HostileTowardsEnemies gets its own
+        /// aggro-driven targeting instead (RunAggroDrivenSummonAI) - every other summon behavior
+        /// (including ControllableBySummoner, which never reaches RunSimpleAI at all, see
+        /// Update's per-turn control handoff) falls through to RunHeroAI same as an enemy hero.
+        /// Also handles any restricting StatusEffect (Stun, Deep Sleep, Meditate, ...: always
+        /// attempts that effect's own end-it-early action) and Knockdown (always stands back up).
+        /// In Test Mode, this entire method is a no-op for every AI unit (no movement, no
+        /// attacking either) - see _testModeActive.
         /// </summary>
         private void RunSimpleAI(BaseUnit aiUnit)
         {
@@ -2243,19 +2294,88 @@ namespace SagesOfOzvaram
                 return;
             }
 
-            if (TryAiAttack(aiUnit))
+            if (aiUnit.Owner != null &&
+                (aiUnit.Behavior == SummonBehavior.NeutralAggressionBased || aiUnit.Behavior == SummonBehavior.HostileTowardsEnemies))
+            {
+                RunAggroDrivenSummonAI(aiUnit);
+                return;
+            }
+
+            RunHeroAI(aiUnit);
+        }
+
+        /// <summary>A dedicated RNG for aggro-tie-breaking (PickAggroTarget) - kept separate from _deckRandom so one's call pattern never shifts the other's sequence.</summary>
+        private readonly Random _aiTargetRandom = new Random();
+
+        /// <summary>
+        /// Aggro-driven turn for a summon using SummonBehavior.NeutralAggressionBased or
+        /// HostileTowardsEnemies - called from RunSimpleAI instead of falling through to its own
+        /// player-only logic. Neutral does nothing at all this turn unless Forced Targeting (see
+        /// PickAggroTarget/Aggro System) actually applies (true neutrality - nothing has
+        /// provoked it); Hostile always picks a target via the same selection either way, forced
+        /// or not. Once a target is chosen, this reuses the same attack/approach logic
+        /// (TryAiAttack/MoveAiUnitToward) RunSimpleAI does, just aimed at this target instead of
+        /// a hardcoded _playerUnit. If the chosen target can't actually be reached or attacked
+        /// this turn, the summon just sits tight rather than retrying against a different one -
+        /// the same "boxed in" fallback RunSimpleAI's own player-only logic already accepts.
+        /// </summary>
+        private void RunAggroDrivenSummonAI(BaseUnit summon)
+        {
+            var summonTeam = GetTeamRoot(summon);
+            var potentialEnemies = _units.Where(u => u.IsAlive && GetTeamRoot(u) != summonTeam).ToList();
+            if (potentialEnemies.Count == 0)
                 return;
 
-            var playerHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int maxAggro = potentialEnemies.Max(e => summon.GetAggro(e));
+            if (summon.Behavior == SummonBehavior.NeutralAggressionBased && maxAggro < AggroForcedTargetThreshold)
+                return; // nothing has provoked it yet - stays put, true to "neutral"
+
+            var target = PickAggroTarget(summon, potentialEnemies, maxAggro);
+
+            if (TryAiAttack(summon, target))
+                return;
+
+            MoveAiUnitToward(summon, target);
+            TryAiAttack(summon, target);
+        }
+
+        /// <summary>
+        /// Chooses one unit from `candidates` for `unit` to target: whichever hold(s) `maxAggro`
+        /// (the pre-computed highest aggro `unit` has toward anyone in `candidates`) - a real
+        /// forced target once that's >= AggroForcedTargetThreshold, or just the natural top pick
+        /// otherwise. A tie for the top spot is broken by hex distance (nearest wins); a further
+        /// tie (e.g. at the very start of a match, before any aggro exists at all, when
+        /// everyone's tied at 0 and distances can coincide too) is broken at random.
+        /// </summary>
+        private BaseUnit PickAggroTarget(BaseUnit unit, List<BaseUnit> candidates, int maxAggro)
+        {
+            var topAggro = candidates.Where(c => unit.GetAggro(c) == maxAggro).ToList();
+            if (topAggro.Count == 1)
+                return topAggro[0];
+
+            var unitHex = _hexGrid.WorldToHex(unit.Position);
+            int Distance(BaseUnit c) => _hexGrid.GetDistance(unitHex.col, unitHex.row, _hexGrid.WorldToHex(c.Position).col, _hexGrid.WorldToHex(c.Position).row);
+
+            int minDistance = topAggro.Min(Distance);
+            var nearest = topAggro.Where(c => Distance(c) == minDistance).ToList();
+
+            return nearest.Count == 1 ? nearest[0] : nearest[_aiTargetRandom.Next(nearest.Count)];
+        }
+
+        /// <summary>Walk `aiUnit` to whichever reachable tile adjacent to `target` is cheapest to path to - shared by RunSimpleAI's player-only logic and RunAggroDrivenSummonAI. No-op (sits tight) if nothing adjacent to `target` is reachable at all (e.g. boxed in).</summary>
+        private void MoveAiUnitToward(BaseUnit aiUnit, BaseUnit target)
+        {
+            var targetHex = _hexGrid.WorldToHex(target.Position);
             var start = _hexGrid.WorldToHex(aiUnit.Position);
-            var occupied = GetOccupiedTiles(aiUnit);
+            var passageBlocking = GetPassageBlockingTiles(aiUnit);
+            var destinationBlocking = GetDestinationBlockingTiles(aiUnit);
 
             (int col, int row)? bestTile = null;
             int bestPathLength = int.MaxValue;
 
-            foreach (var tile in _hexGrid.GetNeighbors(playerHex.col, playerHex.row))
+            foreach (var tile in _hexGrid.GetNeighbors(targetHex.col, targetHex.row))
             {
-                var path = Pathfinder.FindPath(_hexGrid, _map, start, tile, aiUnit.TilesPerAP, occupied);
+                var path = Pathfinder.FindPath(_hexGrid, _map, start, tile, aiUnit.TilesPerAP, passageBlocking, destinationBlocking);
                 if (path == null)
                     continue;
 
@@ -2266,27 +2386,45 @@ namespace SagesOfOzvaram
                 }
             }
 
-            // No reachable tile next to the player (e.g. boxed in) - just sit tight this turn.
             if (bestTile.HasValue)
                 MoveUnitTowards(aiUnit, bestTile.Value);
-
-            // May have closed into range this turn - take one swing if so.
-            TryAiAttack(aiUnit);
         }
 
         /// <summary>
         /// Placeholder AI attack decision: among every move `aiUnit` can currently afford
-        /// (AP/MP/ammo) with the player in its effective range, use whichever would deal the
-        /// most raw damage. At most one attack per call (RunSimpleAI calls this up to twice a
+        /// (AP/MP/ammo) with `target` in its effective range, use whichever would deal the
+        /// most raw damage. At most one attack per call (callers call this up to twice a
         /// turn - once before moving, once after). Returns true if an attack was made.
         /// </summary>
-        private bool TryAiAttack(BaseUnit aiUnit)
+        private bool TryAiAttack(BaseUnit aiUnit, BaseUnit target)
+        {
+            var candidates = GetUsableAttacks(aiUnit, target);
+            if (candidates.Count == 0)
+                return false;
+
+            var aiHex = _hexGrid.WorldToHex(aiUnit.Position);
+            var targetHex = _hexGrid.WorldToHex(target.Position);
+            var (move, sourceWeapon) = candidates[0];
+
+            BaseUnit primaryTarget = move.HitsAllAdjacent || move.HitsCone ? null : target;
+            HexDirection? aimDirection = move.HitsCone
+                ? _hexGrid.GetDirectionTo(aiHex.col, aiHex.row, targetHex.col, targetHex.row)
+                : null;
+
+            var outcomes = AttackResolver.Resolve(aiUnit, primaryTarget, move, sourceWeapon, _hexGrid, _map, _units, aimDirection);
+            SpawnAttackAnimations(aiUnit, move, outcomes);
+            ShowCombatMessage(BuildCombatLogMessage(aiUnit, move, outcomes));
+            return true;
+        }
+
+        /// <summary>Every move/weapon pairing `aiUnit` can currently afford (AP/MP/ammo) with `target` already in its effective range, strongest raw damage first. Shared by TryAiAttack (acts on candidates[0]) and GetReachableEnemies (only needs to know whether this is non-empty) so the two never drift apart on what "can hit" means.</summary>
+        private List<(Move Move, Weapon SourceWeapon)> GetUsableAttacks(BaseUnit aiUnit, BaseUnit target)
         {
             var aiHex = _hexGrid.WorldToHex(aiUnit.Position);
-            var playerHex = _hexGrid.WorldToHex(_playerUnit.Position);
-            int distanceTiles = _hexGrid.GetDistance(aiHex.col, aiHex.row, playerHex.col, playerHex.row);
+            var targetHex = _hexGrid.WorldToHex(target.Position);
+            int distanceTiles = _hexGrid.GetDistance(aiHex.col, aiHex.row, targetHex.col, targetHex.row);
 
-            var candidates = aiUnit.AvailableMovesWithSource
+            return aiUnit.AvailableMovesWithSource
                 .Where(entry =>
                 {
                     int apCost = aiUnit.GetEffectiveAPCost(entry.Move, entry.SourceWeapon);
@@ -2296,23 +2434,92 @@ namespace SagesOfOzvaram
                         return false;
                     return distanceTiles <= entry.Move.GetEffectiveRange(aiUnit, entry.SourceWeapon);
                 })
-                .OrderByDescending(entry => entry.Move.GetDamage(aiUnit, _playerUnit, entry.SourceWeapon))
+                .OrderByDescending(entry => entry.Move.GetDamage(aiUnit, target, entry.SourceWeapon))
                 .ToList();
+        }
 
-            if (candidates.Count == 0)
+        /// <summary>Which of `potentialEnemies` `aiUnit` can actually hit right now with some affordable weapon/racial move (see GetUsableAttacks) - the "attack or spell that can hit enemies nearby" check in RunHeroAI's priority cascade. Spell-card attacks aren't considered yet (see RunHeroAI's own doc comment on scope).</summary>
+        private List<BaseUnit> GetReachableEnemies(BaseUnit aiUnit, List<BaseUnit> potentialEnemies)
+        {
+            return potentialEnemies.Where(e => GetUsableAttacks(aiUnit, e).Count > 0).ToList();
+        }
+
+        /// <summary>
+        /// Minimal utility pass for RunHeroAI's third priority tier: if `aiUnit` is below half
+        /// HP and carrying a Consumable that actually heals (HealHP &gt; 0), use the
+        /// strongest-healing one. This is deliberately the ONLY utility behavior implemented -
+        /// traps and the ally-healing SpellCards (Tez's Mercy, Bandage Wound, ...) have no
+        /// execution path anywhere in the game yet, not even for the player (see
+        /// TryCastSelectedCard's final else - casting them just reports "no execution system for
+        /// that effect"), so there's nothing real for the AI to invoke there either. Returns true
+        /// if a potion was used (consuming 1 AP, same cost the player's own Items menu charges).
+        /// </summary>
+        private bool TryAiUtility(BaseUnit aiUnit)
+        {
+            if (aiUnit.HP > aiUnit.MaxHP / 2 || aiUnit.CurrentAP < 1)
                 return false;
 
-            var (move, sourceWeapon) = candidates[0];
+            var potion = aiUnit.Consumables.Where(c => c.HealHP > 0).OrderByDescending(c => c.HealHP).FirstOrDefault();
+            if (potion == null)
+                return false;
 
-            BaseUnit primaryTarget = move.HitsAllAdjacent || move.HitsCone ? null : _playerUnit;
-            HexDirection? aimDirection = move.HitsCone
-                ? _hexGrid.GetDirectionTo(aiHex.col, aiHex.row, playerHex.col, playerHex.row)
-                : null;
-
-            var outcomes = AttackResolver.Resolve(aiUnit, primaryTarget, move, sourceWeapon, _hexGrid, _map, _units, aimDirection);
-            SpawnAttackAnimations(aiUnit, move, outcomes);
-            ShowCombatMessage(BuildCombatLogMessage(aiUnit, move, outcomes));
+            aiUnit.CurrentAP -= 1;
+            string message = potion.Use(aiUnit);
+            aiUnit.RemoveConsumable(potion);
+            ShowCombatMessage(message);
             return true;
+        }
+
+        /// <summary>
+        /// Full AI turn for an enemy hero (or any summon not on NeutralAggressionBased/
+        /// HostileTowardsEnemies, which get RunAggroDrivenSummonAI instead) - a 4-tier priority
+        /// cascade, each tier only reached if every one before it found nothing to do:
+        /// 1. Summon (TryAiSummon) - explicitly the top priority per the design request, since
+        ///    summons matter enough to the game to always take precedence when affordable/placeable.
+        /// 2. Attack whichever reachable enemy (GetReachableEnemies) holds the HIGHEST aggro
+        ///    (PickAggroTarget) - never the easiest kill or the biggest hit, aggro always wins.
+        ///    Only weapon/racial moves are considered - see GetUsableAttacks' doc comment; a
+        ///    damage-dealing SpellCard isn't part of this check yet, since wiring spell-card
+        ///    casting into AI decision-making (mana budgeting, card selection) was judged too
+        ///    large to fold safely into this same pass.
+        /// 3. Utility (TryAiUtility) - currently just a self-heal potion; see its own doc comment
+        ///    for why traps/ally-heal spells aren't included.
+        /// 4. Move toward the single highest-aggro target across EVERY potential enemy (not just
+        ///    reachable ones) and swing once more if that closed into range - same as
+        ///    RunAggroDrivenSummonAI's own move+attack fallback, just logged per the design
+        ///    request ("Moving towards 'X' target").
+        /// No-ops entirely if there's no living enemy at all (GetTeamRoot-based, so a summon's
+        /// team always matches its Owner's).
+        /// </summary>
+        private void RunHeroAI(BaseUnit aiUnit)
+        {
+            if (TryAiSummon(aiUnit))
+                return;
+
+            var aiTeam = GetTeamRoot(aiUnit);
+            var potentialEnemies = _units.Where(u => u.IsAlive && GetTeamRoot(u) != aiTeam).ToList();
+            if (potentialEnemies.Count == 0)
+                return;
+
+            var reachable = GetReachableEnemies(aiUnit, potentialEnemies);
+            if (reachable.Count > 0)
+            {
+                int maxAggroReachable = reachable.Max(e => aiUnit.GetAggro(e));
+                var attackTarget = PickAggroTarget(aiUnit, reachable, maxAggroReachable);
+                if (TryAiAttack(aiUnit, attackTarget))
+                    return;
+            }
+
+            if (TryAiUtility(aiUnit))
+                return;
+
+            int maxAggroOverall = potentialEnemies.Max(e => aiUnit.GetAggro(e));
+            var moveTarget = PickAggroTarget(aiUnit, potentialEnemies, maxAggroOverall);
+            _console.Log($"Moving towards '{moveTarget.Name}' target");
+            MoveAiUnitToward(aiUnit, moveTarget);
+
+            // May have closed into range this turn - take one swing if so.
+            TryAiAttack(aiUnit, moveTarget);
         }
 
         private void CancelMovementMode()
@@ -2447,6 +2654,19 @@ namespace SagesOfOzvaram
         /// <summary>A unit's team identity - itself, or whoever summoned it (see BaseUnit.Owner). Two units are allied iff this is equal for both.</summary>
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
 
+        /// <summary>
+        /// Aggro System console log (see DevConsole, `~`): fires once per unit's turn start
+        /// (TurnSystem.UnitTurnStarted), printing that unit's own aggro value toward every other
+        /// living unit on the field, highest first - exactly the data RunAggroDrivenSummonAI's
+        /// own target selection reads, surfaced for debugging/tuning rather than left invisible.
+        /// </summary>
+        private void LogUnitAggro(BaseUnit unit)
+        {
+            _console.Log($"{unit.Name} Aggression:");
+            foreach (var other in _units.Where(u => u != unit && u.IsAlive).OrderByDescending(u => unit.GetAggro(u)))
+                _console.Log($"{other.Name}: {unit.GetAggro(other)}");
+        }
+
         /// <summary>True if `unit` is a summon the real player hero (_playerHero) should get a normal turn with - owned by the player's hero AND still set to the default SummonBehavior.ControllableBySummoner (see Update's per-turn control handoff). False for the hero itself (Owner is null, not _playerHero), an enemy's own summon, or any summon using one of the other 5 not-yet-implemented behaviors.</summary>
         private bool IsPlayerControllableSummon(BaseUnit unit) =>
             unit.Owner != null && unit.Owner == _playerHero && unit.Behavior == SummonBehavior.ControllableBySummoner;
@@ -2544,7 +2764,7 @@ namespace SagesOfOzvaram
             }
 
             var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
-            var occupied = GetOccupiedTiles(_playerUnit);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
             _teleportValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, move.Range)
                 .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
                 .ToHashSet();
@@ -2778,7 +2998,7 @@ namespace SagesOfOzvaram
             if (needsPortal)
             {
                 var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
-                var occupied = GetOccupiedTiles(_playerUnit);
+                var occupied = GetDestinationBlockingTiles(_playerUnit);
                 _portalPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, GenericPortalPlacementRange)
                     .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
                     .ToHashSet();
@@ -2856,16 +3076,16 @@ namespace SagesOfOzvaram
             var portal = _units.OfType<Portal>().FirstOrDefault(p => p.IsAlive && p.Owner == _playerUnit);
             var anchorHex = portal != null ? _hexGrid.WorldToHex(portal.Position) : _hexGrid.WorldToHex(_playerUnit.Position);
 
-            // GetOccupiedTiles(_playerUnit) deliberately leaves the caster's OWN tile out (it's
-            // meant for pathfinding FROM that unit, where excluding the tile you're leaving is
-            // correct) - every other caller that places something at a specific DESTINATION
-            // (the old single-step summon placement, CastBlinkSpell's teleport targeting) always
-            // paired it with an explicit `hex != casterHex` for exactly this reason. Anchoring on
-            // the portal instead of the caster here dropped that guard, which is what let a
-            // creature be placed directly on top of the summoner whenever they stood within 1
-            // tile of their own portal.
+            // GetDestinationBlockingTiles(_playerUnit) deliberately leaves the caster's OWN tile
+            // out (it's meant for placing something at a specific DESTINATION, where excluding
+            // the mover's own tile is correct) - every other caller that places something at a
+            // specific destination (the old single-step summon placement, CastBlinkSpell's
+            // teleport targeting) always paired it with an explicit `hex != casterHex` for
+            // exactly this reason. Anchoring on the portal instead of the caster here dropped
+            // that guard, which is what let a creature be placed directly on top of the summoner
+            // whenever they stood within 1 tile of their own portal.
             var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
-            var occupied = GetOccupiedTiles(_playerUnit);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
             _summonPlacementValidTiles = _hexGrid.GetHexesInRadius(anchorHex.col, anchorHex.row, SummonPlacementRange)
                 .Where(hex => hex != anchorHex && hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
                 .ToHashSet();
@@ -2951,6 +3171,80 @@ namespace SagesOfOzvaram
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
             }
+        }
+
+        /// <summary>
+        /// AI's own version of the player's two-phase CastSummon/ExecutePortalPlacement/
+        /// ExecuteSummon flow - no UI/targeting-mode state machine involved (there's no player to
+        /// click a tile), so this resolves everything in one synchronous call instead. Tries each
+        /// SummonCard in `aiUnit`'s hand in order until one actually goes through (affordable AND
+        /// a valid tile exists for the portal, if one's needed, and the creature) - not
+        /// necessarily the cheapest or strongest, same "no real tactical depth yet" placeholder
+        /// bar every other AI decision in this game already uses. Portal/creature tiles are
+        /// whichever valid one is found FIRST, not picked for any tactical reason. Returns true
+        /// if a summon actually happened.
+        /// </summary>
+        private bool TryAiSummon(BaseUnit aiUnit)
+        {
+            var hand = EnsureHandInitialized(aiUnit.Class);
+            var summonCards = hand.OfType<SummonCard>().ToList();
+            if (summonCards.Count == 0)
+                return false;
+
+            var casterHex = _hexGrid.WorldToHex(aiUnit.Position);
+            var destinationBlocking = GetDestinationBlockingTiles(aiUnit);
+
+            foreach (var card in summonCards)
+            {
+                var existingPortal = _units.OfType<Portal>().FirstOrDefault(p => p.IsAlive && p.Owner == aiUnit);
+                bool needsPortal = existingPortal == null;
+                int totalManaCost = card.ManaCost + (needsPortal ? GenericPortalSummonManaSurcharge : 0);
+                if (SummonAPCost > aiUnit.CurrentAP || totalManaCost > aiUnit.CurrentMP)
+                    continue;
+
+                var portal = existingPortal;
+                if (needsPortal)
+                {
+                    var portalTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, GenericPortalPlacementRange)
+                        .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, destinationBlocking))
+                        .ToList();
+                    if (portalTiles.Count == 0)
+                        continue; // nowhere to conjure a portal - try the next card instead
+
+                    aiUnit.CurrentMP = Math.Max(0, aiUnit.CurrentMP - GenericPortalSummonManaSurcharge);
+                    var portalPos = _hexGrid.HexToWorld(portalTiles[0].col, portalTiles[0].row);
+                    portal = new Portal("Generic Portal", GenericPortalHP, GenericPortalDefense, GenericPortalResistance, portalPos);
+                    portal.Owner = aiUnit;
+                    portal.LoadContent(Content, GraphicsDevice);
+                    _units.Add(portal);
+                    ShowCombatMessage($"{aiUnit.Name} conjures a Generic Portal.");
+                }
+
+                var anchorHex = _hexGrid.WorldToHex(portal.Position);
+                var creatureTiles = _hexGrid.GetHexesInRadius(anchorHex.col, anchorHex.row, SummonPlacementRange)
+                    .Where(hex => hex != anchorHex && hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, destinationBlocking))
+                    .ToList();
+                if (creatureTiles.Count == 0)
+                    continue; // portal placed (if it needed to be) but nowhere for the creature itself - try another card
+
+                aiUnit.CurrentAP = Math.Max(0, aiUnit.CurrentAP - SummonAPCost);
+                aiUnit.CurrentMP = Math.Max(0, aiUnit.CurrentMP - card.ManaCost);
+
+                var summonPos = _hexGrid.HexToWorld(creatureTiles[0].col, creatureTiles[0].row);
+                var summon = CreateSummonUnit(card, summonPos);
+                summon.Owner = aiUnit;
+                summon.LoadContent(Content, GraphicsDevice);
+                summon.ApplyStatusEffect(new StatusEffect { Name = "Summoning Curse", Type = StatusEffectType.Affliction });
+                _units.Add(summon);
+                _turnSystem.AddUnitMidTurn(summon);
+
+                ShowCombatMessage($"{aiUnit.Name} summons a {summon.Name}.");
+                hand.Remove(card); // NOT RemoveCardFromHand - that's hardcoded to _playerUnit's own hand/UI state, wrong unit here
+
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -4506,9 +4800,10 @@ namespace SagesOfOzvaram
             var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
 
             var start = _hexGrid.WorldToHex(_playerUnit.Position);
-            var occupied = GetOccupiedTiles(_playerUnit);
+            var passageBlocking = GetPassageBlockingTiles(_playerUnit);
+            var destinationBlocking = GetDestinationBlockingTiles(_playerUnit);
 
-            var path = Pathfinder.FindPath(_hexGrid, _map, start, hoveredHex, _playerUnit.TilesPerAP, occupied);
+            var path = Pathfinder.FindPath(_hexGrid, _map, start, hoveredHex, _playerUnit.TilesPerAP, passageBlocking, destinationBlocking);
             Vector2? xMarkerPos = null;
 
             if (path == null)
@@ -4516,7 +4811,7 @@ namespace SagesOfOzvaram
                 List<(int col, int row)> bestPath = null;
                 foreach (var neighbor in _hexGrid.GetNeighbors(hoveredHex.col, hoveredHex.row))
                 {
-                    var candidate = Pathfinder.FindPath(_hexGrid, _map, start, neighbor, _playerUnit.TilesPerAP, occupied);
+                    var candidate = Pathfinder.FindPath(_hexGrid, _map, start, neighbor, _playerUnit.TilesPerAP, passageBlocking, destinationBlocking);
                     if (candidate != null && (bestPath == null || candidate.Count < bestPath.Count))
                         bestPath = candidate;
                 }

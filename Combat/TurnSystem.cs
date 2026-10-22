@@ -25,6 +25,9 @@ namespace SagesOfOzvaram.Combat
         public int CurrentTurn => _currentTurn;
         public BaseUnit CurrentUnit => _turnOrder[_currentIndex];
 
+        /// <summary>Fires once a unit's turn has actually started (AP/MP reset and ready to act) - NOT fired for a Fainted unit's forced skip, which never really gets a turn. Game1 subscribes to this for turn-start logging (the Aggro System's per-turn console summary) without TurnSystem itself needing any UI/console dependency - this class stays pure game logic.</summary>
+        public event Action<BaseUnit> UnitTurnStarted;
+
         /// <summary>Total individual unit actions taken across the whole match so far.</summary>
         public int TotalTurnsTaken { get; private set; }
 
@@ -111,6 +114,8 @@ namespace SagesOfOzvaram.Combat
                 NextUnit();
                 return;
             }
+
+            UnitTurnStarted?.Invoke(CurrentUnit);
 
             CurrentUnit.ResetAP();
             CurrentUnit.RegenMana();

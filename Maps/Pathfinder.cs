@@ -58,10 +58,18 @@ namespace SagesOfOzvaram.Maps
         /// Every tile reachable from start within apBudget AP (Dijkstra, weighted by
         /// GetStepCost), each mapped to (tiles, waterTiles) needed to reach it - use these with
         /// the same ceil(tiles/tilesPerAP) + waterTiles formula ExecuteMove uses, to show the
-        /// exact AP cost per tile for movement-range highlighting.
+        /// exact AP cost per tile for movement-range highlighting. `passageBlockingTiles` governs
+        /// what the search may ROUTE THROUGH at all (e.g. a living enemy - never an ally, which is
+        /// always passable - see Game1.GetPassageBlockingTiles); `destinationBlockingTiles` is the
+        /// separate, usually larger set (every living unit, ally included) of tiles that may be
+        /// routed through anyway but can't actually be the final result - a tile this search could
+        /// only reach by routing through a blocked tile never reaches `bestSteps` in the first
+        /// place, so filtering the destination set from the final result is enough; no separate
+        /// pass is needed to also keep it out of further expansion.
         /// </summary>
         public static Dictionary<(int col, int row), (int tiles, int waterTiles)> GetReachableTiles(
-            HexGrid grid, Map map, (int col, int row) start, int tilesPerAP, float apBudget, HashSet<(int col, int row)> occupiedTiles)
+            HexGrid grid, Map map, (int col, int row) start, int tilesPerAP, float apBudget,
+            HashSet<(int col, int row)> passageBlockingTiles, HashSet<(int col, int row)> destinationBlockingTiles)
         {
             var bestCost = new Dictionary<(int, int), float> { [start] = 0f };
             var bestSteps = new Dictionary<(int, int), (int tiles, int waterTiles)> { [start] = (0, 0) };
@@ -76,7 +84,7 @@ namespace SagesOfOzvaram.Maps
 
                 foreach (var neighbor in grid.GetNeighbors(current.Item1, current.Item2))
                 {
-                    if (!IsPassable(grid, map, neighbor.Item1, neighbor.Item2, occupiedTiles))
+                    if (!IsPassable(grid, map, neighbor.Item1, neighbor.Item2, passageBlockingTiles))
                         continue;
 
                     bool isWater = map.GetTile(neighbor.Item1, neighbor.Item2)?.Type == "water";
@@ -95,20 +103,30 @@ namespace SagesOfOzvaram.Maps
             }
 
             bestSteps.Remove(start);
+            foreach (var tile in destinationBlockingTiles)
+                bestSteps.Remove(tile);
             return bestSteps;
         }
 
         /// <summary>
         /// Cheapest path (by AP cost, via Dijkstra) from start to target (start excluded,
-        /// target last), or null if the target is unreachable/impassable/occupied.
+        /// target last), or null if the target is unreachable/impassable, or occupied in a way
+        /// that blocks it as a final stop. `passageBlockingTiles` governs what the route may pass
+        /// THROUGH at all (e.g. a living enemy - never an ally, which is always passable for
+        /// routing purposes - see Game1.GetPassageBlockingTiles); `destinationBlockingTiles` is
+        /// the separate, usually larger set (every living unit, ally included - see
+        /// Game1.GetDestinationBlockingTiles) that additionally rules out `target` itself as a
+        /// place to actually end up, even if the route could otherwise pass through or near it -
+        /// this only needs checking against `target`, since passing through en route is fine.
         /// </summary>
         public static List<(int col, int row)> FindPath(
-            HexGrid grid, Map map, (int col, int row) start, (int col, int row) target, int tilesPerAP, HashSet<(int col, int row)> occupiedTiles)
+            HexGrid grid, Map map, (int col, int row) start, (int col, int row) target, int tilesPerAP,
+            HashSet<(int col, int row)> passageBlockingTiles, HashSet<(int col, int row)> destinationBlockingTiles)
         {
             if (start == target)
                 return new List<(int, int)>();
 
-            if (!IsPassable(grid, map, target.col, target.row, occupiedTiles))
+            if (!IsPassable(grid, map, target.col, target.row, passageBlockingTiles) || destinationBlockingTiles.Contains(target))
                 return null;
 
             var bestCost = new Dictionary<(int, int), float> { [start] = 0f };
@@ -137,7 +155,7 @@ namespace SagesOfOzvaram.Maps
 
                 foreach (var neighbor in grid.GetNeighbors(current.Item1, current.Item2))
                 {
-                    if (!IsPassable(grid, map, neighbor.Item1, neighbor.Item2, occupiedTiles))
+                    if (!IsPassable(grid, map, neighbor.Item1, neighbor.Item2, passageBlockingTiles))
                         continue;
 
                     float newCost = currentCost + GetStepCost(map, neighbor.Item1, neighbor.Item2, tilesPerAP);
