@@ -51,6 +51,15 @@ namespace SagesOfOzvaram.Maps
         /// <summary>Set by Game1 after construction - "original mode" switches back to the normal 20x15 procedural map, character select, and standard decks/AP/MP, undoing "test mode" entirely. See Game1.EnterOriginalMode.</summary>
         public Func<string> OriginalModeCallback { get; set; }
 
+        /// <summary>
+        /// Set by Game1 after construction - "summon &lt;UnitID&gt; &lt;Team&gt;" hands the raw
+        /// (unitId, team) pair off to Game1, which opens tile-click placement for that summon
+        /// (bypassing AP/MP/hand entirely - dev tooling, not the normal card-cast path) and
+        /// prints back whatever status/prompt line it returns. UnitID is a SummonCard.Id (1001+ -
+        /// see "list cards"); Team is either "Neutral" or an exact on-field unit's Name to own it.
+        /// </summary>
+        public Func<int, string, string> SummonCallback { get; set; }
+
         public DevConsole(Map map, AssetRegistry assetRegistry)
         {
             _map = map;
@@ -112,6 +121,9 @@ namespace SagesOfOzvaram.Maps
                         break;
                     case "original":
                         HandleOriginalCommand(parts);
+                        break;
+                    case "summon":
+                        HandleSummonCommand(parts);
                         break;
                     default:
                         AddOutput($"Unknown command: {command}. Type 'help' for available commands.");
@@ -585,6 +597,34 @@ namespace SagesOfOzvaram.Maps
             }
         }
 
+        private void HandleSummonCommand(string[] parts)
+        {
+            // summon <UnitID> <Team> - UnitID is a SummonCard.Id (see "list cards"), Team is
+            // "Neutral" or an exact on-field unit's Name. Team can itself contain spaces (a unit
+            // Name like "Apprentice Hunter"), so everything after the ID is rejoined into one
+            // argument rather than just taking parts[2].
+            if (parts.Length < 3)
+            {
+                AddOutput("Usage: summon <UnitID> <Team> (Team = 'Neutral' or an exact unit Name)");
+                return;
+            }
+
+            if (!int.TryParse(parts[1], out int unitId))
+            {
+                AddOutput($"Error: UnitID must be an integer, got '{parts[1]}'. Try 'list cards' to find one.");
+                return;
+            }
+
+            if (SummonCallback == null)
+            {
+                AddOutput("Error: summon system not connected to the console.");
+                return;
+            }
+
+            string team = string.Join(' ', parts.Skip(2));
+            AddOutput(SummonCallback(unitId, team));
+        }
+
         private void HandleMapCommand(string[] parts)
         {
             if (parts.Length < 2)
@@ -627,6 +667,7 @@ namespace SagesOfOzvaram.Maps
             AddOutput("list cards all - list every spell/summon card's integer ID and name");
             AddOutput("list cards <ClassID> - list only that class's own cards, Generic excluded (0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter)");
             AddOutput("add card <CardID> - add a spell/summon card (by integer ID) to the player's hand for testing");
+            AddOutput("summon <UnitID> <Team> - spawn a summon creature directly onto a clicked tile, bypassing AP/MP/hand entirely. Team = 'Neutral' or an exact on-field unit's Name to own it");
             AddOutput("test mode - enter Test Mode: 3x3 grass map, all 4 classes spawned, unlimited AP/MP, deck has every card (Untested first) - pre-release dev tooling, currently the default on launch");
             AddOutput("original mode - switch back to the normal 20x15 procedural map, character select, and standard decks/AP/MP");
             AddOutput("clear - Clear console output");

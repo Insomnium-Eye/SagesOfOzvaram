@@ -84,6 +84,8 @@ namespace SagesOfOzvaram.Combat
         public bool IsSleepSpell { get; }           // true = puts the caster into Deep Sleep (e.g. Forced Sleep) via BaseUnit.ApplySleep(HealPercentMaxHP) - no targeting needed (always self), handled by Game1's CastSleepSpell, not AttackResolver
         public bool IsMeditateSpell { get; }        // true = starts (or, if already meditating, ends and locks in) Meditate's growing stack buff - see BaseUnit.StartMeditating/EndMeditationAndLockIn, handled by Game1's CastMeditateSpell, not AttackResolver
         public bool IsConjurePotions { get; }       // true = grants the caster one each of a Minor HP/MP/AP Potion (Combat.ConsumableCatalog) via BaseUnit.AddConsumable, no targeting needed (always self) - handled by Combat.SpellCaster.CastConjurePotions, not AttackResolver
+        public bool CuresBleed { get; }              // true = clears the target's BleedPercentPerTurn to 0 on cast (e.g. Bandage Wound) - handled alongside HealFlat/HealPercentMaxHP in SpellCaster.CastSelfUtility, not AttackResolver
+        public bool IsTameBeast { get; }             // true = attempts to tame a nearby Wild/Neutral/unowned beast at or below the caster's Level within Range (BaseAccuracy = success chance) - handled by Game1's tame-beast targeting mode, not AttackResolver or SpellCaster
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -115,7 +117,7 @@ namespace SagesOfOzvaram.Combat
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
-                    bool isConjurePotions = false,
+                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -161,6 +163,8 @@ namespace SagesOfOzvaram.Combat
             IsSleepSpell = isSleepSpell;
             IsMeditateSpell = isMeditateSpell;
             IsConjurePotions = isConjurePotions;
+            CuresBleed = curesBleed;
+            IsTameBeast = isTameBeast;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;

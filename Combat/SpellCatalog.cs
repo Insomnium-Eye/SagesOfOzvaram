@@ -64,7 +64,7 @@ namespace SagesOfOzvaram.Combat
             requiredClass: null,
             new Move("Bandage Wound", "Wrap a wound tight to stop the bleeding.",
                 apCost: 2, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                healFlat: 8),
+                healFlat: 8, curesBleed: true),
             "imgs/Cards/Spells/BandageWound_CardArt");
 
         public static readonly SpellCard SecondWind = new SpellCard(
@@ -554,7 +554,7 @@ namespace SagesOfOzvaram.Combat
             "Attempts to tame a neutral beast of the hunter's level or lower, placing it under the hunter's control.",
             HeroClass.Hunter,
             new Move("Tame Beast", "Not every bond needs words.",
-                apCost: 3, mpCost: 5, range: 3, baseAccuracy: 0.70f, baseDamage: 0),
+                apCost: 3, mpCost: 5, range: 3, baseAccuracy: 0.70f, baseDamage: 0, isTameBeast: true),
             "imgs/Cards/Spells/TameBeast_CardArt");
 
         public static readonly SpellCard EagleEye = new SpellCard(

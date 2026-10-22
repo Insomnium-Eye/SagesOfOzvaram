@@ -1,2 +1,4 @@
-﻿using var game = new SagesOfOzvaram.Game1();
+﻿SagesOfOzvaram.GameLogger.Initialize();
+
+using var game = new SagesOfOzvaram.Game1();
 game.Run();

@@ -314,6 +314,46 @@ namespace SagesOfOzvaram.Units
         public SummonBehavior Behavior { get; set; } = SummonBehavior.ControllableBySummoner;
 
         /// <summary>
+        /// Every Faction this unit belongs to (see Faction - the GDD's 3 canon lore factions,
+        /// plus Wild for non-faction creatures). Empty by default - no hero has a faction
+        /// assignment mechanic yet; every Units.Summons.* class adds Wild in its own constructor.
+        /// A plain list rather than a single value since nothing rules out a unit belonging to
+        /// more than one allegiance down the line.
+        /// </summary>
+        public List<Faction> Factions { get; } = new List<Faction>();
+
+        /// <summary>
+        /// This unit's current stance toward everyone else - see Disposition. Only meaningful for
+        /// a Wild-faction unit with no Owner yet (a real Faction doesn't need per-unit variance,
+        /// and once something has an Owner, Behavior/the FFA team system already decide how it
+        /// acts). Defaults to Neutral - the only disposition Tame Beast can ever succeed against,
+        /// and the sensible default for a freshly-placed Wild creature (e.g. Game1's "summon" dev
+        /// command) until something sets it otherwise.
+        /// </summary>
+        public Disposition Disposition { get; set; } = Disposition.Neutral;
+
+        /// <summary>
+        /// True while this unit is a free-standing, untamed Wild creature - Faction.Wild, no
+        /// Owner yet, and still Neutral (Friendly/Hostile Wild creatures are deliberately never
+        /// tameable - see Disposition's own doc comments). Doesn't check level against a caster;
+        /// that comparison needs the caster's own Level, so it stays in Game1's CastTameBeast
+        /// candidate filter instead.
+        /// </summary>
+        public bool IsTameable => Owner == null && Disposition == Disposition.Neutral && Factions.Contains(Faction.Wild);
+
+        /// <summary>What this unit eats - only meaningful for a Wild creature (see Diet); defaults to Herbivore (the "just wanders" baseline) for anything that never sets it otherwise.</summary>
+        public Diet Diet { get; set; } = Diet.Herbivore;
+
+        /// <summary>
+        /// How close (in tiles) another unit has to get before this one notices and turns
+        /// Hostile on its own, generating aggro toward whoever triggered it - only meaningful for
+        /// an ownerless Wild Carnivore (see Game1.RunAggroDrivenSummonAI); 0 means "never - stays
+        /// Neutral/wandering until provoked some other way" and is the default for everything
+        /// that isn't an actively territorial predator.
+        /// </summary>
+        public int AngerRange { get; set; } = 0;
+
+        /// <summary>
         /// True for a stationary, non-acting battlefield structure (a Relic - e.g.
         /// Units.Relics.Portal) rather than a normal combatant. Otherwise behaves exactly like
         /// any other BaseUnit - HP/DEF/RES, Owner/team membership, valid as an attack target -

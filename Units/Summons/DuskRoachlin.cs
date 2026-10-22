@@ -10,6 +10,7 @@ namespace SagesOfOzvaram.Units.Summons
         public DuskRoachlin(Vector2 position = default)
             : base("Dusk Roachlin", maxHP: 12, speed: 9, race: Race.Roachlin, heroClass: HeroClass.None, position)
         {
+            Factions.Add(Faction.Wild);
             SpriteAssetPath = "imgs/sprites/units/Roachlin_Sprite_1";
 
             // The source image (662x657) is actually close to the Warrior's (736x769) but with

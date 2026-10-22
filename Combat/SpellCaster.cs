@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using SagesOfOzvaram.Units;
@@ -7,9 +8,10 @@ namespace SagesOfOzvaram.Combat
     /// <summary>
     /// Resolves every SpellCard whose entire effect is "pay AP/MP, then apply something to the
     /// caster (and/or its adjacent allies) with no further targeting step" - Mana Shield, Deep
-    /// Sleep, Meditate, and the generic self/ally stat-buff or AP-grant utility spells (Brace,
-    /// Rally Cry, Steady Hands, Second Wind) - entirely off Move's own data
-    /// (IsManaShield/IsSleepSpell/IsMeditateSpell/the *Buff fields/GrantedAP). This has no
+    /// Sleep, Meditate, and the generic self/ally stat-buff, heal, bleed-cure, or AP-grant
+    /// utility spells (Brace, Rally Cry, Steady Hands, Second Wind, Bandage Wound) - entirely
+    /// off Move's own data (IsManaShield/IsSleepSpell/IsMeditateSpell/the *Buff fields/
+    /// GrantedAP/HealFlat/HealPercentMaxHP/CuresBleed). This has no
     /// MonoGame/UI dependency at all, so it's fully unit-testable and none of it has to live in
     /// Game1. Spells that need an extra targeting STEP first (Blink's destination tile, Arcane
     /// Shield's ally pick, a damage spell's target, a Summon's placement tile) still go through
@@ -37,11 +39,12 @@ namespace SagesOfOzvaram.Combat
             public static CastResult Ok(string message, bool consumesCard = true) => new CastResult(true, message, consumesCard);
         }
 
-        /// <summary>Whether `move` is a self/ally utility effect (a stat buff and/or a next-turn AP grant) that CastSelfUtility can resolve - aimed either at the caster alone (Range 0, not HitsAllAdjacent) or every adjacent ally (HitsAllAdjacent + TargetsAllies). A card with InflictsStatusEffect set but none of the stat-buff fields (e.g. Meditate before it gets its own IsMeditateSpell handling) describes a mechanic this can't fully resolve and is deliberately excluded - applying only part of a card's effect would misrepresent what it does.</summary>
+        /// <summary>Whether `move` is a self/ally utility effect (a stat buff, an instant heal, a Bleed cure, and/or a next-turn AP grant) that CastSelfUtility can resolve - aimed either at the caster alone (Range 0, not HitsAllAdjacent) or every adjacent ally (HitsAllAdjacent + TargetsAllies). A card with InflictsStatusEffect set but none of these fields (e.g. Meditate before it gets its own IsMeditateSpell handling) describes a mechanic this can't fully resolve and is deliberately excluded - applying only part of a card's effect would misrepresent what it does.</summary>
         public static bool IsSelfUtility(Move move)
         {
             bool hasEffect = move.StrengthBuff > 0 || move.AccuracyBuff > 0 || move.DefenseBuff > 0
-                || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0 || move.GrantedAP > 0;
+                || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0 || move.GrantedAP > 0
+                || move.HealFlat > 0 || move.HealPercentMaxHP > 0f || move.CuresBleed;
             if (!hasEffect || move.BaseDamage > 0 || move.IsBlink || move.IsManaShield || move.IsAllyShield || move.IsSleepSpell || move.IsMeditateSpell)
                 return false;
             return (move.Range == 0 && !move.HitsAllAdjacent) || (move.HitsAllAdjacent && move.TargetsAllies);
@@ -186,7 +189,7 @@ namespace SagesOfOzvaram.Combat
             return CastResult.Ok($"{caster.Name} begins meditating.", consumesCard: false);
         }
 
-        /// <summary>Brace/Rally Cry/Steady Hands/Second Wind: pays AP/MP, then immediately applies a Strength/Accuracy/Defense/Resistance/Intelligence buff (BaseUnit.ApplyStatusEffect) and/or a next-turn AP grant (BaseUnit.BonusAPNextTurn) to the caster alone, or to every adjacent ally for a HitsAllAdjacent one.</summary>
+        /// <summary>Brace/Rally Cry/Steady Hands/Second Wind/Bandage Wound: pays AP/MP, then immediately applies a Strength/Accuracy/Defense/Resistance/Intelligence buff (BaseUnit.ApplyStatusEffect), an instant heal (BaseUnit.Heal), a Bleed cure (BaseUnit.BleedPercentPerTurn), and/or a next-turn AP grant (BaseUnit.BonusAPNextTurn) to the caster alone, or to every adjacent ally for a HitsAllAdjacent one.</summary>
         private static CastResult CastSelfUtility(SpellCard card, BaseUnit caster, List<BaseUnit> adjacentAllies)
         {
             var move = card.Effect;
@@ -228,6 +231,12 @@ namespace SagesOfOzvaram.Combat
                 }
                 if (move.GrantedAP > 0)
                     target.BonusAPNextTurn += move.GrantedAP;
+                if (move.HealFlat > 0)
+                    target.Heal(move.HealFlat);
+                if (move.HealPercentMaxHP > 0f)
+                    target.Heal((int)Math.Round(target.MaxHP * move.HealPercentMaxHP));
+                if (move.CuresBleed)
+                    target.BleedPercentPerTurn = 0f;
             }
 
             string message = move.HitsAllAdjacent

@@ -310,19 +310,19 @@
     ]
   },
   "packageFolders": {
-    "/home/zog/.nuget/packages/": {}
+    "C:\\Users\\ebm22\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/SagesOfOzvaram.csproj",
+      "projectUniqueName": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\SagesOfOzvaram.csproj",
       "projectName": "SagesOfOzvaram",
-      "projectPath": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/SagesOfOzvaram.csproj",
-      "packagesPath": "/home/zog/.nuget/packages/",
-      "outputPath": "/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/obj/",
+      "projectPath": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\SagesOfOzvaram.csproj",
+      "packagesPath": "C:\\Users\\ebm22\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\ebm22\\Desktop\\SagesOfOzvaram\\SagesOfOzvaram\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/home/zog/.nuget/NuGet/NuGet.Config"
+        "C:\\Users\\ebm22\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -376,7 +376,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/home/zog/.dotnet/sdk/8.0.424/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.425/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

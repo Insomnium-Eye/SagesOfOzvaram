@@ -42,6 +42,12 @@ namespace SagesOfOzvaram
         private bool _hasAutoAdvancedThisTurn = false;
         private bool _hasAiActedThisTurn = false;
 
+        /// <summary>True once LogUnitTurnDivider has printed at least one unit's turn divider - false right after a fresh match starts (EnterTestMode/EnterOriginalMode) so the very first unit's turn doesn't print a leading separator with nothing above it to separate from.</summary>
+        private bool _hasLoggedAnyUnitTurn = false;
+
+        /// <summary>Last TurnSystem.CurrentTurn CheckWildAnimalSpawn already rolled against - 0 on a fresh EnterOriginalMode (not subscribed at all in Test Mode) so the spawn roll only happens once per Turn (full round), not once per individual unit's turn.</summary>
+        private int _lastWildSpawnCheckTurn = 0;
+
         // UI
         private SpriteFont _font;
         private Texture2D _whitePixel;
@@ -183,6 +189,13 @@ namespace SagesOfOzvaram
         private bool _allyTargetModeActive = false;
         private List<BaseUnit> _allyTargetCandidates = new List<BaseUnit>();
 
+        // Tame Beast targeting (opened for Move.IsTameBeast) - candidates are pre-filtered to
+        // only genuinely tameable units (BaseUnit.IsTameable - Wild, unowned, Neutral) at or
+        // below the caster's own Level, so anything actually clickable here is guaranteed to be
+        // a legal target; the only thing left to chance on confirm is the accuracy roll itself.
+        private bool _tameBeastModeActive = false;
+        private List<BaseUnit> _tameBeastCandidates = new List<BaseUnit>();
+
         // Summon placement (opened for a SummonCard) - click any highlighted tile to spawn the
         // summoned creature there (within SummonPlacementRange of its owner's Generic Portal,
         // or of the caster directly if it somehow has none - see OpenSummonCreaturePlacement);
@@ -198,6 +211,15 @@ namespace SagesOfOzvaram
         // creature - see ExecutePortalPlacement/OpenSummonCreaturePlacement.
         private bool _portalPlacementModeActive = false;
         private HashSet<(int col, int row)> _portalPlacementValidTiles = new HashSet<(int col, int row)>();
+
+        // Dev-console "summon <UnitID> <Team>" placement (see DevSummonCommand/
+        // HandleDevSummonPlacementInput) - click any passable, unoccupied tile anywhere on the
+        // map to spawn the creature there, bypassing AP/MP/hand entirely. Suppresses the entire
+        // normal turn-system update (same treatment _consoleOpen already gets) while active, so
+        // nothing else can act mid-placement.
+        private bool _devSummonModeActive = false;
+        private SummonCard _pendingDevSummonCard;
+        private BaseUnit _pendingDevSummonOwner;
 
         /// <summary>Recomputed every Draw frame while _targetingModeActive - whichever _targetCandidates entry the mouse is currently over, or null. Drives the damage/hit%/crit/affliction preview panel.</summary>
         private BaseUnit _hoveredAttackTarget;
@@ -303,6 +325,7 @@ namespace SagesOfOzvaram
             _console.ListCardsCallback = ListCardsCommand;
             _console.TestModeCallback = EnterTestMode;
             _console.OriginalModeCallback = EnterOriginalMode;
+            _console.SummonCallback = DevSummonCommand;
 
             // Actual typed characters for the console - KeyboardState (polled in
             // HandleConsoleInput) only reports WHICH keys are held, not what character a key
@@ -421,6 +444,9 @@ namespace SagesOfOzvaram
         /// </summary>
         private string EnterTestMode()
         {
+            GameLogger.ResetForNewMatch();
+            _hasLoggedAnyUnitTurn = false;
+
             _hexGrid = new HexGrid(3, 3, tileSize: 32f);
             _map = new Map(3, 3);
             _console.SetMap(_map);
@@ -460,8 +486,10 @@ namespace SagesOfOzvaram
             EnsurePlayerHandInitialized();
 
             _turnSystem = new TurnSystem(_units);
+            _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
             _turnSystem.UnitTurnStarted += LogUnitAggro;
-            LogUnitAggro(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
+            LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
+            LogUnitAggro(_turnSystem.CurrentUnit);
             _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
 
             // Reset every input-mode flag - whatever was on screen before "test mode" was typed
@@ -476,6 +504,7 @@ namespace SagesOfOzvaram
             _coneAimingModeActive = false;
             _teleportModeActive = false;
             _allyTargetModeActive = false;
+            _tameBeastModeActive = false;
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -533,6 +562,9 @@ namespace SagesOfOzvaram
         /// </summary>
         private string EnterOriginalMode()
         {
+            GameLogger.ResetForNewMatch();
+            _hasLoggedAnyUnitTurn = false;
+
             _hexGrid = new HexGrid(20, 15, tileSize: 32f);
             _map = BuildOriginalMap();
             _console.SetMap(_map);
@@ -542,14 +574,20 @@ namespace SagesOfOzvaram
             foreach (var unit in _units)
                 unit.LoadContent(Content, GraphicsDevice);
 
+            SpawnInitialWildAnimals();
+
             _testModeActive = false;
             _playerUnit = null; // back through character select
             _playerHero = null;
             GenerateClassDecks();
 
             _turnSystem = new TurnSystem(_units);
+            _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
             _turnSystem.UnitTurnStarted += LogUnitAggro;
-            LogUnitAggro(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
+            _turnSystem.UnitTurnStarted += CheckWildAnimalSpawn;
+            LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
+            LogUnitAggro(_turnSystem.CurrentUnit);
+            _lastWildSpawnCheckTurn = 0;
             _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
             _cameraZoomTarget = 2.5f;
 
@@ -566,6 +604,7 @@ namespace SagesOfOzvaram
             _coneAimingModeActive = false;
             _teleportModeActive = false;
             _allyTargetModeActive = false;
+            _tameBeastModeActive = false;
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -946,6 +985,12 @@ namespace SagesOfOzvaram
                     // Console input handling
                     HandleConsoleInput(keyboardState, mouseState);
                 }
+                else if (_devSummonModeActive)
+                {
+                    // Dev-console "summon" placement - same full freeze of the normal turn
+                    // system _consoleOpen gets above, so nothing else can act mid-placement.
+                    HandleDevSummonPlacementInput(keyboardState, mouseState);
+                }
                 else
                 {
                     // Update turn system
@@ -1040,6 +1085,7 @@ namespace SagesOfOzvaram
                                 _coneAimingModeActive = false;
                                 _teleportModeActive = false;
                                 _allyTargetModeActive = false;
+                                _tameBeastModeActive = false;
                                 _summonPlacementModeActive = false;
                                 _portalPlacementModeActive = false;
                                 _movementModeActive = false;
@@ -1075,6 +1121,7 @@ namespace SagesOfOzvaram
                                     _coneAimingModeActive = false;
                                     _teleportModeActive = false;
                                     _allyTargetModeActive = false;
+                                    _tameBeastModeActive = false;
                                     _summonPlacementModeActive = false;
                                     _portalPlacementModeActive = false;
                                     _movementModeActive = false;
@@ -1135,6 +1182,10 @@ namespace SagesOfOzvaram
                         {
                             HandleAllyTargetInput(keyboardState, mouseState);
                         }
+                        else if (_tameBeastModeActive)
+                        {
+                            HandleTameBeastInput(keyboardState, mouseState);
+                        }
                         else if (_summonPlacementModeActive)
                         {
                             HandleSummonPlacementInput(keyboardState, mouseState);
@@ -1179,6 +1230,7 @@ namespace SagesOfOzvaram
                         _coneAimingModeActive = false;
                         _teleportModeActive = false;
                         _allyTargetModeActive = false;
+                        _tameBeastModeActive = false;
                         _summonPlacementModeActive = false;
                         _portalPlacementModeActive = false;
                         _movementModeActive = false;
@@ -1239,6 +1291,19 @@ namespace SagesOfOzvaram
             if (keyboardState.IsKeyDown(Keys.Back) && !_previousKeyboardState.IsKeyDown(Keys.Back) && _consoleInput.Length > 0)
             {
                 _consoleInput = _consoleInput.Substring(0, _consoleInput.Length - 1);
+            }
+
+            // Paste (Ctrl+V) - Window.TextInput (see OnConsoleTextInput) only ever fires for an
+            // actual keystroke, never for a clipboard paste, so without this there was no way to
+            // paste a command at all; every character had to be typed by hand, typos included.
+            // Collapses a multi-line clipboard payload to a single line (a console command is
+            // always one line) rather than embedding literal newlines into _consoleInput.
+            bool ctrlHeld = keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl);
+            if (ctrlHeld && keyboardState.IsKeyDown(Keys.V) && !_previousKeyboardState.IsKeyDown(Keys.V))
+            {
+                string clipboardText = WindowsClipboard.GetText();
+                if (!string.IsNullOrEmpty(clipboardText))
+                    _consoleInput += clipboardText.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ');
             }
 
             // Submit command - also snaps the scrollback back to the live/bottom view, same as
@@ -2239,13 +2304,49 @@ namespace SagesOfOzvaram
 
             int apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
 
-            var affordablePath = path.Take(lastAffordableIndex + 1);
+            var affordablePath = path.Take(lastAffordableIndex + 1).ToList();
             unit.SetMovementPath(affordablePath.Select(hex => _hexGrid.HexToWorld(hex.col, hex.row)));
             unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
+
+            var finalTile = affordablePath[affordablePath.Count - 1];
+            string moveMessage = $"{unit.Name} moved from ({start.col}, {start.row}) to ({finalTile.col}, {finalTile.row})";
+            GameLogger.Log(moveMessage);
+            _console.Log(moveMessage);
         }
 
         /// <summary>Minimum aggro (of the Aggro System's 0-20 range) before a unit is forced to target whoever it's held against - see Aggro System.</summary>
         private const int AggroForcedTargetThreshold = 10;
+
+        /// <summary>Aggro gained by every unit a Wild Carnivore finds within its own AngerRange when it turns Hostile (see RunAggroDrivenSummonAI) - the user's own example number.</summary>
+        private const int WildAngerAggroGain = 5;
+
+        /// <summary>Chance, each turn, that a Neutral/Friendly Wild animal with nothing to react to actually wanders instead of standing still (see WanderUnit) - first-pass placeholder, pending a balance pass.</summary>
+        private const float WanderChancePerTurn = 0.5f;
+
+        /// <summary>
+        /// Simple wandering for a Neutral/Friendly Wild animal with nothing to react to this
+        /// turn - a WanderChancePerTurn chance to move onto one random passable, unoccupied tile
+        /// adjacent to it, reusing MoveUnitTowards (the same shared entrypoint player/AI movement
+        /// already goes through), so it's AP-costed, animated, and logged exactly like any other
+        /// move. Does nothing the rest of the time, or if every adjacent tile is already blocked.
+        /// </summary>
+        private void WanderUnit(BaseUnit unit)
+        {
+            if (_deckRandom.NextDouble() >= WanderChancePerTurn)
+                return;
+
+            var unitHex = _hexGrid.WorldToHex(unit.Position);
+            var occupied = GetDestinationBlockingTiles(unit);
+            var openNeighbors = _hexGrid.GetNeighbors(unitHex.col, unitHex.row)
+                .Where(hex => Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToList();
+
+            if (openNeighbors.Count == 0)
+                return;
+
+            var destination = openNeighbors[_deckRandom.Next(openNeighbors.Count)];
+            MoveUnitTowards(unit, destination);
+        }
 
         /// <summary>
         /// Placeholder AI (GDD-pending - no real tactical depth yet): always targets the
@@ -2294,8 +2395,15 @@ namespace SagesOfOzvaram
                 return;
             }
 
-            if (aiUnit.Owner != null &&
-                (aiUnit.Behavior == SummonBehavior.NeutralAggressionBased || aiUnit.Behavior == SummonBehavior.HostileTowardsEnemies))
+            // Owned-summon aggro behaviors, OR an untamed Wild creature (no Owner yet) - both
+            // need aggro-driven targeting instead of RunHeroAI's full hero-style aggression.
+            // Without the second half of this check, a freshly-placed Neutral Wild beast (e.g.
+            // Game1's "summon" dev command, or a future wild spawn) would fall through to
+            // RunHeroAI and attack on sight every turn - defeating the entire point of "Neutral"
+            // (and Tame Beast, which only works against something that's stayed Neutral).
+            if ((aiUnit.Owner != null &&
+                    (aiUnit.Behavior == SummonBehavior.NeutralAggressionBased || aiUnit.Behavior == SummonBehavior.HostileTowardsEnemies))
+                || (aiUnit.Owner == null && aiUnit.Factions.Contains(Faction.Wild)))
             {
                 RunAggroDrivenSummonAI(aiUnit);
                 return;
@@ -2326,9 +2434,41 @@ namespace SagesOfOzvaram
             if (potentialEnemies.Count == 0)
                 return;
 
+            // An ownerless Wild Carnivore within its own AngerRange of ANY potential enemy
+            // notices them and turns Hostile on its own - a lasting Disposition change (not
+            // just "engage this once"), checked first so the rest of this same turn already
+            // sees it. Generates WildAngerAggroGain aggro toward every unit close enough, not
+            // just whichever one ends up the actual target.
+            if (summon.Owner == null && summon.Disposition != Disposition.Hostile && summon.AngerRange > 0)
+            {
+                var summonHex = _hexGrid.WorldToHex(summon.Position);
+                var tooClose = potentialEnemies.Where(e =>
+                        _hexGrid.GetDistance(summonHex.col, summonHex.row, _hexGrid.WorldToHex(e.Position).col, _hexGrid.WorldToHex(e.Position).row) <= summon.AngerRange)
+                    .ToList();
+                if (tooClose.Count > 0)
+                {
+                    summon.Disposition = Disposition.Hostile;
+                    foreach (var intruder in tooClose)
+                        summon.AddAggro(intruder, WildAngerAggroGain);
+                    ShowCombatMessage($"{summon.Name} turns hostile!");
+                }
+            }
+
             int maxAggro = potentialEnemies.Max(e => summon.GetAggro(e));
-            if (summon.Behavior == SummonBehavior.NeutralAggressionBased && maxAggro < AggroForcedTargetThreshold)
-                return; // nothing has provoked it yet - stays put, true to "neutral"
+
+            // An owned summon on NeutralAggressionBased, OR an ownerless Wild creature that
+            // isn't actively Hostile (Neutral and Friendly both stand down the same way here -
+            // the distinction between them only matters for Tame Beast eligibility, not combat
+            // behavior) - stays put (or wanders, if Wild - see WanderUnit) until provoked. A
+            // Hostile Wild creature skips this entirely, same as HostileTowardsEnemies always does.
+            bool actsNeutral = summon.Behavior == SummonBehavior.NeutralAggressionBased
+                || (summon.Owner == null && summon.Disposition != Disposition.Hostile);
+            if (actsNeutral && maxAggro < AggroForcedTargetThreshold)
+            {
+                if (summon.Owner == null && summon.Factions.Contains(Faction.Wild))
+                    WanderUnit(summon);
+                return; // nothing has provoked it yet - stays put/wanders, true to "neutral"
+            }
 
             var target = PickAggroTarget(summon, potentialEnemies, maxAggro);
 
@@ -2667,6 +2807,26 @@ namespace SagesOfOzvaram
                 _console.Log($"{other.Name}: {unit.GetAggro(other)}");
         }
 
+        /// <summary>
+        /// Prints a separator line, then a "{UnitName} - Turn {N}" header, to BOTH the in-game
+        /// dev console (`~`) and the terminal log (GameLogger) every time a unit's turn actually
+        /// starts (TurnSystem.UnitTurnStarted, subscribed right alongside LogUnitAggro and fired
+        /// just before it, so each unit's own block visibly starts with this header followed
+        /// immediately by its Aggro summary) - without this, everything every unit's turn logs
+        /// runs together with no visual boundary at all. No separator before the very first
+        /// unit's turn of a match (_hasLoggedAnyUnitTurn, reset in EnterTestMode/
+        /// EnterOriginalMode), since nothing precedes it that needs separating from.
+        /// </summary>
+        private void LogUnitTurnDivider(BaseUnit unit)
+        {
+            if (_hasLoggedAnyUnitTurn)
+                _console.Log(new string('=', 30));
+            _console.Log($"{unit.Name} - Turn {_turnSystem.CurrentTurn}");
+            _hasLoggedAnyUnitTurn = true;
+
+            GameLogger.LogUnitTurnStart(unit.Name, _turnSystem.CurrentTurn);
+        }
+
         /// <summary>True if `unit` is a summon the real player hero (_playerHero) should get a normal turn with - owned by the player's hero AND still set to the default SummonBehavior.ControllableBySummoner (see Update's per-turn control handoff). False for the hero itself (Owner is null, not _playerHero), an enemy's own summon, or any summon using one of the other 5 not-yet-implemented behaviors.</summary>
         private bool IsPlayerControllableSummon(BaseUnit unit) =>
             unit.Owner != null && unit.Owner == _playerHero && unit.Behavior == SummonBehavior.ControllableBySummoner;
@@ -2923,6 +3083,113 @@ namespace SagesOfOzvaram
             }
         }
 
+        /// <summary>
+        /// Cast an IsTameBeast spell (Tame Beast): pays AP/MP up front, then opens tame-targeting
+        /// mode listing every genuinely tameable unit within Range - BaseUnit.IsTameable (Wild
+        /// faction, no Owner yet, still Neutral - never Friendly or Hostile) AND at or below the
+        /// caster's own Level, which IsTameable itself can't check since it has no caster to
+        /// compare against. Clicking one rolls move.BaseAccuracy as a flat success chance (not
+        /// the usual combat accuracy/evasion math - taming isn't an attack, nothing to dodge) and
+        /// consumes the card either way, same "it happened, it just didn't land" convention a
+        /// missed attack already follows.
+        /// </summary>
+        private void CastTameBeast(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int range = move.GetEffectiveRange(_playerUnit, null);
+            _tameBeastCandidates = _units.Where(u => u.IsTameable && u.Level <= _playerUnit.Level
+                    && _hexGrid.GetDistance(casterHex.col, casterHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= range)
+                .ToList();
+
+            if (_tameBeastCandidates.Count == 0)
+            {
+                ShowCombatMessage($"Nothing to tame in range for {move.Name}.");
+                return;
+            }
+
+            _pendingMove = move;
+            _pendingSpellCard = card;
+            _cardMenuActive = false;
+            _tameBeastModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a Tame Beast target: click a highlighted candidate to attempt taming it, E to cancel back to the Cards menu.</summary>
+        private void HandleTameBeastInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelTameBeast();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                var target = _tameBeastCandidates.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == clickedHex);
+                if (target != null)
+                    ExecuteTameBeast(target);
+            }
+        }
+
+        /// <summary>
+        /// Spend _pendingMove's AP/MP, roll BaseAccuracy as a flat success chance, and on success
+        /// hand `target` over to the caster entirely - Owner, Behavior reset to
+        /// ControllableBySummoner (so it gets a normal turn under the caster's control, same as
+        /// any other owned summon), and Disposition set to Friendly (no longer a free Wild agent,
+        /// so IsTameable - and therefore a second Tame Beast attempt - naturally excludes it from
+        /// here on). Consumes the card regardless of the roll's outcome, same as a missed attack.
+        /// </summary>
+        private void ExecuteTameBeast(BaseUnit target)
+        {
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+
+            bool success = _deckRandom.NextDouble() < _pendingMove.BaseAccuracy;
+            if (success)
+            {
+                target.Owner = _playerUnit;
+                target.Behavior = SummonBehavior.ControllableBySummoner;
+                target.Disposition = Disposition.Friendly;
+                ShowCombatMessage($"{_playerUnit.Name} tames {target.Name}!");
+            }
+            else
+            {
+                ShowCombatMessage($"{_playerUnit.Name}'s attempt to tame {target.Name} fails.");
+            }
+
+            if (_pendingSpellCard != null)
+                RemoveCardFromHand(_pendingSpellCard);
+
+            CancelTameBeast(returnToCardMenu: false);
+        }
+
+        private void CancelTameBeast(bool returnToCardMenu = true)
+        {
+            _tameBeastModeActive = false;
+            _pendingMove = null;
+            _pendingSpellCard = null;
+            _tameBeastCandidates.Clear();
+
+            if (returnToCardMenu)
+            {
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
+        }
+
         /// <summary>Flat AP cost to summon a creature - first-pass placeholder, pending a balance pass (see GDD Portal System/Summon Cards). Unchanged whether or not a Generic Portal also needs conjuring first - that only ever costs extra mana (GenericPortalSummonManaSurcharge), never extra AP.</summary>
         private const int SummonAPCost = 2;
 
@@ -2972,6 +3239,199 @@ namespace SagesOfOzvaram
             if (card == SummonCatalog.GloamravenOssuary) return new GloamravenOssuary(position);
             if (card == SummonCatalog.RootmossStonegloom) return new RootmossStonegloom(position);
             return null;
+        }
+
+        /// <summary>Chance, each Turn (full round - see CheckWildAnimalSpawn), that a wild beast spawns - first-pass placeholder pending a balance pass, same as every other number introduced "for now" in this project.</summary>
+        private const float WildAnimalSpawnChancePerTurn = 0.3f;
+
+        /// <summary>Hard cap on how many untamed Wild beasts can be on the field at once - without one, a long match would eventually overrun the arena with no way for anything to thin them back out (no despawn/aging system exists yet).</summary>
+        private const int MaxWildAnimalsOnField = 3;
+
+        /// <summary>Every "Beast"-type SummonCard (the 10-card catalog minus the 2 Roachlin ones) - the pool CheckWildAnimalSpawn draws from. Computed fresh each time rather than cached, since it's cheap and automatically stays correct if the catalog ever changes.</summary>
+        private List<SummonCard> GetWildBeastCards() =>
+            SummonCatalog.AllSummons.Where(c => c.UnitType == "Beast").ToList();
+
+        /// <summary>
+        /// Subscribed to TurnSystem.UnitTurnStarted in EnterOriginalMode only (never Test Mode -
+        /// "the arena map" specifically) - gates itself to once per Turn (full round, not once
+        /// per individual unit's turn) via _lastWildSpawnCheckTurn, rolls
+        /// WildAnimalSpawnChancePerTurn, and if it hits, drops a random Beast-type creature
+        /// (GetWildBeastCards) onto a random passable, unoccupied edge tile (PickRandomEdgeTile)
+        /// as a free-standing Wild/Neutral unit - no Owner, so BaseUnit.Disposition's default
+        /// (Neutral) applies, making it immediately a valid Tame Beast target. No-ops quietly
+        /// (not an error) if the roll misses, the field's already at MaxWildAnimalsOnField, or no
+        /// edge tile is currently free. `unit` (whoever's turn just started) is unused beyond
+        /// being the event's required parameter - this isn't about who's acting, just when.
+        /// </summary>
+        private void CheckWildAnimalSpawn(BaseUnit unit)
+        {
+            if (_turnSystem.CurrentTurn == _lastWildSpawnCheckTurn)
+                return;
+            _lastWildSpawnCheckTurn = _turnSystem.CurrentTurn;
+
+            if (_deckRandom.NextDouble() >= WildAnimalSpawnChancePerTurn)
+                return;
+
+            int currentWildCount = _units.Count(u => u.IsAlive && u.Owner == null && u.Factions.Contains(Faction.Wild));
+            if (currentWildCount >= MaxWildAnimalsOnField)
+                return;
+
+            var edgeTile = PickRandomEdgeTile();
+            if (edgeTile == null)
+                return;
+
+            var beastCards = GetWildBeastCards();
+            var card = beastCards[_deckRandom.Next(beastCards.Count)];
+            var position = _hexGrid.HexToWorld(edgeTile.Value.col, edgeTile.Value.row);
+            var beast = CreateSummonUnit(card, position);
+            beast.LoadContent(Content, GraphicsDevice);
+            _units.Add(beast);
+
+            ShowCombatMessage($"{beast.Name} wandered into the area.");
+        }
+
+        /// <summary>A random passable, unoccupied tile along the map's border (col 0/Width-1 or row 0/Height-1) - null if every edge tile is currently blocked or occupied. Shuffles the full edge-tile list once rather than retrying random picks, so it still finds the one free tile left even when the edges are nearly full.</summary>
+        private (int col, int row)? PickRandomEdgeTile()
+        {
+            var edgeTiles = new List<(int col, int row)>();
+            for (int col = 0; col < _hexGrid.Width; col++)
+            {
+                edgeTiles.Add((col, 0));
+                edgeTiles.Add((col, _hexGrid.Height - 1));
+            }
+            for (int row = 0; row < _hexGrid.Height; row++)
+            {
+                edgeTiles.Add((0, row));
+                edgeTiles.Add((_hexGrid.Width - 1, row));
+            }
+
+            var occupied = _units.Select(u => _hexGrid.WorldToHex(u.Position)).ToHashSet();
+            var candidates = edgeTiles.Distinct()
+                .Where(hex => Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToList();
+
+            return candidates.Count > 0 ? candidates[_deckRandom.Next(candidates.Count)] : null;
+        }
+
+        /// <summary>A random passable, unoccupied tile ANYWHERE on the map (not just the border - see PickRandomEdgeTile for that) - null if nothing qualifies, which shouldn't normally happen on a real map this size.</summary>
+        private (int col, int row)? PickRandomMapTile()
+        {
+            var occupied = _units.Select(u => _hexGrid.WorldToHex(u.Position)).ToHashSet();
+            var candidates = new List<(int col, int row)>();
+            for (int col = 0; col < _hexGrid.Width; col++)
+            {
+                for (int row = 0; row < _hexGrid.Height; row++)
+                {
+                    if (Pathfinder.IsPassable(_hexGrid, _map, col, row, occupied))
+                        candidates.Add((col, row));
+                }
+            }
+
+            return candidates.Count > 0 ? candidates[_deckRandom.Next(candidates.Count)] : null;
+        }
+
+        /// <summary>Minimum/maximum wild beasts present at the very start of an arena match (inclusive, see EnterOriginalMode) - a one-time initial population, distinct from CheckWildAnimalSpawn's ongoing per-Turn edge trickle and NOT limited by its MaxWildAnimalsOnField cap (that cap is specifically about the ongoing spawn rate, not how many can ever be on the field at once).</summary>
+        private const int InitialWildAnimalCountMin = 3;
+        private const int InitialWildAnimalCountMax = 10;
+
+        /// <summary>Places InitialWildAnimalCountMin-Max (inclusive) random Beast-type creatures on random passable, unoccupied tiles anywhere on the map - called once from EnterOriginalMode, after the 4 heroes are placed (so they're correctly treated as occupied) but before character select, so the arena is already populated the moment a match actually starts. Each pick re-reads _units fresh (via PickRandomMapTile), so placing one before picking the next naturally avoids stacking two beasts on the same tile.</summary>
+        private void SpawnInitialWildAnimals()
+        {
+            int count = _deckRandom.Next(InitialWildAnimalCountMin, InitialWildAnimalCountMax + 1);
+            var beastCards = GetWildBeastCards();
+            int spawned = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                var tile = PickRandomMapTile();
+                if (tile == null)
+                    break; // map's out of free space - stop rather than loop forever
+
+                var card = beastCards[_deckRandom.Next(beastCards.Count)];
+                var position = _hexGrid.HexToWorld(tile.Value.col, tile.Value.row);
+                var beast = CreateSummonUnit(card, position);
+                beast.LoadContent(Content, GraphicsDevice);
+                _units.Add(beast);
+                spawned++;
+            }
+
+            if (spawned > 0)
+                ShowCombatMessage($"{spawned} wild {(spawned == 1 ? "beast" : "beasts")} already roam the arena.");
+        }
+
+        /// <summary>
+        /// Dev-console "summon &lt;UnitID&gt; &lt;Team&gt;" handler (see DevConsole.SummonCallback).
+        /// Validates the UnitID/Team, then opens tile-click placement
+        /// (HandleDevSummonPlacementInput) - bypasses AP/MP/hand/range entirely, since this is a
+        /// testing shortcut (e.g. spawning a Neutral creature to later test Tame Beast against),
+        /// not the normal card-cast path (CastSummon). Returns the prompt/error line DevConsole
+        /// prints back.
+        /// </summary>
+        private string DevSummonCommand(int unitId, string team)
+        {
+            var card = SummonCatalog.AllSummons.FirstOrDefault(c => c.Id == unitId);
+            if (card == null)
+                return $"Error: no summon card with ID {unitId}. Try 'list cards' to find one (SummonCard IDs start at 1001).";
+
+            BaseUnit owner = null;
+            string teamLabel = "Neutral";
+            if (!team.Equals("Neutral", StringComparison.OrdinalIgnoreCase))
+            {
+                owner = _units.FirstOrDefault(u => u.Name.Equals(team, StringComparison.OrdinalIgnoreCase));
+                if (owner == null)
+                    return $"Error: no unit named '{team}' on the field. Use 'Neutral' or an exact unit Name.";
+                teamLabel = owner.Name;
+            }
+
+            _pendingDevSummonCard = card;
+            _pendingDevSummonOwner = owner;
+            _devSummonModeActive = true;
+            _consoleOpen = false;
+
+            return $"Click a tile to place {card.Name} ({teamLabel}) - E to cancel.";
+        }
+
+        /// <summary>Handle input while picking a dev-summoned creature's placement tile: click any passable, unoccupied tile anywhere on the map to spawn it there, E to cancel.</summary>
+        private void HandleDevSummonPlacementInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                _devSummonModeActive = false;
+                _pendingDevSummonCard = null;
+                _pendingDevSummonOwner = null;
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (!_hexGrid.IsInBounds(clickedHex.col, clickedHex.row))
+                    return;
+
+                var occupied = _units.Select(u => _hexGrid.WorldToHex(u.Position)).ToHashSet();
+                if (!Pathfinder.IsPassable(_hexGrid, _map, clickedHex.col, clickedHex.row, occupied))
+                    return;
+
+                ExecuteDevSummon(clickedHex);
+            }
+        }
+
+        /// <summary>Spawn _pendingDevSummonCard at destHex, owned by _pendingDevSummonOwner (null = Neutral) - no AP/MP/card consumed, this is a dev-only shortcut (see DevSummonCommand).</summary>
+        private void ExecuteDevSummon((int col, int row) destHex)
+        {
+            var position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            var summon = CreateSummonUnit(_pendingDevSummonCard, position);
+            summon.Owner = _pendingDevSummonOwner;
+            summon.LoadContent(Content, GraphicsDevice);
+            _units.Add(summon);
+
+            string teamLabel = _pendingDevSummonOwner != null ? _pendingDevSummonOwner.Name : "Neutral";
+            ShowCombatMessage($"Dev-summoned {summon.Name} ({teamLabel}) at ({destHex.col}, {destHex.row}).");
+
+            _devSummonModeActive = false;
+            _pendingDevSummonCard = null;
+            _pendingDevSummonOwner = null;
         }
 
         /// <summary>
@@ -3281,6 +3741,8 @@ namespace SagesOfOzvaram
                     CastBlinkSpell(spellCard);
                 else if (spellCard.Effect.IsAllyShield)
                     CastAllyShield(spellCard);
+                else if (spellCard.Effect.IsTameBeast)
+                    CastTameBeast(spellCard);
                 else if (SpellCastsAsAttack(spellCard))
                     CastSpellAsAttack(spellCard);
                 else if (SpellCaster.CanResolveInstantly(spellCard.Effect))
@@ -3465,11 +3927,13 @@ namespace SagesOfOzvaram
             return $"{attacker.Name} used {move.Name}: {string.Join("; ", parts)}";
         }
 
-        /// <summary>Show a short-lived line at the bottom of the screen - both the actual combat log and "why didn't that work" feedback (unaffordable AP/MP, out of ammo, nothing in range) go through here so nothing is ever a silent no-op.</summary>
+        /// <summary>Show a short-lived line at the bottom of the screen - both the actual combat log and "why didn't that work" feedback (unaffordable AP/MP, out of ammo, nothing in range) go through here so nothing is ever a silent no-op. Also mirrored to the terminal log (see GameLogger) - attacks, casts, equips, failures, all of it - so the full match history is readable after the fact, not just whatever's currently faded on screen.</summary>
         private void ShowCombatMessage(string message)
         {
             _combatLogMessage = message;
             _combatLogTimer = 4f;
+            GameLogger.Log(message);
+            _console.Log(message);
         }
 
         /// <summary>Handle input while picking a target for _pendingMove: click a highlighted unit to attack it, E to cancel back to the attack submenu.</summary>
@@ -3839,6 +4303,21 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Tame Beast targeting - every tameable candidate highlighted amber/gold (distinct
+            // from attack's red and ally-shield's green - this is neither hostile nor an ally
+            // yet), brighter where the mouse is hovering.
+            if (_tameBeastModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var candidate in _tameBeastCandidates)
+                {
+                    bool hovered = _hexGrid.WorldToHex(candidate.Position) == hoveredHex;
+                    Color fill = hovered ? new Color(255, 215, 120, 180) : new Color(220, 175, 70, 120);
+                    Color outline = hovered ? Color.White : Color.Goldenrod;
+                    DrawHexFilled(candidate.Position, fill, outline);
+                }
+            }
+
             // Summon placement (any SummonCard) - every valid placement tile highlighted
             // orange, whichever one the mouse is over highlighted brighter.
             if (_summonPlacementModeActive)
@@ -3939,7 +4418,16 @@ namespace SagesOfOzvaram
 
                 if (_font != null)
                 {
-                    string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.MaxHP}" : $"{unit.Name}: DEAD";
+                    // An untamed Wild creature shows its Disposition right in the status line -
+                    // Tame Beast's candidate filter is invisible otherwise (nothing tells a
+                    // player which Wild units are even eligible before they commit to casting
+                    // it), and "Neutral"/"Friendly"/"Hostile" doubles as a quick combat-threat
+                    // read regardless of taming. Skipped for anything already owned (tamed or
+                    // otherwise) - Disposition stops being meaningful the moment Owner is set.
+                    string dispositionSuffix = unit.Owner == null && unit.Factions.Contains(Faction.Wild)
+                        ? $" [{unit.Disposition}]"
+                        : "";
+                    string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.MaxHP}{dispositionSuffix}" : $"{unit.Name}: DEAD";
                     Vector2 textSize = _font.MeasureString(statusText) * 0.4f;
                     Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 48f);
                     Color textColor = !unit.IsAlive ? Color.DarkRed : (unit.IsFainted ? Color.Gray : Color.White);
@@ -4051,10 +4539,14 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Click a highlighted tile to blink there - E to cancel");
                 else if (_allyTargetModeActive)
                     DrawBottomHint(viewportSize, "Select a target to shield (yourself included) - E to cancel");
+                else if (_tameBeastModeActive)
+                    DrawBottomHint(viewportSize, "Select a beast to tame - E to cancel");
                 else if (_summonPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
                 else if (_portalPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your Generic Portal - E to cancel");
+                else if (_devSummonModeActive)
+                    DrawBottomHint(viewportSize, $"Click a tile to place {_pendingDevSummonCard.Name} ({(_pendingDevSummonOwner != null ? _pendingDevSummonOwner.Name : "Neutral")}) - E to cancel");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 

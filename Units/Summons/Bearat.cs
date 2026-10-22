@@ -10,6 +10,9 @@ namespace SagesOfOzvaram.Units.Summons
         public Bearat(Vector2 position = default)
             : base("Bearat", maxHP: 24, speed: 6, race: Race.Bearat, heroClass: HeroClass.None, position)
         {
+            Factions.Add(Faction.Wild);
+            Diet = Diet.Carnivore;
+            AngerRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 12;     // "Attack" on the card
             Intelligence = 2;

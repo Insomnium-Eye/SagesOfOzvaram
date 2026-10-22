@@ -10,6 +10,9 @@ namespace SagesOfOzvaram.Units.Summons
         public SiltfinMawpike(Vector2 position = default)
             : base("Siltfin Mawpike", maxHP: 16, speed: 8, race: Race.SiltfinMawpike, heroClass: HeroClass.None, position)
         {
+            Factions.Add(Faction.Wild);
+            Diet = Diet.Carnivore;
+            AngerRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 9;      // "Attack" on the card
             Intelligence = 3;

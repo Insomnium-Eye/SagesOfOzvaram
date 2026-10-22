@@ -10,6 +10,8 @@ namespace SagesOfOzvaram.Units.Summons
         public RootmossStonegloom(Vector2 position = default)
             : base("Rootmoss Stonegloom", maxHP: 30, speed: 3, race: Race.RootmossStonegloom, heroClass: HeroClass.None, position)
         {
+            Factions.Add(Faction.Wild);
+            Diet = Diet.Herbivore;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 9;      // "Attack" on the card
             Intelligence = 3;

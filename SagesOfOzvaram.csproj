@@ -26,4 +26,24 @@
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
   </ItemGroup>
+
+  <!--
+    Signs the built .exe with a local dev code-signing certificate (see
+    Scripts\Setup-DevCodeSigning.ps1, run once per machine) so Windows Smart App Control treats
+    it as coming from a known/trusted publisher instead of blocking it as an unsigned binary.
+    Windows-only, and deliberately non-fatal (ContinueOnError) - a machine that hasn't run the
+    setup script yet, or isn't Windows, still builds fine; Sign-Build.ps1 itself also no-ops
+    gracefully if the dev cert isn't installed.
+  -->
+  <Target Name="SignExecutable" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <!--
+      Both files need signing: the native apphost "$(TargetName).exe" (what you actually launch)
+      AND the managed "$(TargetName)$(TargetExt)" (.dll) it loads - Smart App Control evaluates
+      each binary it loads independently, so signing only the .exe still left the .dll blocked.
+    -->
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Scripts\Sign-Build.ps1&quot; -Path &quot;$(TargetDir)$(TargetName).exe&quot;"
+          ContinueOnError="WarnAndContinue" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Scripts\Sign-Build.ps1&quot; -Path &quot;$(TargetDir)$(TargetName)$(TargetExt)&quot;"
+          ContinueOnError="WarnAndContinue" />
+  </Target>
 </Project>

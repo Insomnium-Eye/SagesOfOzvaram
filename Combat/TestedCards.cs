@@ -24,6 +24,8 @@ namespace SagesOfOzvaram.Combat
             "Brace",
             "Dusk Roachlin",
             "Rally Cry",
+            "Steady Hands",
+            "Bandage Wound",
         };
     }
 }

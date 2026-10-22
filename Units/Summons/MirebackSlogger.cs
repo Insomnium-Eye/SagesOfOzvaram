@@ -10,6 +10,8 @@ namespace SagesOfOzvaram.Units.Summons
         public MirebackSlogger(Vector2 position = default)
             : base("Mireback Slogger", maxHP: 26, speed: 4, race: Race.MirebackSlogger, heroClass: HeroClass.None, position)
         {
+            Factions.Add(Faction.Wild);
+            Diet = Diet.Herbivore;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 10;     // "Attack" on the card
             Intelligence = 2;
