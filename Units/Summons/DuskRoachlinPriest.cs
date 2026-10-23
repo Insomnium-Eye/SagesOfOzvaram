@@ -18,6 +18,7 @@ namespace SagesOfOzvaram.Units.Summons
             Resistance = 10;
             Accuracy = 7;
             Evasion = 6;
+            ViewRange = 3;
             // No Inventory/EquippedWeapon - summons fight with their race's innate move only
             // (Shadow Weave, via RaceAttacks), not weapons or cards.
         }

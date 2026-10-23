@@ -354,6 +354,17 @@ namespace SagesOfOzvaram.Units
         public int AngerRange { get; set; } = 0;
 
         /// <summary>
+        /// How far (in tiles) this unit can see, for the Fog of War system - a team's revealed
+        /// area each frame is the union of every one of its living units' own ViewRange (see
+        /// Game1.GetVisibleTilesForTeam), so a scouting summon genuinely extends what its owner
+        /// can see rather than just adding a body to the field. Defaults to 5 - a hero's own
+        /// range, so the 4 Apprentice classes need no override - but every Beast/Roachlin summon
+        /// explicitly sets 3 in its own constructor instead, same convention Diet/AngerRange above
+        /// already follow for a value that varies by unit.
+        /// </summary>
+        public int ViewRange { get; set; } = 5;
+
+        /// <summary>
         /// True for a stationary, non-acting battlefield structure (a Relic - e.g.
         /// Units.Relics.Portal) rather than a normal combatant. Otherwise behaves exactly like
         /// any other BaseUnit - HP/DEF/RES, Owner/team membership, valid as an attack target -

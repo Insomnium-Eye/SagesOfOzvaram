@@ -86,6 +86,7 @@ namespace SagesOfOzvaram.Combat
         public bool IsConjurePotions { get; }       // true = grants the caster one each of a Minor HP/MP/AP Potion (Combat.ConsumableCatalog) via BaseUnit.AddConsumable, no targeting needed (always self) - handled by Combat.SpellCaster.CastConjurePotions, not AttackResolver
         public bool CuresBleed { get; }              // true = clears the target's BleedPercentPerTurn to 0 on cast (e.g. Bandage Wound) - handled alongside HealFlat/HealPercentMaxHP in SpellCaster.CastSelfUtility, not AttackResolver
         public bool IsTameBeast { get; }             // true = attempts to tame a nearby Wild/Neutral/unowned beast at or below the caster's Level within Range (BaseAccuracy = success chance) - handled by Game1's tame-beast targeting mode, not AttackResolver or SpellCaster
+        public bool IsPlaceTrap { get; }             // true = places an invisible, persistent trap on an empty tile within Range instead of attacking immediately - BaseDamage/StrengthDivisor/InflictsStatusEffect/StatusEffectChance/StatusDurationTurns are all reused as the trap's own trigger-time formula, applied once a unit not on the placer's team steps onto or through its tile - handled by Game1's trap-placement targeting mode and PlacedTrap tracking, not AttackResolver or SpellCaster
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -117,7 +118,7 @@ namespace SagesOfOzvaram.Combat
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
-                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false,
+                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -165,6 +166,7 @@ namespace SagesOfOzvaram.Combat
             IsConjurePotions = isConjurePotions;
             CuresBleed = curesBleed;
             IsTameBeast = isTameBeast;
+            IsPlaceTrap = isPlaceTrap;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;

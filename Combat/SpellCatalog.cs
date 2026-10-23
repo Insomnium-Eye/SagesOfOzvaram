@@ -545,7 +545,7 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Place Trap", "A trap only the one who set it will ever see.",
                 apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
-                strengthDivisor: 4f, damageType: DamageType.Sharp,
+                strengthDivisor: 4f, damageType: DamageType.Sharp, isPlaceTrap: true,
                 inflictsStatusEffect: "Snared", statusEffectChance: 0.85f, statusDurationTurns: 2),
             "imgs/Cards/Spells/PlaceTrap_CardArt");
 

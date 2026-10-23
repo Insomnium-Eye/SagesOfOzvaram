@@ -12,6 +12,7 @@ namespace SagesOfOzvaram.Units.Summons
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;
+            ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 10;     // "Attack" on the card
             Intelligence = 2;

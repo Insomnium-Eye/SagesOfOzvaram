@@ -196,6 +196,21 @@ namespace SagesOfOzvaram
         private bool _tameBeastModeActive = false;
         private List<BaseUnit> _tameBeastCandidates = new List<BaseUnit>();
 
+        // Trap placement targeting (opened for Move.IsPlaceTrap, e.g. Place Trap) - click any
+        // highlighted empty tile within Range to plant a PlacedTrap there instead of attacking
+        // immediately. See CastPlaceTrap/HandleTrapPlacementInput/ExecutePlaceTrap.
+        private bool _trapPlacementModeActive = false;
+        private HashSet<(int col, int row)> _trapPlacementValidTiles = new HashSet<(int col, int row)>();
+
+        /// <summary>A single armed trap sitting on the battlefield, placed by Move.IsPlaceTrap (e.g. Place Trap) - invisible once set (per the card's own fluff; there's no fog-of-war system to hide it from only the owner, so rather than half-fake that, it simply draws no persistent world marker at all - see Draw's trap-placement-mode highlight, which only shows while still choosing where to put it). Triggers and is consumed the instant a unit NOT on Owner's team (GetTeamRoot) steps onto or passes through Tile - see MoveUnitTowards/TriggerTrap.</summary>
+        private class PlacedTrap
+        {
+            public (int col, int row) Tile;
+            public BaseUnit Owner;
+            public Move SourceMove;
+        }
+        private List<PlacedTrap> _placedTraps = new List<PlacedTrap>();
+
         // Summon placement (opened for a SummonCard) - click any highlighted tile to spawn the
         // summoned creature there (within SummonPlacementRange of its owner's Generic Portal,
         // or of the caster directly if it somehow has none - see OpenSummonCreaturePlacement);
@@ -505,6 +520,8 @@ namespace SagesOfOzvaram
             _teleportModeActive = false;
             _allyTargetModeActive = false;
             _tameBeastModeActive = false;
+            _trapPlacementModeActive = false;
+            _placedTraps.Clear();
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -605,6 +622,8 @@ namespace SagesOfOzvaram
             _teleportModeActive = false;
             _allyTargetModeActive = false;
             _tameBeastModeActive = false;
+            _trapPlacementModeActive = false;
+            _placedTraps.Clear();
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -1094,6 +1113,7 @@ namespace SagesOfOzvaram
                                 _teleportModeActive = false;
                                 _allyTargetModeActive = false;
                                 _tameBeastModeActive = false;
+                                _trapPlacementModeActive = false;
                                 _summonPlacementModeActive = false;
                                 _portalPlacementModeActive = false;
                                 _movementModeActive = false;
@@ -1130,6 +1150,7 @@ namespace SagesOfOzvaram
                                     _teleportModeActive = false;
                                     _allyTargetModeActive = false;
                                     _tameBeastModeActive = false;
+                                    _trapPlacementModeActive = false;
                                     _summonPlacementModeActive = false;
                                     _portalPlacementModeActive = false;
                                     _movementModeActive = false;
@@ -1194,6 +1215,10 @@ namespace SagesOfOzvaram
                         {
                             HandleTameBeastInput(keyboardState, mouseState);
                         }
+                        else if (_trapPlacementModeActive)
+                        {
+                            HandleTrapPlacementInput(keyboardState, mouseState);
+                        }
                         else if (_summonPlacementModeActive)
                         {
                             HandleSummonPlacementInput(keyboardState, mouseState);
@@ -1239,6 +1264,7 @@ namespace SagesOfOzvaram
                         _teleportModeActive = false;
                         _allyTargetModeActive = false;
                         _tameBeastModeActive = false;
+                        _trapPlacementModeActive = false;
                         _summonPlacementModeActive = false;
                         _portalPlacementModeActive = false;
                         _movementModeActive = false;
@@ -2284,6 +2310,13 @@ namespace SagesOfOzvaram
         /// </summary>
         private void MoveUnitTowards(BaseUnit unit, (int col, int row) destination)
         {
+            // Snared (or any future PreventsMovement effect) blocks movement here directly rather
+            // than at each caller - the player already never sees a Move option while snared (see
+            // Combat.TurnMenuBuilder), but AI movement (WanderUnit/MoveAiUnitToward) has no menu to
+            // gate it, so this is the one chokepoint both paths actually share.
+            if (unit.StatusEffects.Any(e => e.PreventsMovement))
+                return;
+
             var start = _hexGrid.WorldToHex(unit.Position);
             var path = Pathfinder.FindPath(_hexGrid, _map, start, destination, unit.TilesPerAP,
                 GetPassageBlockingTiles(unit), GetDestinationBlockingTiles(unit));
@@ -2310,9 +2343,44 @@ namespace SagesOfOzvaram
             if (lastAffordableIndex < 0)
                 return; // can't afford even the first step
 
-            int apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
-
             var affordablePath = path.Take(lastAffordableIndex + 1).ToList();
+
+            // A placed trap (see PlacedTrap/CastPlaceTrap) not on unit's own team (GetTeamRoot)
+            // triggers the instant it's reached, cutting the move short right there - unit never
+            // walks the rest of an already-affordable path through it, same as a real trap would
+            // stop someone mid-stride rather than let them walk clean through.
+            int triggerIndex = -1;
+            PlacedTrap triggeredTrap = null;
+            for (int i = 0; i < affordablePath.Count; i++)
+            {
+                var trap = _placedTraps.FirstOrDefault(t => t.Tile == affordablePath[i] && GetTeamRoot(t.Owner) != GetTeamRoot(unit));
+                if (trap != null)
+                {
+                    triggeredTrap = trap;
+                    triggerIndex = i;
+                    break;
+                }
+            }
+
+            int apCost;
+            if (triggeredTrap != null)
+            {
+                affordablePath = affordablePath.Take(triggerIndex + 1).ToList();
+                tiles = 0;
+                water = 0;
+                foreach (var (col, row) in affordablePath)
+                {
+                    tiles++;
+                    if (_map.GetTile(col, row)?.Type == "water")
+                        water++;
+                }
+                apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
+            }
+            else
+            {
+                apCost = (int)Math.Ceiling(tiles / (float)tilesPerAP) + water;
+            }
+
             unit.SetMovementPath(affordablePath.Select(hex => _hexGrid.HexToWorld(hex.col, hex.row)));
             unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
 
@@ -2320,6 +2388,9 @@ namespace SagesOfOzvaram
             string moveMessage = $"{unit.Name} moved from ({start.col}, {start.row}) to ({finalTile.col}, {finalTile.row})";
             GameLogger.Log(moveMessage);
             _console.Log(moveMessage);
+
+            if (triggeredTrap != null)
+                TriggerTrap(triggeredTrap, unit);
         }
 
         /// <summary>Minimum aggro (of the Aggro System's 0-20 range) before a unit is forced to target whoever it's held against - see Aggro System.</summary>
@@ -2803,6 +2874,91 @@ namespace SagesOfOzvaram
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
 
         /// <summary>
+        /// Fog of War: every tile `teamRoot`'s team can currently see - the union of each living
+        /// member's own BaseUnit.ViewRange (hero 5, Beast/Roachlin summon 3) around its current
+        /// position, so a scouting summon genuinely extends the team's sight rather than just
+        /// adding a body to the field. Recomputed fresh every Draw call (cheap - the map is small
+        /// and this is pure hex math, no caching needed) rather than tracked incrementally, so it
+        /// always reflects the current frame's positions with no stale-state risk. No persistent
+        /// "previously explored" memory exists - a tile not currently in this set is drawn fully
+        /// fogged every time, even one the team saw moments ago, a simpler binary than
+        /// StarCraft's own explored/unexplored-vs-visible three-tier fog.
+        /// </summary>
+        private HashSet<(int col, int row)> GetVisibleTilesForTeam(BaseUnit teamRoot)
+        {
+            var visible = new HashSet<(int col, int row)>();
+            foreach (var unit in _units.Where(u => u.IsAlive && GetTeamRoot(u) == teamRoot))
+            {
+                var unitHex = _hexGrid.WorldToHex(unit.Position);
+                foreach (var hex in _hexGrid.GetHexesInRadius(unitHex.col, unitHex.row, unit.ViewRange))
+                {
+                    if (_hexGrid.IsInBounds(hex.col, hex.row))
+                        visible.Add(hex);
+                }
+            }
+            return visible;
+        }
+
+        /// <summary>One fixed color per player team (by the team root's HeroClass - Sorcerer/Warrior/Cleric/Hunter), echoing the same rough palette the Spell Card placeholder art already established (purples for Sorcerer, reds for Warrior, forest greens for Hunter) plus gold for Cleric.</summary>
+        private static readonly Dictionary<HeroClass, Color> TeamOutlineColors = new Dictionary<HeroClass, Color>
+        {
+            [HeroClass.Sorcerer] = new Color(170, 60, 220),
+            [HeroClass.Warrior] = new Color(220, 40, 40),
+            [HeroClass.Cleric] = new Color(255, 200, 40),
+            [HeroClass.Hunter] = new Color(50, 200, 60),
+        };
+
+        /// <summary>
+        /// The outline color `unit` should render with - null for a free-standing, untamed Wild
+        /// creature (Owner == null, Factions.Contains(Wild)), which deliberately gets no outline
+        /// at all (it isn't on anyone's team, and Wild creatures can be hostile toward each
+        /// other). Everything else - a hero, or anything it owns (a summon, a tamed former-Wild
+        /// beast, a Portal) - resolves to its team root (GetTeamRoot) and takes that root's
+        /// TeamOutlineColors entry, so a summoned/tamed unit always reads as the same color its
+        /// owner does.
+        /// </summary>
+        private Color? GetTeamOutlineColor(BaseUnit unit)
+        {
+            if (unit.Owner == null && unit.Factions.Contains(Faction.Wild))
+                return null;
+
+            var root = GetTeamRoot(unit);
+            return TeamOutlineColors.TryGetValue(root.Class, out var color) ? color : (Color?)null;
+        }
+
+        /// <summary>Cached by SpriteAssetPath (not by Texture2D reference - several units can share the exact same loaded art, e.g. the generic Pawn placeholder every summon without unique art uses) rather than recomputing per unit instance.</summary>
+        private readonly Dictionary<string, Texture2D> _silhouetteCache = new Dictionary<string, Texture2D>();
+
+        /// <summary>
+        /// A pure white silhouette of unit.SpriteTexture - every originally-visible pixel (alpha
+        /// > 0) forced to solid white, same alpha/shape otherwise - used as the source for the
+        /// team-outline draw passes (see the "Draw units" loop) instead of the real art, so
+        /// tinting it multiplies cleanly to the exact outline color everywhere, rather than
+        /// multiplying against the sprite's own varied colors (which read as a smeared colored
+        /// shadow, not a clean outline). Built once per distinct SpriteAssetPath and cached from
+        /// then on - a one-time CPU-side GetData/SetData round trip, not a per-frame cost.
+        /// </summary>
+        private Texture2D GetSilhouetteTexture(BaseUnit unit)
+        {
+            if (_silhouetteCache.TryGetValue(unit.SpriteAssetPath, out var cached))
+                return cached;
+
+            var source = unit.SpriteTexture;
+            var pixels = new Color[source.Width * source.Height];
+            source.GetData(pixels);
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].A > 0)
+                    pixels[i] = new Color(255, 255, 255, (int)pixels[i].A);
+            }
+
+            var silhouette = new Texture2D(GraphicsDevice, source.Width, source.Height);
+            silhouette.SetData(pixels);
+            _silhouetteCache[unit.SpriteAssetPath] = silhouette;
+            return silhouette;
+        }
+
+        /// <summary>
         /// Aggro System console log (see DevConsole, `~`): fires once per unit's turn start
         /// (TurnSystem.UnitTurnStarted), printing that unit's own aggro value toward every other
         /// living unit on the field, highest first - exactly the data RunAggroDrivenSummonAI's
@@ -3195,6 +3351,121 @@ namespace SagesOfOzvaram
             {
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
+            }
+        }
+
+        /// <summary>
+        /// Cast an IsPlaceTrap spell (e.g. Place Trap): pays AP/MP up front like any other cast,
+        /// then opens trap-placement targeting showing every passable, unoccupied, not-already-
+        /// trapped tile within Range of the caster - clicking one plants a PlacedTrap there (see
+        /// HandleTrapPlacementInput/ExecutePlaceTrap). Cancelling (E) refunds nothing since
+        /// nothing is spent until a tile is actually chosen, same as teleport targeting.
+        /// </summary>
+        private void CastPlaceTrap(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
+            var trappedTiles = _placedTraps.Select(t => t.Tile).ToHashSet();
+            _trapPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, move.GetEffectiveRange(_playerUnit, null))
+                .Where(hex => Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied) && !trappedTiles.Contains(hex))
+                .ToHashSet();
+
+            if (_trapPlacementValidTiles.Count == 0)
+            {
+                ShowCombatMessage($"Nowhere to place {move.Name}.");
+                return;
+            }
+
+            _pendingMove = move;
+            _pendingSpellCard = card;
+            _cardMenuActive = false;
+            _trapPlacementModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a trap's placement tile: click a highlighted tile to plant it there, E to cancel back to the Cards menu.</summary>
+        private void HandleTrapPlacementInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelTrapPlacement();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_trapPlacementValidTiles.Contains(clickedHex))
+                    ExecutePlaceTrap(clickedHex);
+            }
+        }
+
+        /// <summary>Spend _pendingMove's AP/MP, record a new PlacedTrap at destHex owned by the caster, consume the card, and return to the turn menu.</summary>
+        private void ExecutePlaceTrap((int col, int row) destHex)
+        {
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+
+            _placedTraps.Add(new PlacedTrap { Tile = destHex, Owner = _playerUnit, SourceMove = _pendingMove });
+            ShowCombatMessage($"{_playerUnit.Name} sets {_pendingMove.Name}.");
+
+            if (_pendingSpellCard != null)
+                RemoveCardFromHand(_pendingSpellCard);
+
+            CancelTrapPlacement(returnToCardMenu: false);
+        }
+
+        private void CancelTrapPlacement(bool returnToCardMenu = true)
+        {
+            _trapPlacementModeActive = false;
+            _pendingMove = null;
+            _pendingSpellCard = null;
+            _trapPlacementValidTiles.Clear();
+
+            if (returnToCardMenu)
+            {
+                _cardMenuActive = true;
+            }
+            else
+            {
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+            }
+        }
+
+        /// <summary>
+        /// Resolve `trap` triggering against `mover` (called from MoveUnitTowards the instant a
+        /// unit not on the trap's own team reaches its tile): removes the trap (one use only),
+        /// deals its move's damage exactly like a landed attack would (no hit roll - a trap
+        /// doesn't miss), grants the same aggro a direct hit would, then rolls and applies its
+        /// InflictsStatusEffect (Snared) through AttackResolver's own switch, so it behaves
+        /// identically to a status effect landed by a real attack.
+        /// </summary>
+        private void TriggerTrap(PlacedTrap trap, BaseUnit mover)
+        {
+            _placedTraps.Remove(trap);
+
+            var move = trap.SourceMove;
+            int damage = move.GetDamage(trap.Owner, mover);
+            mover.TakeDamage(damage, move.DamageType);
+            mover.AddAggro(trap.Owner, 5);
+            if (damage > 0)
+                mover.AddAggro(trap.Owner, 2);
+
+            ShowCombatMessage($"{mover.Name} triggers {trap.Owner.Name}'s {move.Name} for {damage} damage!");
+
+            if (move.InflictsStatusEffect != null && _deckRandom.NextDouble() < move.GetStatusEffectChance(trap.Owner, mover))
+            {
+                AttackResolver.InflictMoveStatusEffect(mover, move);
+                ShowCombatMessage($"{mover.Name} is {move.InflictsStatusEffect}!");
             }
         }
 
@@ -3751,6 +4022,8 @@ namespace SagesOfOzvaram
                     CastAllyShield(spellCard);
                 else if (spellCard.Effect.IsTameBeast)
                     CastTameBeast(spellCard);
+                else if (spellCard.Effect.IsPlaceTrap)
+                    CastPlaceTrap(spellCard);
                 else if (SpellCastsAsAttack(spellCard))
                     CastSpellAsAttack(spellCard);
                 else if (SpellCaster.CanResolveInstantly(spellCard.Effect))
@@ -4213,6 +4486,19 @@ namespace SagesOfOzvaram
             // Draw grid with camera transform
             _spriteBatch.Begin(transformMatrix: _renderer.GetCameraMatrixPublic(viewportSize));
 
+            // Fog of War: whatever the player's own current team can see right now (see
+            // GetVisibleTilesForTeam). Fog always stays anchored to the human's own hero/team
+            // (GetTeamRoot(_playerUnit)), not whoever _turnSystem.CurrentUnit happens to be, so
+            // watching an enemy AI's own turn in Arena mode never reveals more than the human
+            // could otherwise see - the entire point of fog of war. null (shown as everything
+            // visible, fog disabled) in Test Mode - that sandbox already loosens real-match
+            // constraints for fast iteration (see "AP/MP effectively unlimited"), and fog would
+            // actively work against testing by hiding the very units/AI behavior being tested -
+            // and in the one state this far down in Draw that can still have no _playerUnit at all.
+            HashSet<(int col, int row)> fogVisibleTiles = (!_testModeActive && _playerUnit != null)
+                ? GetVisibleTilesForTeam(GetTeamRoot(_playerUnit))
+                : null;
+
             // Draw all hex tiles with colors
             for (int col = 0; col < _hexGrid.Width; col++)
             {
@@ -4222,6 +4508,27 @@ namespace SagesOfOzvaram
                     Tile tile = _map.GetTile(col, row);
                     Color fillColor = GetTileColor(tile?.Type ?? "grass");
                     DrawHexFilled(worldPos, fillColor, Color.DarkGray);
+                }
+            }
+
+            // Fog of War tint - a dark semi-transparent overlay on every tile outside the above,
+            // similar to the classic RTS "darkened instead of hidden" look (StarCraft, etc.):
+            // terrain shape still faintly readable, but clearly obscured. Drawn right over the
+            // base terrain, before anything else (targeting highlights, units, ...), so those
+            // still read clearly on top within vision, and a unit standing on a fogged tile simply
+            // never gets drawn at all (see the unit-drawing loop below) rather than drawing
+            // visible-but-dimmed, which wouldn't actually hide anything.
+            if (fogVisibleTiles != null)
+            {
+                for (int col = 0; col < _hexGrid.Width; col++)
+                {
+                    for (int row = 0; row < _hexGrid.Height; row++)
+                    {
+                        if (fogVisibleTiles.Contains((col, row)))
+                            continue;
+                        Vector2 worldPos = _hexGrid.HexToWorld(col, row);
+                        DrawHexFilled(worldPos, new Color(0, 0, 0, 170), new Color(0, 0, 0, 170));
+                    }
                 }
             }
 
@@ -4326,6 +4633,23 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Trap placement (Move.IsPlaceTrap, e.g. Place Trap) - every valid tile highlighted
+            // dark red/brown (distinct from every other mode's color), brighter where the mouse
+            // is hovering. Only shown while still choosing where to place it - once set, a trap
+            // draws no persistent marker at all (see PlacedTrap), matching its own "invisible"
+            // fluff since there's no fog-of-war system to hide it from only its owner.
+            if (_trapPlacementModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _trapPlacementValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(200, 90, 60, 180) : new Color(150, 60, 40, 120);
+                    Color outline = hovered ? Color.White : Color.DarkRed;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
             // Summon placement (any SummonCard) - every valid placement tile highlighted
             // orange, whichever one the mouse is over highlighted brighter.
             if (_summonPlacementModeActive)
@@ -4383,6 +4707,14 @@ namespace SagesOfOzvaram
             // Draw units
             foreach (var unit in _units)
             {
+                // Fog of War: a unit standing on a tile outside the player's own team's current
+                // vision is skipped entirely - sprite, outline, HP bar, name, everything - rather
+                // than drawn dimmed, since a fogged-but-still-fully-visible unit wouldn't actually
+                // hide anything. A unit's own tile is always within its own ViewRange of itself
+                // (distance 0), so this never hides a unit from its own team.
+                if (fogVisibleTiles != null && !fogVisibleTiles.Contains(_hexGrid.WorldToHex(unit.Position)))
+                    continue;
+
                 if (unit.SpriteTexture != null)
                 {
                     // Base scale factor (0.15 = much smaller, fits within hex)
@@ -4409,6 +4741,35 @@ namespace SagesOfOzvaram
                         float intensity = (float)Math.Sin(hitT * MathHelper.Pi);
                         spritePos += hitReaction.NudgeDirection * intensity * HitReactionNudgeDistance;
                         spriteTint = Color.Lerp(spriteTint, Color.Red, intensity * 0.8f);
+                    }
+
+                    // Team outline - which player's side this unit is on at a glance (a wild,
+                    // untamed beast gets none at all - see GetTeamOutlineColor). No outline
+                    // shader exists (or is worth building), so this draws against a cached PURE
+                    // WHITE silhouette of the sprite (GetSilhouetteTexture - same alpha shape,
+                    // every visible pixel forced to white) instead of the real art. Tinting the
+                    // real art directly (the first version of this) multiplied the tint against
+                    // the sprite's own varied colors, which read as a smeared colored shadow, not
+                    // an outline - tinting a WHITE source multiplies cleanly to the exact outline
+                    // color for every visible pixel, so offsetting it a couple pixels in every
+                    // direction behind the real sprite reads as an actual crisp-edged outline.
+                    Color? outlineColor = unit.IsAlive ? GetTeamOutlineColor(unit) : null;
+                    if (outlineColor.HasValue)
+                    {
+                        var silhouette = GetSilhouetteTexture(unit);
+                        const float outlineOffset = 1.5f;
+                        Vector2[] outlineOffsets =
+                        {
+                            new Vector2(-outlineOffset, 0f), new Vector2(outlineOffset, 0f),
+                            new Vector2(0f, -outlineOffset), new Vector2(0f, outlineOffset),
+                            new Vector2(-outlineOffset, -outlineOffset), new Vector2(outlineOffset, -outlineOffset),
+                            new Vector2(-outlineOffset, outlineOffset), new Vector2(outlineOffset, outlineOffset),
+                        };
+                        foreach (var offset in outlineOffsets)
+                        {
+                            _spriteBatch.Draw(silhouette, spritePos + offset, null, outlineColor.Value, 0f,
+                                            Vector2.Zero, finalScale, SpriteEffects.None, 0f);
+                        }
                     }
 
                     _spriteBatch.Draw(unit.SpriteTexture, spritePos, null, spriteTint, 0f,
@@ -4549,6 +4910,8 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Select a target to shield (yourself included) - E to cancel");
                 else if (_tameBeastModeActive)
                     DrawBottomHint(viewportSize, "Select a beast to tame - E to cancel");
+                else if (_trapPlacementModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted tile to place your trap - E to cancel");
                 else if (_summonPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
                 else if (_portalPlacementModeActive)
@@ -4990,10 +5353,16 @@ namespace SagesOfOzvaram
         /// </summary>
         private List<string> GetUnitStatLines(BaseUnit unit)
         {
-            var lines = new List<string>
-            {
-                $"Type: {unit.Race}",
-            };
+            var lines = new List<string>();
+
+            // Which of the 4 player teams this unit belongs to (by its team root's HeroClass -
+            // see GetTeamOutlineColor, the same lookup the on-screen outline color uses, so this
+            // line and that outline always agree). Omitted entirely for a free-standing, untamed
+            // Wild creature - it isn't on anyone's team yet, same reasoning as its missing outline.
+            if (GetTeamOutlineColor(unit).HasValue)
+                lines.Add($"Faction: {GetTeamRoot(unit).Class}");
+
+            lines.Add($"Type: {unit.Race}");
 
             if (unit.Class != HeroClass.None)
                 lines.Add($"Class: {unit.Class}");

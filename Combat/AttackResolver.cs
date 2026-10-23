@@ -165,10 +165,25 @@ namespace SagesOfOzvaram.Combat
             return outcome;
         }
 
-        private static void InflictMoveStatusEffect(BaseUnit target, Move move)
+        /// <summary>Public so Game1's trap-trigger logic (PlacedTrap/TriggerTrap) can apply a trap's own InflictsStatusEffect through the exact same path a direct attack would, rather than duplicating the switch below.</summary>
+        public static void InflictMoveStatusEffect(BaseUnit target, Move move)
         {
             switch (move.InflictsStatusEffect)
             {
+                case "Snared":
+                    // Take the longer of this and any Snare already active, same reasoning as
+                    // Stunned below. RestrictsActions is deliberately left false - Snared only
+                    // removes the Move option (see Combat.TurnMenuBuilder/StatusEffect.PreventsMovement),
+                    // everything else on the turn menu still works.
+                    int snareTurns = Math.Max(target.GetStatusEffectTurnsRemaining("Snared"), move.StatusDurationTurns);
+                    target.ApplyStatusEffect(new StatusEffect
+                    {
+                        Name = "Snared",
+                        Type = StatusEffectType.Affliction,
+                        TurnsRemaining = snareTurns,
+                        PreventsMovement = true,
+                    });
+                    break;
                 case "Bleeding":
                     // Take the stronger of any existing bleed and this hit's rank - a weaker
                     // follow-up hit shouldn't downgrade a bleed a harder hit already applied.

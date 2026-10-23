@@ -228,16 +228,26 @@ namespace SagesOfOzvaram.Combat
         /// Weapon.SpecialistFlatDamageBonus) - mitigated separately by RES, not DEF, since it's
         /// a different damage type than the mace's own Blunt hit.
         /// </summary>
+        /// <summary>
+        /// Rebalanced to be the WEAKEST damage dealer of the 4 classes' signature weapons, on
+        /// request - it was the opposite before (a crit against Sorcerer's near-nonexistent
+        /// Defense (5) worked out to ~32 damage, ~70% of their 45 max HP in one hit): AttackPower
+        /// 8→3, CritChance 15%→5%, CritMultiplier 3x (every other weapon in the game uses the
+        /// 2x default) →2x, SpecialistFlatDamageBonus 3→1. SpecialistAccuracyBonus/RangeBonus
+        /// (utility, not damage) are untouched - the request was specifically about damage, and
+        /// Cleric staying reliable/precise while hitting soft is exactly the support identity
+        /// the GDD already gives the class.
+        /// </summary>
         public static Weapon LightMace => new Weapon("Light Mace",
             "A blunt, mediocre-in-every-way weapon on its own - a Mace specialist transforms it into something far more precise and dangerous.",
             new Move("Mace Bash", "A heavy strike, middling in every way on its own - a Mace specialist's weapon transforms it into something much more precise and dangerous.",
                 apCost: 1, mpCost: 0, range: 1, baseAccuracy: 0.70f, baseDamage: 0, damageType: DamageType.Blunt, strengthDivisor: 4f,
-                critChance: 0.15f, critMultiplier: 3f,
+                critChance: 0.05f, critMultiplier: 2f,
                 inflictsStatusEffect: "Stunned", statusEffectChance: 0.20f, statusDurationTurns: 1))
         {
-            Type = WeaponType.Mace, Weight = 3, AttackPower = 8,
+            Type = WeaponType.Mace, Weight = 3, AttackPower = 3,
             SpecialistAccuracyBonus = 0.20f, SpecialistRangeBonus = 1,
-            SpecialistFlatDamageBonus = 3, SpecialistFlatDamageBonusType = DamageType.Light,
+            SpecialistFlatDamageBonus = 1, SpecialistFlatDamageBonusType = DamageType.Light,
         };
     }
 }

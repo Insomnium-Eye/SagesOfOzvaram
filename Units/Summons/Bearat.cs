@@ -13,6 +13,7 @@ namespace SagesOfOzvaram.Units.Summons
             Factions.Add(Faction.Wild);
             Diet = Diet.Carnivore;
             AngerRange = 3;
+            ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
             Strength = 12;     // "Attack" on the card
             Intelligence = 2;

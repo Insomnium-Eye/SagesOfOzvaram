@@ -20,8 +20,14 @@ namespace SagesOfOzvaram.Units.Heroes
             Defense = 8;
             Resistance = 8;
             Intelligence = 6;
-            MaxMP = 8;       // skill-based, not a caster
-            CurrentMP = 8;
+            // Was 8 - too low to ever afford the Portal System's bootstrap (its own card cost
+            // plus the +5 surcharge for a first Generic Portal) even for the cheapest summon,
+            // and Tame Beast/the generic utility spells in the Hunter's own kit need headroom
+            // too. Still clearly the lowest of the "real" spenders (Sorcerer 20, Cleric 15) -
+            // skill-based, not a caster - just no longer functionally locked out of the
+            // beast-taming/summoning mechanics that are the class's own stated identity.
+            MaxMP = 12;
+            CurrentMP = 12;
 
             TryAddToInventory(WeaponCatalog.Longbow);
             TryAddToInventory(WeaponCatalog.FlintlockPistol);
