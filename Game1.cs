@@ -947,23 +947,31 @@ namespace SagesOfOzvaram
             }
             else
             {
-                // A summoned creature doesn't leave a corpse the way a hero does - the instant
-                // one's HP reaches 0 (a direct hit, a Bleed tick, anything else that can zero out
-                // HP), it's removed from the battlefield outright instead of lingering with the
-                // gray "DEAD" tint/label a hero gets (see Draw's unit-rendering loop). A
-                // per-frame sweep catches every death cause uniformly rather than hunting down
-                // each individual path that can reduce HP to 0. A hero (Owner == null) is
-                // deliberately left alone here - its corpse stays exactly as it already did.
-                _units.RemoveAll(u => u.Owner != null && !u.IsAlive);
+                // Neither a summoned creature NOR an untamed Wild beast leaves a corpse the way a
+                // hero (one of the 4 summoners) does - the instant one's HP reaches 0 (a direct
+                // hit, a Bleed tick, anything else that can zero out HP), it's removed from the
+                // battlefield outright instead of lingering with the gray "DEAD" tint/label a
+                // hero gets (see Draw's unit-rendering loop). A per-frame sweep catches every
+                // death cause uniformly rather than hunting down each individual path that can
+                // reduce HP to 0. A hero (Owner == null, not Faction.Wild) is deliberately left
+                // alone here - its corpse stays exactly as it already did. A TAMED beast (Owner
+                // set) is already covered by the Owner != null half, same as any other summon.
+                _units.RemoveAll(u => !u.IsAlive && (u.Owner != null || u.Factions.Contains(Faction.Wild)));
 
                 // FFA win check - a unit's team is itself, or whoever summoned it (see
                 // GetTeamRoot/BaseUnit.Owner); the moment at most one team still has a living
                 // member, the match is over. A lone surviving summon still counts as its owner's
-                // team winning, even if the owner itself has already Fainted. Suppressed entirely
-                // in Test Mode - it spawns all 4 classes as separate "teams" with AI that can
-                // still attack if already in range, and a stray kill ending the "match" would cut
-                // a testing session short for no reason.
-                var stillStandingTeams = _units.Where(u => !u.IsFainted).Select(GetTeamRoot).Distinct().ToList();
+                // team winning, even if the owner itself has already Fainted. An untamed Wild
+                // beast (Owner == null) is excluded entirely from this count - GetTeamRoot would
+                // otherwise treat it as its OWN one-unit "team" (nobody owns it, so it roots to
+                // itself), which let a wild animal surviving on the field keep the match alive
+                // forever after every real summoner but one had already been wiped out. Suppressed
+                // entirely in Test Mode - it spawns all 4 classes as separate "teams" with AI that
+                // can still attack if already in range, and a stray kill ending the "match" would
+                // cut a testing session short for no reason.
+                var stillStandingTeams = _units
+                    .Where(u => !u.IsFainted && !(u.Owner == null && u.Factions.Contains(Faction.Wild)))
+                    .Select(GetTeamRoot).Distinct().ToList();
                 if (!_testModeActive && stillStandingTeams.Count <= 1)
                 {
                     _matchWinner = stillStandingTeams.Count == 1 ? stillStandingTeams[0] : null;

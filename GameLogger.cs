@@ -27,10 +27,11 @@ namespace SagesOfOzvaram
 
         private static bool _everLogged;
 
-        /// <summary>Call once, as the very first thing the program does (see Program.cs).</summary>
+        /// <summary>Call once, as the very first thing the program does (see Program.cs). AttachConsole itself is a kernel32.dll P/Invoke - Windows-only, no such library exists on Linux/macOS - so it's skipped entirely off Windows rather than letting a DllNotFoundException crash the game before Game1 even constructs.</summary>
         public static void Initialize()
         {
-            AttachConsole(ATTACH_PARENT_PROCESS);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                AttachConsole(ATTACH_PARENT_PROCESS);
         }
 
         /// <summary>
