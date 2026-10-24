@@ -42,6 +42,19 @@ namespace SagesOfOzvaram
         private bool _hasAutoAdvancedThisTurn = false;
         private bool _hasAiActedThisTurn = false;
 
+        /// <summary>Which unit we last ran the once-per-turn setup for (control handoff, resetting _hasAiActedThisTurn/_hasAutoAdvancedThisTurn, deciding _currentUnitTurnBatched) - compared against _turnSystem.CurrentUnit each frame so that setup fires exactly once per turn (see the camera-tracking block in Update), not every single frame once the camera happens to already be settled (the previous, buggier trigger condition).</summary>
+        private BaseUnit _lastTurnStartUnit;
+
+        /// <summary>
+        /// True while the CURRENT unit's turn is being fast-forwarded as part of the AI Turn
+        /// Batching system (see ShouldBatchAiTurn) rather than individually presented with a
+        /// camera pan - always false for the player's own turn. Decided once per turn, at the
+        /// same moment _hasAiActedThisTurn/_hasAutoAdvancedThisTurn reset (see Update), and read
+        /// both there (to skip the camera pan/3s dwell) and in Draw (to show the "Other units are
+        /// taking their turns..." message).
+        /// </summary>
+        private bool _currentUnitTurnBatched;
+
         /// <summary>True once LogUnitTurnDivider has printed at least one unit's turn divider - false right after a fresh match starts (EnterTestMode/EnterOriginalMode) so the very first unit's turn doesn't print a leading separator with nothing above it to separate from.</summary>
         private bool _hasLoggedAnyUnitTurn = false;
 
@@ -1065,27 +1078,19 @@ namespace SagesOfOzvaram
                     }
                     else
                     {
-                        _cameraTarget = _turnSystem.CurrentUnit.Position;
-
-                        if (_turnSystem.TransitioningCamera)
+                        // Once-per-turn setup, keyed off the unit actually changing rather than
+                        // "the camera happens to be settled" (the previous trigger condition) -
+                        // that used to re-fire every single frame once the pan finished, resetting
+                        // _hasAiActedThisTurn back to false and re-invoking RunSimpleAI repeatedly
+                        // for the rest of a slow unit's dwell time (harmless in practice, since AP
+                        // was already spent and a repeat call found nothing left to do, but pure
+                        // waste). Doing it here also means _playerUnit reassignment and AI Turn
+                        // Batching's decision (ShouldBatchAiTurn, right below) are both already
+                        // correct from this turn's very first frame, not just once the pan settles.
+                        bool isNewUnitTurn = _lastTurnStartUnit != _turnSystem.CurrentUnit;
+                        if (isNewUnitTurn)
                         {
-                            float progress = _turnSystem.CameraTransitionElapsed / 1.5f;  // Normalize to 0-1
-                            progress = MathHelper.Clamp(progress, 0f, 1f);
-
-                            // Smooth interpolation (easing)
-                            float easeProgress = progress * progress * (3f - 2f * progress);  // Smoothstep
-
-                            _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, easeProgress);
-                            _renderer.ZoomLevel = MathHelper.Lerp(_renderer.ZoomLevel, _cameraZoomTarget, easeProgress);
-                        }
-                        else
-                        {
-                            // Initial swoop-in is done - lock on exactly from here so the camera
-                            // can never lag behind a unit mid-walk.
-                            _renderer.CameraPosition = _cameraTarget;
-                            _renderer.ZoomLevel = _cameraZoomTarget;
-
-                            // Allow this unit's one AI move + the auto-advance that ends its turn
+                            _lastTurnStartUnit = _turnSystem.CurrentUnit;
                             _hasAutoAdvancedThisTurn = false;
                             _hasAiActedThisTurn = false;
 
@@ -1155,6 +1160,39 @@ namespace SagesOfOzvaram
                                     _portalPlacementModeActive = false;
                                     _movementModeActive = false;
                                 }
+                            }
+
+                            // AI Turn Batching - decided fresh every turn, right after the control
+                            // handoff above so _playerUnit already reflects whoever controls THIS
+                            // turn. Always false for the player's own turn.
+                            _currentUnitTurnBatched = _turnSystem.CurrentUnit != _playerUnit && ShouldBatchAiTurn(_turnSystem.CurrentUnit);
+                        }
+
+                        // A batched unit's turn (see ShouldBatchAiTurn/the AI-driving branch
+                        // below, which fast-forwards it with no dwell either) gets no camera
+                        // attention at all - left exactly wherever it already was, rather than
+                        // panning to every wild animal/unseen enemy's turn one at a time.
+                        if (!_currentUnitTurnBatched)
+                        {
+                            _cameraTarget = _turnSystem.CurrentUnit.Position;
+
+                            if (_turnSystem.TransitioningCamera)
+                            {
+                                float progress = _turnSystem.CameraTransitionElapsed / 1.5f;  // Normalize to 0-1
+                                progress = MathHelper.Clamp(progress, 0f, 1f);
+
+                                // Smooth interpolation (easing)
+                                float easeProgress = progress * progress * (3f - 2f * progress);  // Smoothstep
+
+                                _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, easeProgress);
+                                _renderer.ZoomLevel = MathHelper.Lerp(_renderer.ZoomLevel, _cameraZoomTarget, easeProgress);
+                            }
+                            else
+                            {
+                                // Initial swoop-in is done - lock on exactly from here so the
+                                // camera can never lag behind a unit mid-walk.
+                                _renderer.CameraPosition = _cameraTarget;
+                                _renderer.ZoomLevel = _cameraZoomTarget;
                             }
                         }
                     }
@@ -1274,19 +1312,48 @@ namespace SagesOfOzvaram
 
                         // Simple placeholder AI (GDD-pending): walk toward the player once per
                         // turn, so there's something in range to test attacks/spells against.
-                        // Runs as soon as the camera transition settles, well before the
-                        // 3-second auto-advance below ends the turn.
-                        if (!isPlayerTurn && !_hasAiActedThisTurn)
+                        if (_currentUnitTurnBatched)
                         {
-                            _hasAiActedThisTurn = true;
-                            RunSimpleAI(_turnSystem.CurrentUnit);
+                            // AI Turn Batching (see ShouldBatchAiTurn): no camera pan to wait for
+                            // and no fixed dwell afterward either - act the instant the turn
+                            // starts, then advance the instant it's done acting AND nothing is
+                            // still animating (the same _activeAttackEffects gate this whole outer
+                            // if/else chain already waits on, so an attack's own swing/projectile
+                            // still finishes playing before the next unit's turn begins - this
+                            // just skips the ADDITIONAL fixed 3-second hold non-batched turns get
+                            // on top of that). The "Other units are taking their turns..." message
+                            // (see DrawBottomHint in Draw) covers the whole stretch.
+                            if (!_hasAiActedThisTurn)
+                            {
+                                _hasAiActedThisTurn = true;
+                                RunSimpleAI(_turnSystem.CurrentUnit);
+                            }
+                            else if (!_hasAutoAdvancedThisTurn)
+                            {
+                                _hasAutoAdvancedThisTurn = true;
+                                _turnSystem.NextUnit();
+                            }
                         }
-
-                        // Auto-advance to next unit after 3 seconds (once per unit, non-player units only)
-                        if (!isPlayerTurn && _turnSystem.UnitTurnElapsed > 3f && !_hasAutoAdvancedThisTurn)
+                        else
                         {
-                            _hasAutoAdvancedThisTurn = true;
-                            _turnSystem.NextUnit();
+                            // Individually-presented AI turn (a currently-visible team unit, or
+                            // AI Turn Batching disabled e.g. in Test Mode) - unchanged pacing:
+                            // wait for the camera's own swoop-in to finish, THEN act, THEN hold
+                            // for a fixed 3-second dwell (measured from turn start, so it overlaps
+                            // the swoop) before moving on, so the player has time to actually see
+                            // what a visible enemy just did.
+                            if (!isPlayerTurn && !_turnSystem.TransitioningCamera && !_hasAiActedThisTurn)
+                            {
+                                _hasAiActedThisTurn = true;
+                                RunSimpleAI(_turnSystem.CurrentUnit);
+                            }
+
+                            // Auto-advance to next unit after 3 seconds (once per unit, non-player units only)
+                            if (!isPlayerTurn && _turnSystem.UnitTurnElapsed > 3f && !_hasAutoAdvancedThisTurn)
+                            {
+                                _hasAutoAdvancedThisTurn = true;
+                                _turnSystem.NextUnit();
+                            }
                         }
                     }
 
@@ -2897,6 +2964,32 @@ namespace SagesOfOzvaram
                 }
             }
             return visible;
+        }
+
+        /// <summary>
+        /// AI Turn Batching: decides whether `unit`'s upcoming AI turn should be fast-forwarded
+        /// (no camera pan, no 3-second dwell - see the camera-tracking block in Update and its
+        /// AI-driving branch) rather than individually presented. Three rules, applied in order:
+        /// 1) Every animal unit (Faction.Wild - every Beast/Roachlin summon, tamed or not) ALWAYS
+        /// batches, regardless of visibility - wild creatures/summons are rarely the interesting
+        /// part of an enemy's turn, and there are often several of them on the field at once. 2)
+        /// A team (hero) unit batches too UNLESS it's currently visible to the player's own
+        /// team's vision (Fog of War, GetVisibleTilesForTeam) - an unseen enemy hero's turn is
+        /// just as uninteresting to watch as a wild animal's, since nothing about it is even on
+        /// screen. 3) A VISIBLE team unit does NOT batch - that's the one case worth slowing down
+        /// for, since the player can actually watch what it does. Only ever called for a
+        /// non-player unit (see Update) - the player's own turn is never batched.
+        /// </summary>
+        private bool ShouldBatchAiTurn(BaseUnit unit)
+        {
+            if (unit.Factions.Contains(Faction.Wild))
+                return true;
+
+            if (_playerUnit == null)
+                return false;
+
+            var visibleTiles = GetVisibleTilesForTeam(GetTeamRoot(_playerUnit));
+            return !visibleTiles.Contains(_hexGrid.WorldToHex(unit.Position));
         }
 
         /// <summary>One fixed color per player team (by the team root's HeroClass - Sorcerer/Warrior/Cleric/Hunter), echoing the same rough palette the Spell Card placeholder art already established (purples for Sorcerer, reds for Warrior, forest greens for Hunter) plus gold for Cleric.</summary>
@@ -4918,6 +5011,12 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your Generic Portal - E to cancel");
                 else if (_devSummonModeActive)
                     DrawBottomHint(viewportSize, $"Click a tile to place {_pendingDevSummonCard.Name} ({(_pendingDevSummonOwner != null ? _pendingDevSummonOwner.Name : "Neutral")}) - E to cancel");
+                else if (_currentUnitTurnBatched)
+                    // AI Turn Batching (see ShouldBatchAiTurn) - shown for the whole stretch of
+                    // fast-forwarded animal/unseen-enemy turns, taking priority over the normal
+                    // combat-log fallback below so a quick flurry of individual action messages
+                    // doesn't flicker in and out while it's happening.
+                    DrawBottomHint(viewportSize, "Other units are taking their turns...");
                 else if (_combatLogTimer > 0f && !string.IsNullOrEmpty(_combatLogMessage))
                     DrawBottomHint(viewportSize, _combatLogMessage);
 
