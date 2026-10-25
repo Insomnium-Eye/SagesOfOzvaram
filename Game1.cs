@@ -1186,7 +1186,7 @@ namespace SagesOfOzvaram
                         // below, which fast-forwards it with no dwell either) gets no camera
                         // attention at all - left exactly wherever it already was, rather than
                         // panning to every wild animal/unseen enemy's turn one at a time.
-                        if (!_currentUnitTurnBatched && _targetingModeActive && _hoveredAttackTarget != null)
+                        if (!_currentUnitTurnBatched && _targetingModeActive)
                         {
                             // Picking a target for an attack or a damage-dealing spell cast (both
                             // go through _targetingModeActive - see HandleTargetingInput): ease
@@ -1194,21 +1194,29 @@ namespace SagesOfOzvaram
                             // (_hoveredAttackTarget, recomputed every Draw frame) instead of the
                             // acting unit's own position - a target "a bit far" away used to need
                             // manual panning first before it could even be clicked precisely.
-                            // Deliberately a gradual exponential approach, NOT the hard lock the
-                            // normal per-turn pan settles into below - a hard snap would yank the
-                            // just-hovered candidate out from under a stationary mouse in a single
-                            // frame, which would likely un-hover it the very next frame (the mouse
-                            // didn't move, but the world did), snapping back, re-hovering, snapping
-                            // again... the same runaway-feedback risk OpenMovementMode's own doc
-                            // comment warns about. A gradual approach never fully outruns a
-                            // stationary mouse in one frame, so hover stays stable while it closes
-                            // the distance. Left exactly where it was (no camera change at all,
-                            // not even reverting to the acting unit) the instant nothing's hovered
-                            // - staying put beats snapping back only to immediately re-approach
-                            // the next real hover.
-                            _cameraTarget = _hoveredAttackTarget.Position;
-                            float followAmount = 1f - MathF.Pow(0.0001f, deltaTime);
-                            _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, MathHelper.Clamp(followAmount, 0f, 1f));
+                            //
+                            // Bug fix: this used to be an if/else-if alongside the normal per-turn
+                            // lock below, so the INSTANT hover was lost (e.g. the candidate's own
+                            // approach moved it out from under a stationary mouse, a near-certainty
+                            // with a gradual ease) it fell through to that else-if and hard-SNAPPED
+                            // the camera back onto the caster - which could then put the candidate
+                            // back under the mouse, re-hovering it, easing toward it again, losing
+                            // hover again, snapping back again... a genuine jitter loop, not the
+                            // intended "just stay put" behavior the comment below already described
+                            // but the code never actually implemented. Now entirely self-contained:
+                            // while actually hovering something, ease toward it (gradual, not an
+                            // instant snap, for the same reason - closing the gap in one frame would
+                            // risk the exact same un-hover-then-snap-back cycle); the instant nothing
+                            // IS hovered, this whole block simply does nothing at all, leaving the
+                            // camera exactly where it last was - it can no longer fall through to the
+                            // caster-lock branch while targeting mode is still open, only once it
+                            // actually closes (cast or cancel) does the normal per-turn lock resume.
+                            if (_hoveredAttackTarget != null)
+                            {
+                                _cameraTarget = _hoveredAttackTarget.Position;
+                                float followAmount = 1f - MathF.Pow(0.0001f, deltaTime);
+                                _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, MathHelper.Clamp(followAmount, 0f, 1f));
+                            }
                         }
                         else if (!_currentUnitTurnBatched)
                         {
@@ -6067,16 +6075,13 @@ namespace SagesOfOzvaram
             DrawTextCentered(card.Name, FractionalRect(destRect, CardNameBarRegion), Color.White);
             DrawTextCentered(card.Effect.MPCost.ToString(), FractionalRect(destRect, CardCostCircleRegion), canAffordMP ? Color.Black : Color.Red);
 
-            // Bug fix: the card showed MP cost but never AP cost anywhere at all - a player
-            // could have plenty of MP (and even AP left over, just not enough) and have no way
-            // to see why a cast was refused short of reading the fading "Not enough AP/MP"
-            // combat-log line. Folded into the existing class-label bar (room enough once
-            // DrawTextCentered's own auto-shrink kicks in) rather than a new region, and tinted
-            // red the same way the MP circle already is whenever current AP is the actual
-            // blocker, so either cost reads as a clear "this is why" at a glance.
-            bool canAffordAP = caster.CurrentAP >= card.Effect.APCost;
-            string typeLine = $"{card.ClassLabel} ({card.Effect.APCost} AP)";
-            DrawTextCentered(typeLine, FractionalRect(destRect, CardTypeBarRegion), canAffordAP ? Color.White : Color.Red);
+            // No longer shows AP cost here (briefly did, for one session) - every spell costs a
+            // flat 1 AP now (see SpellCatalog's own header comment), so a per-card number would
+            // just repeat the same "1 AP" on all 69 cards with no actual information in it. The
+            // rare "0 AP left, can't cast anything" case still surfaces through the normal
+            // "Not enough AP/MP for X." combat-log message on a failed cast attempt, same as
+            // before AP cost ever got its own display.
+            DrawTextCentered(card.ClassLabel, FractionalRect(destRect, CardTypeBarRegion), Color.White);
             DrawWrappedText(card.Description, FractionalRect(destRect, CardDescriptionRegion), Color.Black);
 
             string headline = GetSpellHeadlineNumber(card.Effect, caster);
@@ -6374,8 +6379,6 @@ namespace SagesOfOzvaram
             {
                 if (FractionalRect(destRect, CardCostCircleRegion).Contains(mousePos))
                     return "MP Cost: mana this spell costs to cast.";
-                if (FractionalRect(destRect, CardTypeBarRegion).Contains(mousePos))
-                    return "AP Cost: action points this spell costs to cast, shown in parentheses.";
                 if (FractionalRect(destRect, CardDamageCircleRegion).Contains(mousePos))
                     return GetSpellHeadlineTooltip(spellCard.Effect);
             }
