@@ -14,6 +14,7 @@ namespace SagesOfOzvaram.Units.Heroes
         {
             SpriteAssetPath = "imgs/sprites/units/ApprenticeSorcerer/Sorcerer_Sprite_1";
             Scale = 1.0f;
+            Level = 5; // Leveling System (first pass) - every summoner starts here, see BaseUnit.Level/LevelUp
             Strength = 5;    // Vectium: nimble spellcaster, not a melee fighter
             Accuracy = 10;
             Evasion = 4;

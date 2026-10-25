@@ -20,6 +20,9 @@ namespace SagesOfOzvaram.Combat
         public string StatusApplied { get; set; } // e.g. "Bleeding"/"Stunned", null if none landed
         public int KnockbackTiles { get; set; }    // tiles actually travelled (may be less than the move's max if blocked)
         public bool TargetFainted { get; set; }
+
+        /// <summary>Whoever got credited with a level-up from this hit (see ResolveAgainst's kill check) - null unless this hit actually killed a Wild-faction unit. Credited to the attacker's Owner if it has one (a summon's kill makes its summoner stronger, not the summon itself), otherwise the attacker directly.</summary>
+        public BaseUnit LeveledUpUnit { get; set; }
     }
 
     /// <summary>
@@ -144,6 +147,20 @@ namespace SagesOfOzvaram.Combat
             }
 
             outcome.TargetFainted = target.IsFainted;
+
+            // Leveling System (first pass): landing the actual killing blow on a Wild-faction
+            // unit (an untamed beast OR one that's since been tamed - either way, still a
+            // "beast" by type) makes the CASTER stronger, not just the summon that happened to
+            // land the hit - see BaseUnit.LevelUp. A kill via a non-attack cause (e.g. a Bleed
+            // tick ticking on the beast's own turn, with no attacker to credit) doesn't trigger
+            // this yet, nor does killing an enemy hero/summon - both documented scope cuts on
+            // LevelUp itself, to be revisited once a real XP system replaces this.
+            if (damage > 0 && !target.IsAlive && target.Factions.Contains(Faction.Wild))
+            {
+                var credited = attacker.Owner ?? attacker;
+                credited.LevelUp();
+                outcome.LeveledUpUnit = credited;
+            }
 
             if (move.InflictsStatusEffect != null && Rng.NextDouble() < move.GetStatusEffectChance(attacker, target))
             {

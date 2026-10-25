@@ -22,5 +22,11 @@ namespace SagesOfOzvaram.Combat
             "Minor AP Potion",
             "A sharp, bracing tonic - grants 2 AP the moment it's drunk.",
             grantAP: 2);
+
+        /// <summary>Dropped by a slain Wild beast (see Game1's death sweep/DroppedItem), picked up via the "Pick Up" Action - unlike the 3 potions above, this one actually takes item-box space (Weight 1), since it's something found in the field rather than freely granted by a spell.</summary>
+        public static ConsumableItem Meat => new ConsumableItem(
+            "Meat",
+            "Fresh meat from a slain beast - heals 10 HP, restores 10 MP, and grants 3 AP the moment it's eaten.",
+            healHP: 10, restoreMP: 10, grantAP: 3, weight: 1);
     }
 }

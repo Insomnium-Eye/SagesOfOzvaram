@@ -224,6 +224,9 @@ namespace SagesOfOzvaram
         }
         private List<PlacedTrap> _placedTraps = new List<PlacedTrap>();
 
+        /// <summary>Items currently lying on the ground (e.g. Meat dropped by a slain Wild beast - see Update's death sweep), waiting to be picked up via the "Pick Up" Action - see TurnMenuBuilder/ExecutePickUp.</summary>
+        private List<DroppedItem> _droppedItems = new List<DroppedItem>();
+
         // Summon placement (opened for a SummonCard) - click any highlighted tile to spawn the
         // summoned creature there (within SummonPlacementRange of its owner's Generic Portal,
         // or of the caster directly if it somehow has none - see OpenSummonCreaturePlacement);
@@ -535,6 +538,7 @@ namespace SagesOfOzvaram
             _tameBeastModeActive = false;
             _trapPlacementModeActive = false;
             _placedTraps.Clear();
+            _droppedItems.Clear();
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -637,6 +641,7 @@ namespace SagesOfOzvaram
             _tameBeastModeActive = false;
             _trapPlacementModeActive = false;
             _placedTraps.Clear();
+            _droppedItems.Clear();
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
@@ -979,6 +984,15 @@ namespace SagesOfOzvaram
             }
             else
             {
+                // Leveling System incentive: any beast (Wild-faction, tamed or not) that just
+                // died drops a Meat item on the ground at its own position, BEFORE the sweep
+                // below removes it - same per-frame catch-all reasoning as that sweep (every
+                // death cause, not just a direct attack), so a beast that bleeds out still drops
+                // its Meat even though AttackResolver's own kill check (no attacker to credit)
+                // wouldn't have granted a level for it.
+                foreach (var deadBeast in _units.Where(u => !u.IsAlive && u.Factions.Contains(Faction.Wild)))
+                    _droppedItems.Add(new DroppedItem(ConsumableCatalog.Meat, deadBeast.Position));
+
                 // Neither a summoned creature NOR an untamed Wild beast leaves a corpse the way a
                 // hero (one of the 4 summoners) does - the instant one's HP reaches 0 (a direct
                 // hit, a Bleed tick, anything else that can zero out HP), it's removed from the
@@ -1172,7 +1186,31 @@ namespace SagesOfOzvaram
                         // below, which fast-forwards it with no dwell either) gets no camera
                         // attention at all - left exactly wherever it already was, rather than
                         // panning to every wild animal/unseen enemy's turn one at a time.
-                        if (!_currentUnitTurnBatched)
+                        if (!_currentUnitTurnBatched && _targetingModeActive && _hoveredAttackTarget != null)
+                        {
+                            // Picking a target for an attack or a damage-dealing spell cast (both
+                            // go through _targetingModeActive - see HandleTargetingInput): ease
+                            // toward whichever candidate the mouse is CURRENTLY over
+                            // (_hoveredAttackTarget, recomputed every Draw frame) instead of the
+                            // acting unit's own position - a target "a bit far" away used to need
+                            // manual panning first before it could even be clicked precisely.
+                            // Deliberately a gradual exponential approach, NOT the hard lock the
+                            // normal per-turn pan settles into below - a hard snap would yank the
+                            // just-hovered candidate out from under a stationary mouse in a single
+                            // frame, which would likely un-hover it the very next frame (the mouse
+                            // didn't move, but the world did), snapping back, re-hovering, snapping
+                            // again... the same runaway-feedback risk OpenMovementMode's own doc
+                            // comment warns about. A gradual approach never fully outruns a
+                            // stationary mouse in one frame, so hover stays stable while it closes
+                            // the distance. Left exactly where it was (no camera change at all,
+                            // not even reverting to the acting unit) the instant nothing's hovered
+                            // - staying put beats snapping back only to immediately re-approach
+                            // the next real hover.
+                            _cameraTarget = _hoveredAttackTarget.Position;
+                            float followAmount = 1f - MathF.Pow(0.0001f, deltaTime);
+                            _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, MathHelper.Clamp(followAmount, 0f, 1f));
+                        }
+                        else if (!_currentUnitTurnBatched)
                         {
                             _cameraTarget = _turnSystem.CurrentUnit.Position;
 
@@ -1599,6 +1637,12 @@ namespace SagesOfOzvaram
             if (_playerUnit == null)
                 return;
 
+            if (_classHands.TryGetValue(_playerUnit.Class, out var currentHand) && currentHand != null && currentHand.Count >= MaxHandSize)
+            {
+                ShowCombatMessage($"{_playerUnit.Name}'s hand is full ({MaxHandSize}/{MaxHandSize}) - can't draw another card.");
+                return;
+            }
+
             int drawCost = GetDrawAPCost(_playerUnit);
             if (_playerUnit.CurrentAP < drawCost)
                 return;
@@ -1803,7 +1847,7 @@ namespace SagesOfOzvaram
         /// reflects whatever just changed (AP spent, a neighboring tile that opened up, ...).
         /// </summary>
         private List<TurnMenuOption> GetTurnMenuOptions() =>
-            TurnMenuBuilder.Build(_playerUnit, GameMode.Combat, _hexGrid, _map, _units);
+            TurnMenuBuilder.Build(_playerUnit, GameMode.Combat, _hexGrid, _map, _units, _droppedItems);
 
         /// <summary>
         /// Handle input on the player unit's turn menu: W/S or mouse-hover to highlight an
@@ -1894,6 +1938,39 @@ namespace SagesOfOzvaram
                 _turnMenuActive = false;
                 OpenItemsMenu();
             }
+            else if (optionId == "PickUp")
+            {
+                ExecutePickUp(_playerUnit);
+                // Stays on the turn menu (TurnMenuBuilder re-evaluates "Pick Up" fresh - it'll
+                // disappear once nothing reachable is left to grab, same as every other option).
+                _turnMenuIndex = 0;
+            }
+        }
+
+        /// <summary>
+        /// The "Pick Up" Action (see TurnMenuBuilder): spends BaseUnit.PickUpAPCost (1) to grab
+        /// whichever dropped ConsumableItem on `unit`'s own tile or one tile away is reachable
+        /// AND has item-box room (BaseUnit.CanCarryConsumable) - the menu option itself already
+        /// guarantees at least one such item exists, so this just finds and takes the first one
+        /// (nearest tile first, i.e. the unit's own tile before any neighbor). Shared by the
+        /// player (ConfirmTurnMenuSelection) - AI doesn't use this yet, same documented scope cut
+        /// as spell-card casting in RunHeroAI.
+        /// </summary>
+        private void ExecutePickUp(BaseUnit unit)
+        {
+            var unitHex = _hexGrid.WorldToHex(unit.Position);
+            var pickup = _droppedItems
+                .Where(d => d.Item is ConsumableItem ci && unit.CanCarryConsumable(ci))
+                .OrderBy(d => _hexGrid.GetDistance(unitHex.col, unitHex.row, _hexGrid.WorldToHex(d.Position).col, _hexGrid.WorldToHex(d.Position).row))
+                .FirstOrDefault(d => _hexGrid.GetDistance(unitHex.col, unitHex.row, _hexGrid.WorldToHex(d.Position).col, _hexGrid.WorldToHex(d.Position).row) <= 1);
+            if (pickup == null)
+                return;
+
+            var consumable = (ConsumableItem)pickup.Item;
+            unit.CurrentAP = Math.Max(0, unit.CurrentAP - BaseUnit.PickUpAPCost);
+            unit.AddConsumable(consumable);
+            _droppedItems.Remove(pickup);
+            ShowCombatMessage($"{unit.Name} picks up {consumable.Name}.");
         }
 
         /// <summary>
@@ -3565,6 +3642,9 @@ namespace SagesOfOzvaram
         /// <summary>Flat AP cost to summon a creature - first-pass placeholder, pending a balance pass (see GDD Portal System/Summon Cards). Unchanged whether or not a Generic Portal also needs conjuring first - that only ever costs extra mana (GenericPortalSummonManaSurcharge), never extra AP.</summary>
         private const int SummonAPCost = 2;
 
+        /// <summary>Hard cap on a single class's hand (TryDrawCardFromDeck refuses to draw past this) - first-pass placeholder. Deliberately NOT enforced on EnsureHandInitialized's starting draw (always well under this) or the dev console's "add card" command (an explicit debug tool meant to bypass normal limits, same as Test Mode already ignoring the deck-size cap elsewhere).</summary>
+        private const int MaxHandSize = 10;
+
         /// <summary>How far from its anchor point a summoned creature can be placed - normally its owner's Generic Portal (see OpenSummonCreaturePlacement), or the caster directly in the fallback case where a creature somehow needs placing with no portal present.</summary>
         private const int SummonPlacementRange = 1;
 
@@ -4028,6 +4108,14 @@ namespace SagesOfOzvaram
 
             foreach (var card in summonCards)
             {
+                // Leveling System (first pass): same Level-vs-ManaCost gate TryCastSelectedCard
+                // applies to the player - an AI caster can't summon anything whose ManaCost
+                // exceeds its own Level either. Checked against the card's own ManaCost, not
+                // totalManaCost below - the Generic Portal surcharge is a one-time bootstrap
+                // cost, not part of the card's own "how strong a summon is this" price tag.
+                if (card.ManaCost > aiUnit.Level)
+                    continue;
+
                 var existingPortal = _units.OfType<Portal>().FirstOrDefault(p => p.IsAlive && p.Owner == aiUnit);
                 bool needsPortal = existingPortal == null;
                 int totalManaCost = card.ManaCost + (needsPortal ? GenericPortalSummonManaSurcharge : 0);
@@ -4107,6 +4195,24 @@ namespace SagesOfOzvaram
             _highlightedHandCardIndex = _handCardIndex;
 
             object card = _availableHandCards[_handCardIndex];
+
+            // Leveling System (first pass): a caster can't cast anything whose MP cost exceeds
+            // their own Level - checked once here, ahead of every dispatch branch below, so it
+            // uniformly gates every SpellCard (Effect.MPCost) and SummonCard (ManaCost) the same
+            // way regardless of which Cast* method would otherwise handle it. This is on top of,
+            // not instead of, the normal MP-affordability check each Cast* method already does.
+            (string Name, int Cost) gatedCard = card switch
+            {
+                SpellCard sc => (sc.Name, sc.Effect.MPCost),
+                SummonCard smc => (smc.Name, smc.ManaCost),
+                _ => (null, 0)
+            };
+            if (gatedCard.Cost > _playerUnit.Level)
+            {
+                ShowCombatMessage($"{gatedCard.Name} requires Level {gatedCard.Cost} - {_playerUnit.Name} is only Level {_playerUnit.Level}.");
+                return;
+            }
+
             if (card is SpellCard spellCard)
             {
                 if (spellCard.Effect.IsBlink)
@@ -4295,7 +4401,8 @@ namespace SagesOfOzvaram
                 string crit = o.Crit ? " (crit!)" : "";
                 string status = o.StatusApplied != null ? $", inflicting {o.StatusApplied}" : "";
                 string fainted = o.TargetFainted ? " - fainted!" : "";
-                return $"hit {o.Target.Name} for {o.Damage}{crit}{status}{fainted}";
+                string levelUp = o.LeveledUpUnit != null ? $" - {o.LeveledUpUnit.Name} reaches Level {o.LeveledUpUnit.Level}!" : "";
+                return $"hit {o.Target.Name} for {o.Damage}{crit}{status}{fainted}{levelUp}";
             });
 
             return $"{attacker.Name} used {move.Name}: {string.Join("; ", parts)}";
@@ -4791,6 +4898,20 @@ namespace SagesOfOzvaram
                 DrawHexFilled(worldPos, new Color(200, 255, 100, 128), Color.Yellow);
             }
 
+            // Dropped items (e.g. Meat from a slain beast) - a small ground marker at each
+            // one's own position, drawn before units so a unit standing on top of one still
+            // reads clearly on top of it. Respects Fog of War same as a unit would (skipped
+            // entirely outside the player's team's current vision, not just dimmed).
+            foreach (var dropped in _droppedItems)
+            {
+                if (fogVisibleTiles != null && !fogVisibleTiles.Contains(_hexGrid.WorldToHex(dropped.Position)))
+                    continue;
+
+                const float size = 14f;
+                var rect = new Rectangle((int)(dropped.Position.X - size / 2f), (int)(dropped.Position.Y - size / 2f), (int)size, (int)size);
+                _spriteBatch.Draw(_whitePixel, rect, new Color(150, 90, 50));
+            }
+
             // Whichever unit (if any) the mouse is currently over - drives which neutral/enemy
             // units show their active stat-change icons below (DrawUnitStatBonuses); the
             // player's own unit and its summons always show theirs regardless of hover.
@@ -5190,9 +5311,11 @@ namespace SagesOfOzvaram
         {
             Rectangle[] optionRects = GetMenuOptionRects(viewportSize, _itemsMenuLabels.Count);
 
-            // Carried weight vs capacity (Weapon-only - see BaseUnit.CurrentInventoryWeight;
-            // Consumables/Equipment aren't weight-capped), shown just above the list itself.
-            string weightText = $"Weight: {_playerUnit.CurrentInventoryWeight}/{_playerUnit.InventoryWeightCapacity}";
+            // Carried weight vs capacity - the combined "item box" (Weapons in Inventory PLUS
+            // Consumables, see BaseUnit.CurrentCarriedWeight) now that Meat actually has a real
+            // Weight (1) - the 3 original potions are still Weight 0, so this reads identically
+            // to the old Weapon-only total for anyone who's never picked up Meat.
+            string weightText = $"Weight: {_playerUnit.CurrentCarriedWeight}/{_playerUnit.InventoryWeightCapacity}";
             Vector2 weightPos = new Vector2(optionRects[0].X, Math.Max(10, optionRects[0].Y - 28));
             Vector2 weightTextSize = _font.MeasureString(weightText);
             var weightBoxRect = new Rectangle((int)weightPos.X - 8, (int)weightPos.Y - 4,
@@ -5937,10 +6060,23 @@ namespace SagesOfOzvaram
             if (_font == null)
                 return;
 
-            bool canAffordMP = caster.CurrentMP >= card.Effect.MPCost;
+            // Red for either reason a cast would be refused right now: not enough current MP,
+            // or (Leveling System) the cost itself exceeds the caster's Level - see
+            // TryCastSelectedCard's own gate, which this just mirrors visually.
+            bool canAffordMP = caster.CurrentMP >= card.Effect.MPCost && card.Effect.MPCost <= caster.Level;
             DrawTextCentered(card.Name, FractionalRect(destRect, CardNameBarRegion), Color.White);
             DrawTextCentered(card.Effect.MPCost.ToString(), FractionalRect(destRect, CardCostCircleRegion), canAffordMP ? Color.Black : Color.Red);
-            DrawTextCentered(card.ClassLabel, FractionalRect(destRect, CardTypeBarRegion), Color.White);
+
+            // Bug fix: the card showed MP cost but never AP cost anywhere at all - a player
+            // could have plenty of MP (and even AP left over, just not enough) and have no way
+            // to see why a cast was refused short of reading the fading "Not enough AP/MP"
+            // combat-log line. Folded into the existing class-label bar (room enough once
+            // DrawTextCentered's own auto-shrink kicks in) rather than a new region, and tinted
+            // red the same way the MP circle already is whenever current AP is the actual
+            // blocker, so either cost reads as a clear "this is why" at a glance.
+            bool canAffordAP = caster.CurrentAP >= card.Effect.APCost;
+            string typeLine = $"{card.ClassLabel} ({card.Effect.APCost} AP)";
+            DrawTextCentered(typeLine, FractionalRect(destRect, CardTypeBarRegion), canAffordAP ? Color.White : Color.Red);
             DrawWrappedText(card.Description, FractionalRect(destRect, CardDescriptionRegion), Color.Black);
 
             string headline = GetSpellHeadlineNumber(card.Effect, caster);
@@ -6033,7 +6169,10 @@ namespace SagesOfOzvaram
             // affordability warning.
             int portalSurcharge = GetGenericPortalSurcharge(card);
             int displayManaCost = card.ManaCost + portalSurcharge;
-            bool canAffordMana = _playerUnit.CurrentMP >= displayManaCost;
+            // Leveling System: gated on the card's own ManaCost, not displayManaCost - the
+            // Generic Portal surcharge is a one-time bootstrap cost, not part of "how strong a
+            // summon is this," so it shouldn't count toward whether Level allows casting it.
+            bool canAffordMana = _playerUnit.CurrentMP >= displayManaCost && card.ManaCost <= _playerUnit.Level;
             Color manaCostColor = portalSurcharge > 0 ? Color.Red : (canAffordMana ? Color.Black : Color.Red);
             DrawTextCentered(card.Name, FractionalRect(destRect, SummonNameBarRegion), Color.White);
             DrawTextCentered(displayManaCost.ToString(), FractionalRect(destRect, SummonManaCostCircleRegion), manaCostColor);
@@ -6235,6 +6374,8 @@ namespace SagesOfOzvaram
             {
                 if (FractionalRect(destRect, CardCostCircleRegion).Contains(mousePos))
                     return "MP Cost: mana this spell costs to cast.";
+                if (FractionalRect(destRect, CardTypeBarRegion).Contains(mousePos))
+                    return "AP Cost: action points this spell costs to cast, shown in parentheses.";
                 if (FractionalRect(destRect, CardDamageCircleRegion).Contains(mousePos))
                     return GetSpellHeadlineTooltip(spellCard.Effect);
             }

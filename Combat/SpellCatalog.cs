@@ -13,6 +13,18 @@ namespace SagesOfOzvaram.Combat
     /// describe mechanics with no execution system behind them yet - see Move.cs's non-attack
     /// fields for what IS captured as real data (heal amounts, granted AP, status duration)
     /// versus what's still prose-only.
+    ///
+    /// AP Cost convention (on request): every spell here costs a flat 1 AP, previously a mix of
+    /// 1-4 depending on the spell. A new spell added below should default to `apCost: 1` the
+    /// same way - only deviate with an explicit reason (and call it out in that spell's own
+    /// comment/Description), since "every spell costs 1 AP" is now the standing rule, not just
+    /// today's balance pass. `Move`'s own `apCost` parameter couldn't be given a language-level
+    /// default of 1 (it's immediately followed by `mpCost`/`range`, which have none - C# requires
+    /// every parameter after the first one with a default to also have one, and those two have no
+    /// sensible default), so this has to stay a documented convention rather than something the
+    /// compiler enforces. Weapon/racial moves (WeaponCatalog.cs/RaceAttacks.cs) are NOT spells
+    /// and are untouched by this - their own AP costs vary by design (e.g. Sword Pierce's extra
+    /// reach, Frost Blast's cone) and nothing here changes that.
     /// </summary>
     public static class SpellCatalog
     {
@@ -21,7 +33,7 @@ namespace SagesOfOzvaram.Combat
             "Deals 1 + INT/2 arcane magic damage to a target within 5 tiles.",
             HeroClass.Sorcerer,
             new Move("Arcane Bolt", "A bolt of raw arcane force.",
-                apCost: 2, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 1,
+                apCost: 1, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 1,
                 intelligenceDivisor: 2f, damageType: DamageType.Magical,
                 animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ArcaneBolt_CardArt");
@@ -35,7 +47,7 @@ namespace SagesOfOzvaram.Combat
                 + "meditating to end it voluntarily instead, locking in the current bonus for 3 more turns.",
             requiredClass: null,
             new Move("Meditate", "Center yourself and let your focus build.",
-                apCost: 2, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 inflictsStatusEffect: "Meditating", statusDurationTurns: 3, isMeditateSpell: true),
             "imgs/Cards/Spells/Meditate_CardArt");
 
@@ -45,7 +57,7 @@ namespace SagesOfOzvaram.Combat
                 + "every turn while asleep. Costs 1 AP to Wake Up early.",
             requiredClass: null,
             new Move("Forced Sleep", "Force yourself into a shallow, restorative sleep.",
-                apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 healPercentMaxHP: 0.20f, inflictsStatusEffect: "Deep Sleep", isSleepSpell: true),
             "imgs/Cards/Spells/ForcedSleep_CardArt");
 
@@ -54,7 +66,7 @@ namespace SagesOfOzvaram.Combat
             "Places 1 minor HP potion, 1 minor MP potion, and 1 minor AP potion directly into the caster's inventory.",
             requiredClass: null,
             new Move("Conjure Potions", "Scrounge together a few minor potions from what's on hand.",
-                apCost: 3, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 isConjurePotions: true),
             "imgs/Cards/Spells/ConjurePotions_CardArt");
 
@@ -63,7 +75,7 @@ namespace SagesOfOzvaram.Combat
             "Simple field first-aid: heals 8 HP and cures Bleeding. No training required - just steady hands and clean cloth.",
             requiredClass: null,
             new Move("Bandage Wound", "Wrap a wound tight to stop the bleeding.",
-                apCost: 2, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 healFlat: 8, curesBleed: true),
             "imgs/Cards/Spells/BandageWound_CardArt");
 
@@ -91,7 +103,7 @@ namespace SagesOfOzvaram.Combat
             "Shout encouragement to nearby allies: every adjacent ally gains +STR/+ACC for 2 turns.",
             requiredClass: null,
             new Move("Rally Cry", "A shout that puts steel back in the spine.",
-                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
                 hitsAllAdjacent: true, targetsAllies: true,
                 inflictsStatusEffect: "Rallied", statusDurationTurns: 2,
                 strengthBuff: 4, accuracyBuff: 15),
@@ -133,7 +145,7 @@ namespace SagesOfOzvaram.Combat
             "Spews flames in an arc, dealing moderate magic damage to every adjacent enemy, with a small chance to set them Burning.",
             HeroClass.Sorcerer,
             new Move("Flames", "A gout of fire sweeps across everything nearby.",
-                apCost: 3, mpCost: 4, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
+                apCost: 1, mpCost: 4, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
                 intelligenceDivisor: 3f, damageType: DamageType.Magical,
                 hitsAllAdjacent: true, inflictsStatusEffect: "Burning", statusEffectChance: 0.20f),
             "imgs/Cards/Spells/Flames_CardArt");
@@ -143,7 +155,7 @@ namespace SagesOfOzvaram.Combat
             "Shoots a spike of ice that impales the first unit in its path, with a chance to inflict Frostbite.",
             HeroClass.Sorcerer,
             new Move("Ice Spike", "A shard of ice, hard and fast enough to punch straight through.",
-                apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 7,
+                apCost: 1, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 7,
                 intelligenceDivisor: 2.5f, damageType: DamageType.Magical,
                 inflictsStatusEffect: "Frostbite", statusEffectChance: 0.25f,
                 animationType: AttackAnimationType.Shooting),
@@ -154,7 +166,7 @@ namespace SagesOfOzvaram.Combat
             "Lightning arcs to the target, then jumps to up to 2 more nearby enemies at reduced range, each with a small chance to Shock.",
             HeroClass.Sorcerer,
             new Move("Chain Lightning", "Lightning that doesn't stop at just one target.",
-                apCost: 3, mpCost: 5, range: 4, baseAccuracy: 0.80f, baseDamage: 6,
+                apCost: 1, mpCost: 5, range: 4, baseAccuracy: 0.80f, baseDamage: 6,
                 intelligenceDivisor: 3f, damageType: DamageType.Magical,
                 inflictsStatusEffect: "Shocked", statusEffectChance: 0.15f,
                 animationType: AttackAnimationType.Shooting),
@@ -165,7 +177,7 @@ namespace SagesOfOzvaram.Combat
             "Enchants the caster's or an adjacent ally's weapon, adding bonus magic damage to its hits based on the wielder's Intelligence, until the encounter ends.",
             HeroClass.Sorcerer,
             new Move("Enchant Weapon", "Weave arcane force into cold steel.",
-                apCost: 2, mpCost: 4, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 4, range: 1, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true),
             "imgs/Cards/Spells/EnchantWeapon_CardArt");
 
@@ -174,7 +186,7 @@ namespace SagesOfOzvaram.Combat
             "A devastating orb of fire hurled at a distant target, exploding on impact - the sorcerer's signature high-damage nuke.",
             HeroClass.Sorcerer,
             new Move("Fireball", "Fire given form and hurled with intent.",
-                apCost: 4, mpCost: 6, range: 5, baseAccuracy: 0.80f, baseDamage: 12,
+                apCost: 1, mpCost: 6, range: 5, baseAccuracy: 0.80f, baseDamage: 12,
                 intelligenceDivisor: 2f, damageType: DamageType.Magical,
                 inflictsStatusEffect: "Burning", statusEffectChance: 0.25f,
                 animationType: AttackAnimationType.Shooting),
@@ -185,7 +197,7 @@ namespace SagesOfOzvaram.Combat
             "A burst of frost erupts from the caster, damaging and chilling every adjacent enemy.",
             HeroClass.Sorcerer,
             new Move("Frost Nova", "The air itself freezes outward in a ring.",
-                apCost: 3, mpCost: 4, range: 0, baseAccuracy: 0.90f, baseDamage: 5,
+                apCost: 1, mpCost: 4, range: 0, baseAccuracy: 0.90f, baseDamage: 5,
                 intelligenceDivisor: 3f, damageType: DamageType.Magical,
                 hitsAllAdjacent: true, inflictsStatusEffect: "Frostbite", statusEffectChance: 0.30f),
             "imgs/Cards/Spells/FrostNova_CardArt");
@@ -205,7 +217,7 @@ namespace SagesOfOzvaram.Combat
             "Lays a curse on a distant target, lowering their Strength and Accuracy for 3 turns.",
             HeroClass.Sorcerer,
             new Move("Curse", "Whisper a hex that saps strength and steadiness alike.",
-                apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 0,
                 inflictsStatusEffect: "Cursed", statusEffectChance: 0.80f, statusDurationTurns: 3),
             "imgs/Cards/Spells/Curse_CardArt");
 
@@ -214,7 +226,7 @@ namespace SagesOfOzvaram.Combat
             "Blink directly beside a distant target and strike them with arcane force, closing the gap instantly.",
             HeroClass.Sorcerer,
             new Move("Teleport Strike", "Here, then there, then already swinging.",
-                apCost: 2, mpCost: 4, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
                 intelligenceDivisor: 3f, damageType: DamageType.Magical,
                 attackerAdvanceTiles: 3),
             "imgs/Cards/Spells/TeleportStrike_CardArt");
@@ -224,7 +236,7 @@ namespace SagesOfOzvaram.Combat
             "Sears a target's mana reserves, dealing bonus magic damage - especially effective against other casters.",
             HeroClass.Sorcerer,
             new Move("Mana Burn", "Set a target's own reserves alight.",
-                apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 4,
+                apCost: 1, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 4,
                 intelligenceDivisor: 4f, damageType: DamageType.Magical,
                 animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/ManaBurn_CardArt");
@@ -244,7 +256,7 @@ namespace SagesOfOzvaram.Combat
             "A slow-forming orb of pure arcane energy - expensive and telegraphed, but hits devastatingly hard, with a real chance to crit.",
             HeroClass.Sorcerer,
             new Move("Arcane Orb", "Raw arcane power, given time to gather before it's unleashed.",
-                apCost: 4, mpCost: 7, range: 5, baseAccuracy: 0.75f, baseDamage: 16,
+                apCost: 1, mpCost: 7, range: 5, baseAccuracy: 0.75f, baseDamage: 16,
                 intelligenceDivisor: 1.5f, damageType: DamageType.Magical,
                 critChance: 0.15f, critMultiplier: 2.5f,
                 animationType: AttackAnimationType.Shooting),
@@ -257,7 +269,7 @@ namespace SagesOfOzvaram.Combat
             "A prayer to Tez, the god of light: restore 15% of the target's maximum HP.",
             HeroClass.Cleric,
             new Move("Tez's Mercy", "A quiet blessing from the god of light.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 healPercentMaxHP: 0.15f, targetsAllies: true),
             "imgs/Cards/Spells/TezsMercy_CardArt");
 
@@ -284,7 +296,7 @@ namespace SagesOfOzvaram.Combat
             "A disciplined beam of holy light: deals 5 + INT/5 LIGHT damage to a target.",
             HeroClass.Cleric,
             new Move("Radiant Bolt", "A narrow shaft of pure, sacred light.",
-                apCost: 2, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 5,
+                apCost: 1, mpCost: 3, range: 4, baseAccuracy: 0.85f, baseDamage: 5,
                 intelligenceDivisor: 5f, damageType: DamageType.Magical,
                 animationType: AttackAnimationType.Shooting),
             "imgs/Cards/Spells/RadiantBolt_CardArt");
@@ -294,7 +306,7 @@ namespace SagesOfOzvaram.Combat
             "A radiant sanctification: grant the target +5 DEF and +5 RES, and imbue their weapon with +5 light damage per hit for 2 turns.",
             HeroClass.Cleric,
             new Move("Blessing of Light", "Set the beloved in a holy glow.",
-                apCost: 2, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true, inflictsStatusEffect: "Blessed", statusDurationTurns: 2),
             "imgs/Cards/Spells/BlessingOfLight_CardArt");
 
@@ -321,7 +333,7 @@ namespace SagesOfOzvaram.Combat
             "A focused blast of divine flame: deal 7 + INT/4 LIGHT damage to a target.",
             HeroClass.Cleric,
             new Move("Dawnfire Smite", "A crack of sunrise, forged into judgment.",
-                apCost: 2, mpCost: 4, range: 4, baseAccuracy: 0.82f, baseDamage: 7,
+                apCost: 1, mpCost: 4, range: 4, baseAccuracy: 0.82f, baseDamage: 7,
                 intelligenceDivisor: 4f, damageType: DamageType.Magical),
             "imgs/Cards/Spells/DawnfireSmite_CardArt");
 
@@ -330,7 +342,7 @@ namespace SagesOfOzvaram.Combat
             "Extend Tez's hand across a short distance: heal an ally within 3 tiles for 10% of their max HP.",
             HeroClass.Cleric,
             new Move("Mercy Reach", "Faith carries farther than the hand can reach.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 healPercentMaxHP: 0.10f, targetsAllies: true),
             "imgs/Cards/Spells/MercyReach_CardArt");
 
@@ -339,7 +351,7 @@ namespace SagesOfOzvaram.Combat
             "A sweeping prayer that strips a single harmful effect from the target, leaving only the strength of their will.",
             HeroClass.Cleric,
             new Move("Purify", "Cleanse the stain of pain and fear.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true),
             "imgs/Cards/Spells/Purify_CardArt");
 
@@ -348,7 +360,7 @@ namespace SagesOfOzvaram.Combat
             "Sanctify nearby allies: all adjacent allies gain +5 DEF and +5 RES for 2 turns.",
             HeroClass.Cleric,
             new Move("Consecration", "The ground itself is blessed by the faithful.",
-                apCost: 2, mpCost: 4, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 4, range: 1, baseAccuracy: 1f, baseDamage: 0,
                 hitsAllAdjacent: true, targetsAllies: true,
                 inflictsStatusEffect: "Consecrated", statusDurationTurns: 2),
             "imgs/Cards/Spells/Consecration_CardArt");
@@ -358,7 +370,7 @@ namespace SagesOfOzvaram.Combat
             "The cleric steps into a protective stance and moves to guard a nearby ally, reducing incoming harm to them for 1 turn.",
             HeroClass.Cleric,
             new Move("Guardian Step", "Stand where the blow was meant to fall.",
-                apCost: 2, mpCost: 3, range: 2, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 2, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true, inflictsStatusEffect: "Guarded", statusDurationTurns: 1),
             "imgs/Cards/Spells/GuardianStep_CardArt");
 
@@ -367,7 +379,7 @@ namespace SagesOfOzvaram.Combat
             "A harsh flash of light punishes an enemy for their sins: deal 8 + INT/4 LIGHT damage and 25% chance to Stun.",
             HeroClass.Cleric,
             new Move("Divine Rebuke", "The heavens answer with stern, burning judgment.",
-                apCost: 3, mpCost: 4, range: 3, baseAccuracy: 0.80f, baseDamage: 8,
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 0.80f, baseDamage: 8,
                 intelligenceDivisor: 4f, damageType: DamageType.Magical,
                 inflictsStatusEffect: "Stunned", statusEffectChance: 0.25f),
             "imgs/Cards/Spells/DivineRebuke_CardArt");
@@ -377,7 +389,7 @@ namespace SagesOfOzvaram.Combat
             "A ring of divine light surrounds the target, granting +10 Accuracy and +2 RES for 3 turns.",
             HeroClass.Cleric,
             new Move("Halo of Tez", "A circle of radiant calm.",
-                apCost: 2, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true, inflictsStatusEffect: "Haloed", statusDurationTurns: 3),
             "imgs/Cards/Spells/HaloOfTez_CardArt");
 
@@ -386,7 +398,7 @@ namespace SagesOfOzvaram.Combat
             "A righteous melee blow empowered by faith: deal 6 + STR/3 + INT/6 LIGHT damage to a target.",
             HeroClass.Cleric,
             new Move("Sanctified Strike", "Steel and faith, bound together in one blow.",
-                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.88f, baseDamage: 6,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 0.88f, baseDamage: 6,
                 strengthDivisor: 3f, intelligenceDivisor: 6f, damageType: DamageType.Magical),
             "imgs/Cards/Spells/SanctifiedStrike_CardArt");
 
@@ -395,7 +407,7 @@ namespace SagesOfOzvaram.Combat
             "A gentle touch that warms the soul and scorches the body: heal an ally for 8 HP and deal 4 + INT/5 LIGHT damage to a nearby enemy.",
             HeroClass.Cleric,
             new Move("Sunflare Touch", "Light that heals the faithful and burns the impure.",
-                apCost: 3, mpCost: 4, range: 2, baseAccuracy: 0.80f, baseDamage: 4,
+                apCost: 1, mpCost: 4, range: 2, baseAccuracy: 0.80f, baseDamage: 4,
                 intelligenceDivisor: 5f, damageType: DamageType.Magical,
                 healFlat: 8, targetsAllies: true),
             "imgs/Cards/Spells/SunflareTouch_CardArt");
@@ -416,7 +428,7 @@ namespace SagesOfOzvaram.Combat
             "For 1 turn, redirects damage aimed at any ally within 3 tiles onto the warrior instead.",
             HeroClass.Warrior,
             new Move("Bodyguard", "Step between your allies and harm.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0,
                 targetsAllies: true, inflictsStatusEffect: "Bodyguarding", statusDurationTurns: 1),
             "imgs/Cards/Spells/Bodyguard_CardArt");
 
@@ -425,7 +437,7 @@ namespace SagesOfOzvaram.Combat
             "For 3 turns, every hit you take grants +2 damage and +2 DEF, stacking for the rest of the fight.",
             HeroClass.Warrior,
             new Move("Rage", "Let every wound feed your fury instead of slowing you down.",
-                apCost: 2, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 inflictsStatusEffect: "Enraged", statusDurationTurns: 3),
             "imgs/Cards/Spells/Rage_CardArt");
 
@@ -434,7 +446,7 @@ namespace SagesOfOzvaram.Combat
             "Channel extra force into whatever weapon is equipped, dealing 150% of its normal damage.",
             HeroClass.Warrior,
             new Move("Mighty Slash", "One devastating swing, whatever's in hand.",
-                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.90f, baseDamage: 4,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 0.90f, baseDamage: 4,
                 strengthDivisor: 2f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/MightySlash_CardArt");
 
@@ -443,7 +455,7 @@ namespace SagesOfOzvaram.Combat
             "Conjures a spectral blade into the caster's hand for the rest of the encounter, granting a bonus STR-scaled attack even if unarmed.",
             HeroClass.Warrior,
             new Move("Summon Blade", "Will a weapon into being from raw discipline.",
-                apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
+                apCost: 1, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
             "imgs/Cards/Spells/SummonBlade_CardArt");
 
         public static readonly SpellCard SummonShield = new SpellCard(
@@ -451,7 +463,7 @@ namespace SagesOfOzvaram.Combat
             "Conjures a spectral shield, granting the caster's Guard stance a bonus as if wielding a real shield.",
             HeroClass.Warrior,
             new Move("Summon Shield", "A shield of pure discipline, held in an empty hand.",
-                apCost: 2, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
+                apCost: 1, mpCost: 4, range: 0, baseAccuracy: 1f, baseDamage: 0),
             "imgs/Cards/Spells/SummonShield_CardArt");
 
         public static readonly SpellCard ConjureArmor = new SpellCard(
@@ -459,7 +471,7 @@ namespace SagesOfOzvaram.Combat
             "Conjures a temporary set of magical armor: +DEF/+RES for 3 turns. A placeholder for the real armor system planned later.",
             HeroClass.Warrior,
             new Move("Conjure Armor", "Plate yourself in force made solid.",
-                apCost: 3, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0,
                 inflictsStatusEffect: "Conjured Armor", statusDurationTurns: 3),
             "imgs/Cards/Spells/ConjureArmor_CardArt");
 
@@ -468,7 +480,7 @@ namespace SagesOfOzvaram.Combat
             "Every adjacent ally gains +DEF for 2 turns.",
             HeroClass.Warrior,
             new Move("Shield Wall", "Form a wall nothing gets through.",
-                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 1f, baseDamage: 0,
                 hitsAllAdjacent: true, targetsAllies: true,
                 inflictsStatusEffect: "Shield Walled", statusDurationTurns: 2),
             "imgs/Cards/Spells/ShieldWall_CardArt");
@@ -478,7 +490,7 @@ namespace SagesOfOzvaram.Combat
             "Spin with weapon extended, striking every adjacent enemy at once.",
             HeroClass.Warrior,
             new Move("Whirlwind", "A spinning arc of steel.",
-                apCost: 3, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 6,
                 strengthDivisor: 3f, damageType: DamageType.Sharp, hitsAllAdjacent: true),
             "imgs/Cards/Spells/Whirlwind_CardArt");
 
@@ -487,7 +499,7 @@ namespace SagesOfOzvaram.Combat
             "A finishing blow - deals double damage against targets below 25% HP.",
             HeroClass.Warrior,
             new Move("Execute", "End it.",
-                apCost: 2, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 5,
+                apCost: 1, mpCost: 3, range: 1, baseAccuracy: 0.85f, baseDamage: 5,
                 strengthDivisor: 3f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/Execute_CardArt");
 
@@ -496,7 +508,7 @@ namespace SagesOfOzvaram.Combat
             "Charge across the battlefield and slam into a distant target, closing the gap instantly.",
             HeroClass.Warrior,
             new Move("Charge", "Close the distance before they can react.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 0.85f, baseDamage: 5,
                 strengthDivisor: 3f, damageType: DamageType.Sharp, attackerAdvanceTiles: 3),
             "imgs/Cards/Spells/Charge_CardArt");
 
@@ -523,7 +535,7 @@ namespace SagesOfOzvaram.Combat
             "Knocks a target's weapon off-balance, lowering their damage and Accuracy for 2 turns.",
             HeroClass.Warrior,
             new Move("Disarm", "A precise strike aimed at the grip, not the target.",
-                apCost: 2, mpCost: 2, range: 1, baseAccuracy: 0.75f, baseDamage: 0,
+                apCost: 1, mpCost: 2, range: 1, baseAccuracy: 0.75f, baseDamage: 0,
                 inflictsStatusEffect: "Disarmed", statusEffectChance: 0.70f, statusDurationTurns: 2),
             "imgs/Cards/Spells/Disarm_CardArt");
 
@@ -544,7 +556,7 @@ namespace SagesOfOzvaram.Combat
                 + "through or lands on it, snaring and damaging them. Flying units are immune.",
             HeroClass.Hunter,
             new Move("Place Trap", "A trap only the one who set it will ever see.",
-                apCost: 2, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
                 strengthDivisor: 4f, damageType: DamageType.Sharp, isPlaceTrap: true,
                 inflictsStatusEffect: "Snared", statusEffectChance: 0.85f, statusDurationTurns: 2),
             "imgs/Cards/Spells/PlaceTrap_CardArt");
@@ -554,7 +566,7 @@ namespace SagesOfOzvaram.Combat
             "Attempts to tame a neutral beast of the hunter's level or lower, placing it under the hunter's control.",
             HeroClass.Hunter,
             new Move("Tame Beast", "Not every bond needs words.",
-                apCost: 3, mpCost: 5, range: 3, baseAccuracy: 0.70f, baseDamage: 0, isTameBeast: true),
+                apCost: 1, mpCost: 5, range: 3, baseAccuracy: 0.70f, baseDamage: 0, isTameBeast: true),
             "imgs/Cards/Spells/TameBeast_CardArt");
 
         public static readonly SpellCard EagleEye = new SpellCard(
@@ -571,7 +583,7 @@ namespace SagesOfOzvaram.Combat
             "Fires three arrows at once, striking the primary target plus up to 2 more enemies within range.",
             HeroClass.Hunter,
             new Move("Multi-Shot", "Why loose one arrow when you can loose three.",
-                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
+                apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
                 strengthDivisor: 4f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/MultiShot_CardArt");
 
@@ -580,7 +592,7 @@ namespace SagesOfOzvaram.Combat
             "A single arrow shot hard enough to punch through the target and anyone standing behind them in a line.",
             HeroClass.Hunter,
             new Move("Piercing Shot", "One line, drawn straight through everything in it.",
-                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.85f, baseDamage: 8,
+                apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.85f, baseDamage: 8,
                 strengthDivisor: 3.5f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/PiercingShot_CardArt");
 
@@ -590,7 +602,7 @@ namespace SagesOfOzvaram.Combat
                 + "triggering unit and anyone adjacent to it. No snare - it's built to hurt, not hold.",
             HeroClass.Hunter,
             new Move("Explosive Trap", "Not every trap needs to be subtle.",
-                apCost: 3, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 10,
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 10,
                 strengthDivisor: 3f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/ExplosiveTrap_CardArt");
 
@@ -635,7 +647,7 @@ namespace SagesOfOzvaram.Combat
             "A volley of arrows arcs down over a target area, striking everyone caught beneath it.",
             HeroClass.Hunter,
             new Move("Rain of Arrows", "The sky itself turns hostile.",
-                apCost: 3, mpCost: 4, range: 5, baseAccuracy: 0.75f, baseDamage: 6,
+                apCost: 1, mpCost: 4, range: 5, baseAccuracy: 0.75f, baseDamage: 6,
                 strengthDivisor: 4f, damageType: DamageType.Sharp),
             "imgs/Cards/Spells/RainOfArrows_CardArt");
 
@@ -644,7 +656,7 @@ namespace SagesOfOzvaram.Combat
             "A coated arrowhead - light damage on its own, but leaves a lingering Poison.",
             HeroClass.Hunter,
             new Move("Poison Shot", "The wound is the least of their worries.",
-                apCost: 2, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 4,
+                apCost: 1, mpCost: 2, range: 5, baseAccuracy: 0.85f, baseDamage: 4,
                 strengthDivisor: 5f, damageType: DamageType.Sharp,
                 inflictsStatusEffect: "Poisoned", statusEffectChance: 0.65f, statusDurationTurns: 3),
             "imgs/Cards/Spells/PoisonShot_CardArt");
@@ -654,7 +666,7 @@ namespace SagesOfOzvaram.Combat
             "Fires a weighted net instead of an arrowhead - minimal damage, but a strong chance to root the target in place.",
             HeroClass.Hunter,
             new Move("Net Shot", "Sometimes the point isn't to hurt them.",
-                apCost: 2, mpCost: 2, range: 4, baseAccuracy: 0.85f, baseDamage: 2,
+                apCost: 1, mpCost: 2, range: 4, baseAccuracy: 0.85f, baseDamage: 2,
                 strengthDivisor: 6f, damageType: DamageType.Sharp,
                 inflictsStatusEffect: "Snared", statusEffectChance: 0.80f, statusDurationTurns: 2),
             "imgs/Cards/Spells/NetShot_CardArt");
@@ -673,7 +685,7 @@ namespace SagesOfOzvaram.Combat
             "A called shot aimed at a vital point - unremarkable on a graze, brutal on a solid hit.",
             HeroClass.Hunter,
             new Move("Vital Shot", "One shot, exactly where it counts.",
-                apCost: 2, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 6,
+                apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 6,
                 strengthDivisor: 3f, damageType: DamageType.Sharp,
                 critChance: 0.30f, critMultiplier: 2.5f),
             "imgs/Cards/Spells/VitalShot_CardArt");

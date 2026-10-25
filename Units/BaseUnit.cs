@@ -16,8 +16,37 @@ namespace SagesOfOzvaram.Units
     {
         public string Name { get; set; }
 
-        /// <summary>No leveling/XP system exists yet (GDD §4.2's Journeyman/Expert/Master/Transcendent tiers are still unimplemented) - every unit defaults to 1 as a display placeholder for the unit detail box until one does.</summary>
+        /// <summary>No real XP curve/stat-growth table exists yet (GDD §4.2's Journeyman/Expert/Master/Transcendent tiers are still unimplemented) - defaults to 1 as a display placeholder, except the 4 Apprentice hero classes, which start at 5 (see each class's own constructor) so a fresh summoner can already afford a few low-cost cards (see SpellCard/SummonCard cost-vs-Level gating below) without having to grind first. Also gates which Wild creatures are tameable (Tame Beast requires Level &lt;= the caster's own) and, now, which spell/summon cards a caster can afford to cast at all - see LevelUp.</summary>
         public int Level { get; set; } = 1;
+
+        /// <summary>
+        /// First-pass leveling effect (GDD §4.3 "stat growth per level" - no real curve/table
+        /// exists yet, this is a flat placeholder to be refined later): +1 Level, +2 to every
+        /// core stat (Strength/Accuracy/Evasion/Intelligence/Defense/Resistance/Speed), and +2 to
+        /// each Max/Current pair (HP, MP, AP) together, so the unit is tangibly stronger the
+        /// instant it happens rather than only on its next turn's regen. Currently triggered only
+        /// by landing the killing blow on a Wild-faction unit (see AttackResolver.ResolveAgainst)
+        /// - killing an enemy hero/summon does not grant a level yet, and neither does a beast
+        /// dying to a non-attack cause (e.g. a Bleed tick with no attacker to credit) - both are
+        /// scope cuts for this first pass, not permanent design.
+        /// </summary>
+        public void LevelUp()
+        {
+            Level++;
+            Strength += 2;
+            Accuracy += 2;
+            Evasion += 2;
+            Intelligence += 2;
+            Defense += 2;
+            Resistance += 2;
+            Speed += 2;
+            MaxHP += 2;
+            HP += 2;
+            MaxMP += 2;
+            CurrentMP += 2;
+            MaxAP += 2;
+            CurrentAP += 2;
+        }
 
         public int HP { get; set; }
         public int MaxHP { get; set; }
@@ -153,7 +182,25 @@ namespace SagesOfOzvaram.Units
                 return false;
 
             CurrentAP -= effect.EndEffectAPCost;
+            EndRestrictingEffect(effect);
 
+            if (isStun)
+                StunBreakCooldownRemaining = 5;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Shared "this restricting effect is actually over now" logic - converts its CURRENT
+        /// bonus into a fixed-duration Buff (LockInDurationTurns &gt; 0 and it's actually built
+        /// one up, e.g. Meditate locking in whatever stack it reached) or just removes it outright
+        /// (e.g. Stun/Deep Sleep, LockInDurationTurns 0). Called both when the unit chooses to end
+        /// it early (TryEndRestrictingEffect) and when its own TurnsRemaining naturally runs out
+        /// (ConsumeRestrictingEffectTurn) - either way should behave identically once it actually
+        /// ends, the only difference is whether AP was spent to make it happen sooner.
+        /// </summary>
+        private void EndRestrictingEffect(StatusEffect effect)
+        {
             bool hasBuiltUpABonus = effect.StrengthBonus != 0 || effect.AccuracyBonus != 0 || effect.DefenseBonus != 0
                 || effect.ResistanceBonus != 0 || effect.IntelligenceBonus != 0;
             if (effect.LockInDurationTurns > 0 && hasBuiltUpABonus)
@@ -174,11 +221,6 @@ namespace SagesOfOzvaram.Units
             {
                 RemoveStatusEffect(effect.Name);
             }
-
-            if (isStun)
-                StunBreakCooldownRemaining = 5;
-
-            return true;
         }
 
         /// <summary>
@@ -226,7 +268,7 @@ namespace SagesOfOzvaram.Units
             StatusEffects.RemoveAll(e => e.TurnsRemaining == 0);
         }
 
-        /// <summary>Consume one turn of whatever's currently restricting this unit (e.g. Stun's own fixed duration) - called when "End Turn" is chosen from the restricted menu, or an AI unit fails its end-it-early attempt. A no-op for an indefinite effect (TurnsRemaining -1, e.g. Deep Sleep/Meditate - those only ever end via TryEndRestrictingEffect) or if nothing is restricting this unit right now.</summary>
+        /// <summary>Consume one turn of whatever's currently restricting this unit (e.g. Stun's own fixed duration, or Meditate's own StatusDurationTurns) - called when "End Turn" is chosen from the restricted menu, or an AI unit fails its end-it-early attempt. Once TurnsRemaining naturally reaches 0 this way, the effect ends exactly like TryEndRestrictingEffect would (locking in a built-up bonus for Meditate, just vanishing for Stun/Deep Sleep - see EndRestrictingEffect) - no AP spent, since this is the effect running its own course, not the unit choosing to end it early. A no-op for an indefinite effect (TurnsRemaining -1, e.g. Deep Sleep - still only ever ends via TryEndRestrictingEffect/Wake Up) or if nothing is restricting this unit right now.</summary>
         public void ConsumeRestrictingEffectTurn()
         {
             var effect = GetRestrictingEffect();
@@ -235,7 +277,7 @@ namespace SagesOfOzvaram.Units
 
             effect.TurnsRemaining--;
             if (effect.TurnsRemaining == 0)
-                RemoveStatusEffect(effect.Name);
+                EndRestrictingEffect(effect);
         }
 
         // Each StatusEffect's bonus fields already hold its CURRENT total contribution (for a
@@ -701,11 +743,23 @@ namespace SagesOfOzvaram.Units
 
         private readonly List<ConsumableItem> _consumables = new List<ConsumableItem>();
 
-        /// <summary>Single-use items this unit is carrying (e.g. the potions Conjure Potions grants - see ConsumableItem/ConsumableCatalog). Unlike Inventory, not weight-capped - add/remove via AddConsumable/RemoveConsumable.</summary>
+        /// <summary>Single-use items this unit is carrying (e.g. the potions Conjure Potions grants, or Meat picked up off the ground - see ConsumableItem/ConsumableCatalog). Every pre-existing consumable (the 3 Minor potions) has Weight 0, so historically this read as "not weight-capped at all" - it now shares the same InventoryWeightCapacity pool as Inventory (see CurrentCarriedWeight/RemainingCarryWeight), it just never actually bumped into it before Meat (Weight 1) existed. Add/remove via AddConsumable/RemoveConsumable - RemoveConsumable doesn't itself check CanCarryConsumable, that's the caller's job before adding (see Game1's "Pick Up" action).</summary>
         public IReadOnlyList<ConsumableItem> Consumables => _consumables;
 
         public void AddConsumable(ConsumableItem item) => _consumables.Add(item);
         public bool RemoveConsumable(ConsumableItem item) => _consumables.Remove(item);
+
+        /// <summary>Combined weight of everything carried - every Weapon in Inventory plus every ConsumableItem in Consumables - the single "item box" budget a ground pickup (e.g. Meat) is checked against, right alongside weapons.</summary>
+        public int CurrentCarriedWeight => CurrentInventoryWeight + Consumables.Sum(c => c.Weight);
+
+        /// <summary>Free item-box space left (Inventory + Consumables combined) before InventoryWeightCapacity - what "Pick Up" (see TurnMenuBuilder/Game1) actually checks, not RemainingInventoryWeight (which stays Weapon-only, e.g. for CanCarry).</summary>
+        public int RemainingCarryWeight => InventoryWeightCapacity - CurrentCarriedWeight;
+
+        /// <summary>True if there's enough item-box room left (see RemainingCarryWeight) to add `item` on top of everything already carried.</summary>
+        public bool CanCarryConsumable(ConsumableItem item) => item != null && item.Weight <= RemainingCarryWeight;
+
+        /// <summary>Flat AP cost of the "Pick Up" Action (see TurnMenuBuilder/Game1.ExecutePickUp) - picking up whatever dropped item is on this unit's own tile or one tile away.</summary>
+        public const int PickUpAPCost = 1;
 
         private readonly Dictionary<AmmoType, int> _ammo = new Dictionary<AmmoType, int>();
 

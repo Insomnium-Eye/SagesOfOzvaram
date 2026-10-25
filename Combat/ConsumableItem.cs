@@ -18,12 +18,16 @@ namespace SagesOfOzvaram.Combat
         public int RestoreMP { get; }
         public int GrantAP { get; }
 
-        public ConsumableItem(string name, string description, int healHP = 0, int restoreMP = 0, int grantAP = 0)
+        /// <summary>Item-box space this consumable takes up (see BaseUnit.CurrentCarriedWeight/CanCarryConsumable) - 0 for the 3 original Minor potions (Conjure Potions grants those for free, no carry cost), 1 for Meat (see ConsumableCatalog).</summary>
+        public int Weight { get; }
+
+        public ConsumableItem(string name, string description, int healHP = 0, int restoreMP = 0, int grantAP = 0, int weight = 0)
             : base(name, description)
         {
             HealHP = healHP;
             RestoreMP = restoreMP;
             GrantAP = grantAP;
+            Weight = weight;
         }
 
         /// <summary>Apply this item's effect to `unit` and return a message describing what happened. Does NOT spend AP or remove itself from the unit's Consumables - the caller handles both.</summary>

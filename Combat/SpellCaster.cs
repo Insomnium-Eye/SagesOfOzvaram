@@ -167,6 +167,14 @@ namespace SagesOfOzvaram.Combat
                 RestrictsActions = true,
                 EndEffectLabel = "End Meditation",
                 EndEffectAPCost = 1,
+                // Bug fix: Meditate used to never end on its own (TurnsRemaining defaulted to -1,
+                // indefinite) - the player had to notice and manually pick "End Meditation" every
+                // time, even well past move.StatusDurationTurns. Setting a real TurnsRemaining
+                // here means ConsumeRestrictingEffectTurn (called each time "End Turn" is chosen
+                // from the restricted menu) actually counts it down now, same as Stun's own fixed
+                // duration already did - once it hits 0, EndRestrictingEffect locks in whatever
+                // stack bonus was reached automatically, no further action needed.
+                TurnsRemaining = move.StatusDurationTurns,
                 GrowsOverTime = true,
                 // Starts at 1 stack, not 0 - TickStatusEffects only grows Stacks at the start of
                 // the caster's OWN next turn, which hasn't happened yet on the very turn Meditate

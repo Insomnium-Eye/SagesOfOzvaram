@@ -14,6 +14,7 @@ namespace SagesOfOzvaram.Units.Heroes
         {
             SpriteAssetPath = "imgs/sprites/units/ApprenticeHunter/Hunter_Sprite_1";
             Scale = 0.65f;
+            Level = 5; // Leveling System (first pass) - every summoner starts here, see BaseUnit.Level/LevelUp
             Strength = 8;    // Human: ranged marksman, precision over raw power
             Accuracy = 15;
             Evasion = 6;

@@ -24,7 +24,7 @@ namespace SagesOfOzvaram.Combat
     /// </summary>
     public static class TurnMenuBuilder
     {
-        public static List<TurnMenuOption> Build(BaseUnit unit, GameMode mode, HexGrid grid, Map map, IEnumerable<BaseUnit> allUnits)
+        public static List<TurnMenuOption> Build(BaseUnit unit, GameMode mode, HexGrid grid, Map map, IEnumerable<BaseUnit> allUnits, IEnumerable<DroppedItem> droppedItems)
         {
             var options = new List<TurnMenuOption>();
 
@@ -50,6 +50,20 @@ namespace SagesOfOzvaram.Combat
             // one list.
             if (unit.Inventory.Count > 0 || unit.Consumables.Count > 0)
                 options.Add(new TurnMenuOption { Id = "Items", Label = "Items" });
+
+            // Actions: our first one is "Pick Up" - shown once a dropped item (e.g. Meat from a
+            // slain Wild beast - see Game1's death sweep) is on the unit's own tile or exactly
+            // one tile away, the unit can afford the flat 1 AP cost, AND there's actual item-box
+            // room for it (BaseUnit.CanCarryConsumable) - not shown at all otherwise, same
+            // "don't offer what can't work" rule every other option here already follows. A
+            // single top-level option rather than its own submenu, since there's only one kind
+            // of Action right now - see BaseUnit.PickUpAPCost/Game1.ExecutePickUp.
+            var unitHex = grid.WorldToHex(unit.Position);
+            bool canPickUp = unit.CurrentAP >= BaseUnit.PickUpAPCost && droppedItems.Any(d =>
+                grid.GetDistance(unitHex.col, unitHex.row, grid.WorldToHex(d.Position).col, grid.WorldToHex(d.Position).row) <= 1
+                && d.Item is ConsumableItem consumable && unit.CanCarryConsumable(consumable));
+            if (canPickUp)
+                options.Add(new TurnMenuOption { Id = "PickUp", Label = "Pick Up" });
 
             // End always displays as Guard once it's affordable - same action either way
             // (ending the turn), just a more useful default label when there's AP to spare.
