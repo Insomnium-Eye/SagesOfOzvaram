@@ -26,6 +26,7 @@ namespace SagesOfOzvaram.Combat
             "Rally Cry",
             "Steady Hands",
             "Bandage Wound",
+            "Place Trap",
         };
     }
 }

@@ -108,7 +108,7 @@ namespace SagesOfOzvaram.Combat
                 return CastResult.Fail($"Not enough AP/MP for {move.Name}.");
 
             PayCost(move, caster);
-            caster.Heal((int)System.Math.Round(caster.MaxHP * move.HealPercentMaxHP));
+            caster.Heal((int)System.Math.Round(caster.EffectiveMaxHP * move.HealPercentMaxHP));
             caster.ApplyStatusEffect(new StatusEffect
             {
                 Name = "Deep Sleep",
@@ -242,9 +242,19 @@ namespace SagesOfOzvaram.Combat
                 if (move.HealFlat > 0)
                     target.Heal(move.HealFlat);
                 if (move.HealPercentMaxHP > 0f)
-                    target.Heal((int)Math.Round(target.MaxHP * move.HealPercentMaxHP));
+                    target.Heal((int)Math.Round(target.EffectiveMaxHP * move.HealPercentMaxHP));
                 if (move.CuresBleed)
+                {
                     target.BleedPercentPerTurn = 0f;
+
+                    // Also clears a StatusEffect-based bleed (e.g. Weak Bleed, see the Bearat
+                    // Trap) - generically, by DamagePercentMaxHPPerTick rather than by name, so
+                    // any future bleed-like StatusEffect is cured the same way with no extra
+                    // wiring. This used to only clear the older BleedPercentPerTurn field above,
+                    // which Weak Bleed never actually used, so curing it did nothing - a real gap.
+                    foreach (var bleedEffect in target.StatusEffects.Where(e => e.DamagePercentMaxHPPerTick > 0f).ToList())
+                        target.RemoveStatusEffect(bleedEffect.Name);
+                }
             }
 
             string message = move.HitsAllAdjacent

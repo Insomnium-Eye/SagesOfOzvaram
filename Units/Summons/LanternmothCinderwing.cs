@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class LanternmothCinderwing : BaseUnit
     {
         public LanternmothCinderwing(Vector2 position = default)
-            : base("Lanternmoth Cinderwing", maxHP: 12, speed: 7, race: Race.LanternmothCinderwing, heroClass: HeroClass.None, position)
+            : base("Lanternmoth Cinderwing", maxHP: 12, speed: 7, race: Race.LanternmothCinderwing, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;

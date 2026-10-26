@@ -50,6 +50,10 @@ namespace SagesOfOzvaram.Units
 
         public int HP { get; set; }
         public int MaxHP { get; set; }
+
+        /// <summary>MaxHP including every active StatusEffect's own MaxHPBonus (e.g. Syphon's +6 self-buff) - every HP-pool-sensitive calculation (Heal's clamp, Faint's threshold, Bleed/DamagePercentMaxHPPerTick's %, the HP bar) reads this, not raw MaxHP, so a temporary MaxHP buff is felt everywhere consistently rather than only in some of them.</summary>
+        public int EffectiveMaxHP => MaxHP + StatusEffects.Sum(e => e.MaxHPBonus);
+
         public int Speed { get; set; }  // Determines turn order
 
         /// <summary>% Speed lost to a Slowed effect (e.g. Frost Blast), 0-1. Only meaningful while SpeedReductionTurnsRemaining > 0.</summary>
@@ -181,7 +185,7 @@ namespace SagesOfOzvaram.Units
             if (isStun && (!CanBreakStun || StunBreakCooldownRemaining > 0))
                 return false;
 
-            CurrentAP -= effect.EndEffectAPCost;
+            SpendAP(effect.EndEffectAPCost);
             EndRestrictingEffect(effect);
 
             if (isStun)
@@ -235,7 +239,7 @@ namespace SagesOfOzvaram.Units
             foreach (var effect in StatusEffects)
             {
                 if (effect.HealPercentMaxHPPerTurn > 0f)
-                    Heal((int)Math.Round(MaxHP * effect.HealPercentMaxHPPerTurn));
+                    Heal((int)Math.Round(EffectiveMaxHP * effect.HealPercentMaxHPPerTurn));
 
                 if (effect.GrowsOverTime)
                 {
@@ -266,6 +270,11 @@ namespace SagesOfOzvaram.Units
             }
 
             StatusEffects.RemoveAll(e => e.TurnsRemaining == 0);
+
+            // A MaxHPBonus effect (e.g. Syphon's self-buff) may have just expired above - clamp
+            // current HP back down to the new (possibly lower) EffectiveMaxHP so an overheal from
+            // a since-expired buff doesn't linger. A no-op whenever HP was already within range.
+            HP = Math.Min(HP, EffectiveMaxHP);
         }
 
         /// <summary>Consume one turn of whatever's currently restricting this unit (e.g. Stun's own fixed duration, or Meditate's own StatusDurationTurns) - called when "End Turn" is chosen from the restricted menu, or an AI unit fails its end-it-early attempt. Once TurnsRemaining naturally reaches 0 this way, the effect ends exactly like TryEndRestrictingEffect would (locking in a built-up bonus for Meditate, just vanishing for Stun/Deep Sleep - see EndRestrictingEffect) - no AP spent, since this is the effect running its own course, not the unit choosing to end it early. A no-op for an indefinite effect (TurnsRemaining -1, e.g. Deep Sleep - still only ever ends via TryEndRestrictingEffect/Wake Up) or if nothing is restricting this unit right now.</summary>
@@ -310,13 +319,21 @@ namespace SagesOfOzvaram.Units
         public int Accuracy { get; set; } = 10;
 
         /// <summary>Accuracy including every active status effect's own bonus (e.g. Steady Hands, Rally Cry, live Meditate stacks) - Move.GetHitChance reads this, not raw Accuracy.</summary>
-        public int EffectiveAccuracy => Accuracy + StatusAccuracyBonus;
+        public int EffectiveAccuracy
+        {
+            get
+            {
+                int total = Accuracy + StatusAccuracyBonus;
+                float reduction = StatusEffects.Count > 0 ? StatusEffects.Max(e => e.AccuracyReductionPercent) : 0f;
+                return reduction > 0f ? (int)Math.Round(total * (1f - reduction)) : total;
+            }
+        }
 
         /// <summary>Dodge stat - reduces an incoming attack's hit chance by 0.1%/point, the mirror of Accuracy's own +0.1%/point (see Move.GetHitChance).</summary>
         public int Evasion { get; set; } = 10;
 
-        /// <summary>Evasion including this unit's racial bonus, if its Race grants one (e.g. Vectium +5) - Move.GetHitChance reads this, not raw Evasion.</summary>
-        public int EffectiveEvasion => Evasion + RaceCatalog.GetModifiers(Race).EvasionBonus;
+        /// <summary>Evasion including this unit's racial bonus, if its Race grants one (e.g. Vectium +5) - Move.GetHitChance reads this, not raw Evasion. Overridden to exactly 0 while any active StatusEffect has ZeroesEvasion set (e.g. Weak Root) - an absolute override, not a bonus stacked on top, so a racial bonus can't partially offset it.</summary>
+        public int EffectiveEvasion => StatusEffects.Any(e => e.ZeroesEvasion) ? 0 : Evasion + RaceCatalog.GetModifiers(Race).EvasionBonus;
 
         /// <summary>Magic damage stat - magical weapon moves (e.g. the Sorcerer's Arcane Missile) scale with this instead of Strength.</summary>
         public int Intelligence { get; set; } = 10;
@@ -499,6 +516,14 @@ namespace SagesOfOzvaram.Units
         {
             IsKnockedDown = true;
             KnockdownStandUpAPCost = standUpApCost;
+
+            // IsKnockedDown/KnockdownStandUpAPCost above stay the actual mechanical state (every
+            // real check - Move.GetHitChance's -75%, TurnMenuBuilder's Move->Stand Up swap,
+            // TryStandUp itself - reads those, not this) - this is purely a visible mirror, added
+            // on request after a report that Knocked Down had no on-screen indicator anywhere at
+            // all (see Game1.DrawUnitAfflictions/GetStatusEffectDescriptorParts, which special-
+            // cases this exact Name since the real -75% isn't a StatusEffect field to read).
+            ApplyStatusEffect(new StatusEffect { Name = "Knocked Down", Type = StatusEffectType.Affliction });
         }
 
         /// <summary>Spend KnockdownStandUpAPCost AP to clear Knocked Down. No-op (returns false) if not knocked down or the AP can't be afforded.</summary>
@@ -507,9 +532,10 @@ namespace SagesOfOzvaram.Units
             if (!IsKnockedDown || CurrentAP < KnockdownStandUpAPCost)
                 return false;
 
-            CurrentAP -= KnockdownStandUpAPCost;
+            SpendAP(KnockdownStandUpAPCost);
             IsKnockedDown = false;
             KnockdownStandUpAPCost = 0;
+            RemoveStatusEffect("Knocked Down");
             return true;
         }
 
@@ -520,6 +546,14 @@ namespace SagesOfOzvaram.Units
         /// is skipped outright every time until HP recovers - see TurnSystem.OnUnitTurnStart.
         /// </summary>
         public bool IsFainted { get; private set; }
+
+        /// <summary>
+        /// This unit's power tier (Weak/Normal/Elite/Hero/Boss/Legendary/Mythical) - set once at
+        /// construction (see the constructor's `rank` parameter) and, for now, the ONLY thing it
+        /// actually drives is starting MaxAP (RankCatalog.GetMaxAP) - on request. The 4 Apprentice
+        /// classes are Elite; every summonable creature (Beast-type and both Roachlins) is Normal.
+        /// </summary>
+        public UnitRank Rank { get; set; }
 
         // Action Points
         public int MaxAP { get; set; } = 5;
@@ -540,6 +574,31 @@ namespace SagesOfOzvaram.Units
         {
             CurrentAP = MaxAP + BonusAPNextTurn;
             BonusAPNextTurn = 0;
+        }
+
+        /// <summary>
+        /// Spend `amount` AP (clamped at 0, same as every call site already did individually
+        /// before this existed) - the one central place every AP cost in the game now goes
+        /// through (attacks, casts, movement, drawing/discarding, Guard, picking up an item,
+        /// standing up from Knocked Down, ending a restricting effect early, ...), so a single
+        /// check here covers "the affected unit performed an action" for any StatusEffect with
+        /// DamagePercentMaxHPPerAction set (e.g. Weak Bleed's 1%-per-action) without needing that
+        /// check duplicated at every individual cost site.
+        /// </summary>
+        public void SpendAP(int amount)
+        {
+            if (amount <= 0)
+                return;
+
+            CurrentAP = Math.Max(0, CurrentAP - amount);
+            ApplyPerActionAfflictionDamage();
+        }
+
+        /// <summary>See SpendAP - applies true damage (bypassing Defense/Resistance, same as a Bleed tick) for every active StatusEffect with DamagePercentMaxHPPerAction set. A no-op (one cheap LINQ scan, no allocation) for the overwhelming majority of units/turns that have no such effect active.</summary>
+        private void ApplyPerActionAfflictionDamage()
+        {
+            foreach (var effect in StatusEffects.Where(e => e.DamagePercentMaxHPPerAction > 0f).ToList())
+                ApplyTrueDamage((int)Math.Round(EffectiveMaxHP * effect.DamagePercentMaxHPPerAction));
         }
 
         // Mana Points - unlike AP (full refill), MP regenerates a flat amount per turn, tiered
@@ -787,22 +846,24 @@ namespace SagesOfOzvaram.Units
         public HashSet<WeaponType> WeaponSpecializations => ClassCatalog.GetWeaponSpecializations(Class);
 
         /// <summary>
-        /// Every attack this unit can currently perform: its race's innate move, plus every
-        /// attack (and, if specialized in that weapon's Type, specialist attack) granted by a
-        /// weapon in its Inventory. Computed live so picking up/dropping a weapon is reflected
-        /// immediately.
+        /// Every attack this unit can currently perform: every one of its race's innate moves
+        /// (RaceAttacks.GetInnateMoves - a list now, not just one, for a summon with a real
+        /// multi-move kit like the Dusk Roachlin), plus every attack (and, if specialized in
+        /// that weapon's Type, specialist attack) granted by a weapon in its Inventory. Computed
+        /// live so picking up/dropping a weapon is reflected immediately.
         /// </summary>
         public List<Move> AvailableMoves => AvailableMovesWithSource.Select(entry => entry.Move).ToList();
 
         /// <summary>
         /// Every attack this unit can currently perform, paired with the weapon it came from
-        /// (null for the racial move) - lets callers work out weapon-switch AP costs.
+        /// (null for a racial move) - lets callers work out weapon-switch AP costs.
         /// </summary>
         public IEnumerable<(Move Move, Weapon SourceWeapon)> AvailableMovesWithSource
         {
             get
             {
-                yield return (RaceAttacks.GetInnateMove(Race), null);
+                foreach (var move in RaceAttacks.GetInnateMoves(Race))
+                    yield return (move, null);
                 foreach (var weapon in Inventory)
                 {
                     foreach (var move in weapon.Attacks)
@@ -833,9 +894,12 @@ namespace SagesOfOzvaram.Units
         public string SpriteAssetPath { get; set; }
 
         /// <summary>
-        /// Create a new unit.
+        /// Create a new unit. `rank` sets MaxAP/CurrentAP via RankCatalog.GetMaxAP (see UnitRank) -
+        /// a required parameter, same as Race/HeroClass, so it can't be forgotten; a non-combatant
+        /// Relic (e.g. Portal) still has to pass one even though it's never actually read for it
+        /// (IsRelic excludes it from turn order/AP entirely), so Normal is as good a choice as any.
         /// </summary>
-        protected BaseUnit(string name, int maxHP, int speed, Race race, HeroClass heroClass, Vector2 position = default)
+        protected BaseUnit(string name, int maxHP, int speed, Race race, HeroClass heroClass, UnitRank rank, Vector2 position = default)
         {
             Name = name;
             MaxHP = maxHP;
@@ -843,6 +907,9 @@ namespace SagesOfOzvaram.Units
             Speed = speed;
             Race = race;
             Class = heroClass;
+            Rank = rank;
+            MaxAP = RankCatalog.GetMaxAP(rank);
+            CurrentAP = MaxAP;
             Position = position;
             SpriteAssetPath = "";
         }
@@ -914,13 +981,26 @@ namespace SagesOfOzvaram.Units
         {
             var racialMods = RaceCatalog.GetModifiers(Race);
             float rawDamage = damage;
-            if (racialMods.VulnerableTo == damageType)
-                rawDamage *= 1f + racialMods.VulnerabilityBonusPercent;
+            if (racialMods.DamageVulnerabilities.TryGetValue(damageType, out float vulnerabilityPercent))
+                rawDamage *= 1f + vulnerabilityPercent;
 
             float mitigation = damageType.IsPhysical() ? EffectiveDefense : EffectiveResistance;
             float mitigated = rawDamage * (1f - mitigation / 100f);
 
             ApplyRawDamage((int)Math.Round(mitigated));
+
+            // A guaranteed racial reaction to being hit by a specific DamageType (e.g. Roachlin +
+            // Light) - unconditional, no roll, independent of whatever InflictsStatusEffect the
+            // attacking move itself carries (or doesn't).
+            if (racialMods.GuaranteedWeakBlindFrom == damageType)
+            {
+                ApplyStatusEffect(new StatusEffect
+                {
+                    Name = "Weak Blind",
+                    Type = StatusEffectType.Affliction,
+                    AccuracyReductionPercent = 0.40f,
+                });
+            }
         }
 
         /// <summary>
@@ -938,10 +1018,10 @@ namespace SagesOfOzvaram.Units
             // Any status effect with an InterruptDamagePercentMaxHP set (e.g. Meditate) is
             // cleared outright - no lock-in - the moment a single hit meets that threshold,
             // before shield absorption even comes into play; that's still "taking the hit."
-            if (MaxHP > 0)
+            if (EffectiveMaxHP > 0)
             {
                 foreach (var effect in StatusEffects.Where(e => e.InterruptDamagePercentMaxHP > 0f
-                        && damage >= MaxHP * e.InterruptDamagePercentMaxHP)
+                        && damage >= EffectiveMaxHP * e.InterruptDamagePercentMaxHP)
                     .ToList())
                 {
                     RemoveStatusEffect(effect.Name);
@@ -971,7 +1051,7 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public virtual void Heal(int amount)
         {
-            HP = Math.Min(MaxHP, HP + amount);
+            HP = Math.Min(EffectiveMaxHP, HP + amount);
             UpdateFaintStatus();
         }
 
@@ -985,13 +1065,13 @@ namespace SagesOfOzvaram.Units
             if (BleedPercentPerTurn <= 0f)
                 return;
 
-            int bleedDamage = (int)Math.Round(MaxHP * BleedPercentPerTurn);
+            int bleedDamage = (int)Math.Round(EffectiveMaxHP * BleedPercentPerTurn);
             ApplyTrueDamage(bleedDamage);
         }
 
         private void UpdateFaintStatus()
         {
-            IsFainted = MaxHP > 0 && HP <= MaxHP * 0.05f;
+            IsFainted = EffectiveMaxHP > 0 && HP <= EffectiveMaxHP * 0.05f;
         }
 
         /// <summary>

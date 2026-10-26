@@ -15,14 +15,15 @@ namespace SagesOfOzvaram.Units.Relics
         public override bool IsRelic => true;
 
         public Portal(string name, int hp, int defense, int resistance, Vector2 position)
-            : base(name, maxHP: hp, speed: 0, race: Race.GenericPortal, heroClass: HeroClass.None, position)
+            : base(name, maxHP: hp, speed: 0, race: Race.GenericPortal, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Defense = defense;
             Resistance = resistance;
 
-            // A stationary structure - these never factor into anything for a Relic (it never
-            // attacks and IsRelic keeps it out of turn order entirely), zeroed out so it doesn't
-            // read like forgotten hero placeholder stats if ever inspected.
+            // A stationary structure - these (and the constructor's own `rank: UnitRank.Normal`,
+            // which only ever drives starting MaxAP) never factor into anything for a Relic (it
+            // never attacks and IsRelic keeps it out of turn order/AP entirely) - zeroed out so
+            // they don't read like forgotten hero placeholder stats if ever inspected.
             Strength = 0;
             Intelligence = 0;
             Accuracy = 0;

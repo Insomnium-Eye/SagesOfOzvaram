@@ -7,6 +7,7 @@ using SagesOfOzvaram.Units.Heroes;
 using SagesOfOzvaram.Units.Summons;
 using SagesOfOzvaram.Units.Relics;
 using SagesOfOzvaram.Combat;
+using SagesOfOzvaram.Objects;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -210,19 +211,36 @@ namespace SagesOfOzvaram
         private List<BaseUnit> _tameBeastCandidates = new List<BaseUnit>();
 
         // Trap placement targeting (opened for Move.IsPlaceTrap, e.g. Place Trap) - click any
-        // highlighted empty tile within Range to plant a PlacedTrap there instead of attacking
-        // immediately. See CastPlaceTrap/HandleTrapPlacementInput/ExecutePlaceTrap.
+        // highlighted empty tile within Range to plant a Trap (see Objects.Trap) there instead of
+        // attacking immediately. See CastPlaceTrap/HandleTrapPlacementInput/ExecutePlaceTrap.
         private bool _trapPlacementModeActive = false;
         private HashSet<(int col, int row)> _trapPlacementValidTiles = new HashSet<(int col, int row)>();
 
-        /// <summary>A single armed trap sitting on the battlefield, placed by Move.IsPlaceTrap (e.g. Place Trap) - invisible once set (per the card's own fluff; there's no fog-of-war system to hide it from only the owner, so rather than half-fake that, it simply draws no persistent world marker at all - see Draw's trap-placement-mode highlight, which only shows while still choosing where to put it). Triggers and is consumed the instant a unit NOT on Owner's team (GetTeamRoot) steps onto or passes through Tile - see MoveUnitTowards/TriggerTrap.</summary>
-        private class PlacedTrap
-        {
-            public (int col, int row) Tile;
-            public BaseUnit Owner;
-            public Move SourceMove;
-        }
-        private List<PlacedTrap> _placedTraps = new List<PlacedTrap>();
+        /// <summary>Every armed Trap currently on the battlefield - see Objects.Trap for why this is its own list rather than living in _units.</summary>
+        private List<Trap> _placedTraps = new List<Trap>();
+
+        /// <summary>Cached placeholder sprite for every Trap (loaded once in LoadContent) - reuses the same generic Pawn placeholder several summons without unique art already use, just drawn smaller and tinted (see Draw's trap-rendering pass) rather than loaded per-instance.</summary>
+        private Texture2D _trapSpriteTexture;
+
+        // Leap targeting (opened for Move.IsLeap, e.g. the Dusk Roachlin's Leap) - a dual mode no
+        // other move needs: click either an empty, passable tile within Range (a plain
+        // reposition) OR a living unit within Range (lands adjacent to it instead, then resolves
+        // Leap's own landing effect - see ExecuteLeapToTile/ExecuteLeapOntoUnit). _leapValidTargets
+        // is pre-filtered to units that actually HAVE a free adjacent tile to land on - clicking
+        // one is guaranteed to succeed, same "only show what can work" rule every other targeting
+        // mode already follows.
+        private bool _leapModeActive = false;
+        private HashSet<(int col, int row)> _leapValidTiles = new HashSet<(int col, int row)>();
+        private List<BaseUnit> _leapValidTargets = new List<BaseUnit>();
+
+        // Release targeting (the "Release" turn-menu option, shown only while Pinning - see
+        // TurnMenuBuilder) - on request, releasing doesn't just instantly let go: it prompts for
+        // one of the tiles adjacent to the caster's CURRENT position (which, while Pinning, is
+        // the same tile its pinned target occupies - see ExecuteLeapOntoUnit) to step off onto,
+        // since the caster has to physically vacate that shared tile once it's no longer pinning
+        // anything there.
+        private bool _releaseModeActive = false;
+        private HashSet<(int col, int row)> _releaseValidTiles = new HashSet<(int col, int row)>();
 
         /// <summary>Items currently lying on the ground (e.g. Meat dropped by a slain Wild beast - see Update's death sweep), waiting to be picked up via the "Pick Up" Action - see TurnMenuBuilder/ExecutePickUp.</summary>
         private List<DroppedItem> _droppedItems = new List<DroppedItem>();
@@ -312,6 +330,17 @@ namespace SagesOfOzvaram
         }
 
         private readonly List<ActiveHitReaction> _activeHitReactions = new List<ActiveHitReaction>();
+
+        /// <summary>A floating "-N" damage number that rises and fades above Target - on request, specifically for the moment a unit triggers a placed Trap (see Game1.TriggerTrap/SpawnDamageNumber), since a trap trigger has no attack animation of its own to carry that feedback the way a normal weapon/spell hit's Slash/Shooting effect does.</summary>
+        private class ActiveDamageNumber
+        {
+            public BaseUnit Target;
+            public int Amount;
+            public float Elapsed;
+            public float Duration;
+        }
+
+        private readonly List<ActiveDamageNumber> _activeDamageNumbers = new List<ActiveDamageNumber>();
         // Long enough to actually read: a sin(pi*t) intensity curve only spends a sliver of its
         // total duration near full strength, so a short duration (the original 0.25s, matched to
         // a melee Slash's own tiny window) made the flash/nudge nearly subliminal - same lesson
@@ -537,6 +566,8 @@ namespace SagesOfOzvaram
             _allyTargetModeActive = false;
             _tameBeastModeActive = false;
             _trapPlacementModeActive = false;
+            _leapModeActive = false;
+            _releaseModeActive = false;
             _placedTraps.Clear();
             _droppedItems.Clear();
             _summonPlacementModeActive = false;
@@ -640,6 +671,8 @@ namespace SagesOfOzvaram
             _allyTargetModeActive = false;
             _tameBeastModeActive = false;
             _trapPlacementModeActive = false;
+            _leapModeActive = false;
+            _releaseModeActive = false;
             _placedTraps.Clear();
             _droppedItems.Clear();
             _summonPlacementModeActive = false;
@@ -693,6 +726,11 @@ namespace SagesOfOzvaram
 
             // Same deal for the summon card template (see GetSummonCardArt/GetSummonCardComposite).
             _summonCardTemplate = LoadTextureFromDisk(Path.Combine("Content", "imgs", "Cards", "Summons", "SummonCard.png"));
+
+            // Placeholder world sprite for every Objects.Trap (e.g. Place Trap's "Bearat Trap") -
+            // no dedicated trap art exists yet, so this reuses the same generic Pawn placeholder
+            // several summons without unique art already use (see Draw's trap-rendering pass).
+            _trapSpriteTexture = LoadTextureFromDisk(Path.Combine("Content", "imgs", "sprites", "units", "Pawn_Sprite_1.png"));
 
             // Load the per-stat icons used by the on-screen stat-change display.
             foreach (string statCode in new[] { "STR", "ACC", "DEF", "RES", "INT" })
@@ -1075,6 +1113,14 @@ namespace SagesOfOzvaram
                             _activeHitReactions.RemoveAt(i);
                     }
 
+                    // Advance (and drop once finished) every active floating damage number (see SpawnDamageNumber).
+                    for (int i = _activeDamageNumbers.Count - 1; i >= 0; i--)
+                    {
+                        _activeDamageNumbers[i].Elapsed += deltaTime;
+                        if (_activeDamageNumbers[i].Elapsed >= _activeDamageNumbers[i].Duration)
+                            _activeDamageNumbers.RemoveAt(i);
+                    }
+
                     if (_combatLogTimer > 0f)
                         _combatLogTimer -= deltaTime;
 
@@ -1133,6 +1179,8 @@ namespace SagesOfOzvaram
                                 _allyTargetModeActive = false;
                                 _tameBeastModeActive = false;
                                 _trapPlacementModeActive = false;
+                                _leapModeActive = false;
+                                _releaseModeActive = false;
                                 _summonPlacementModeActive = false;
                                 _portalPlacementModeActive = false;
                                 _movementModeActive = false;
@@ -1170,6 +1218,8 @@ namespace SagesOfOzvaram
                                     _allyTargetModeActive = false;
                                     _tameBeastModeActive = false;
                                     _trapPlacementModeActive = false;
+                                    _leapModeActive = false;
+                                    _releaseModeActive = false;
                                     _summonPlacementModeActive = false;
                                     _portalPlacementModeActive = false;
                                     _movementModeActive = false;
@@ -1303,6 +1353,14 @@ namespace SagesOfOzvaram
                         {
                             HandleTrapPlacementInput(keyboardState, mouseState);
                         }
+                        else if (_leapModeActive)
+                        {
+                            HandleLeapInput(keyboardState, mouseState);
+                        }
+                        else if (_releaseModeActive)
+                        {
+                            HandleReleaseInput(keyboardState, mouseState);
+                        }
                         else if (_summonPlacementModeActive)
                         {
                             HandleSummonPlacementInput(keyboardState, mouseState);
@@ -1349,6 +1407,8 @@ namespace SagesOfOzvaram
                         _allyTargetModeActive = false;
                         _tameBeastModeActive = false;
                         _trapPlacementModeActive = false;
+                        _leapModeActive = false;
+                        _releaseModeActive = false;
                         _summonPlacementModeActive = false;
                         _portalPlacementModeActive = false;
                         _movementModeActive = false;
@@ -1667,7 +1727,7 @@ namespace SagesOfOzvaram
 
             hand.Add(drawnCard[0]);
             _classHands[_playerUnit.Class] = hand;
-            _playerUnit.CurrentAP -= drawCost;
+            _playerUnit.SpendAP(drawCost);
             _playerUnit.RecordCardDraw();
 
             _availableHandCards = new List<object>(hand);
@@ -1903,7 +1963,7 @@ namespace SagesOfOzvaram
                 // ending the turn.
                 if (_playerUnit.CurrentAP >= _playerUnit.GuardAPCost)
                 {
-                    _playerUnit.CurrentAP -= _playerUnit.GuardAPCost;
+                    _playerUnit.SpendAP(_playerUnit.GuardAPCost);
                     _playerUnit.ApplyGuard();
                 }
 
@@ -1927,7 +1987,10 @@ namespace SagesOfOzvaram
                 // movement is disabled until the unit spends the AP to get back up.
                 if (_playerUnit.IsKnockedDown)
                 {
-                    _playerUnit.TryStandUp();
+                    if (IsPinnedAndCannotEscape(_playerUnit, out var pinner))
+                        ShowCombatMessage($"{_playerUnit.Name} cannot escape {pinner.Name}'s grip!");
+                    else
+                        _playerUnit.TryStandUp();
                     _turnMenuIndex = 0;
                     _turnMenuActive = true;
                 }
@@ -1953,6 +2016,15 @@ namespace SagesOfOzvaram
                 // disappear once nothing reachable is left to grab, same as every other option).
                 _turnMenuIndex = 0;
             }
+            else if (optionId == "Syphon")
+            {
+                CastSyphon(_playerUnit);
+                _turnMenuIndex = 0;
+            }
+            else if (optionId == "Release")
+            {
+                OpenReleaseTargeting();
+            }
         }
 
         /// <summary>
@@ -1975,10 +2047,70 @@ namespace SagesOfOzvaram
                 return;
 
             var consumable = (ConsumableItem)pickup.Item;
-            unit.CurrentAP = Math.Max(0, unit.CurrentAP - BaseUnit.PickUpAPCost);
+            unit.SpendAP(BaseUnit.PickUpAPCost);
             unit.AddConsumable(consumable);
             _droppedItems.Remove(pickup);
             ShowCombatMessage($"{unit.Name} picks up {consumable.Name}.");
+        }
+
+        /// <summary>
+        /// The "Syphon" turn-menu option (see TurnMenuBuilder/Combat.RaceAttacks.RoachlinSyphon) -
+        /// only ever shown while `roachlin` HasStatusEffect("Pinning") and hasn't already Syphoned
+        /// this same pin (TurnMenuBuilder's own SyphonedThisPin check), so PinnedTarget is
+        /// guaranteed non-null (and AP/MP affordable too) - the null/dead check below is
+        /// defensive only. Deals RoachlinSyphon's flat BaseDamage (no hit roll, no Strength
+        /// scaling - "a SET amount of physical damage"), heals the Roachlin by that same damage
+        /// value, then grants - or, if "Syphon Vigor" is already active, STACKS on top of and
+        /// refreshes - a 2-turn self-buff: +3 STR, +6 Max HP, +3 DEF. Stacking/refreshing is done
+        /// by mutating the existing StatusEffect instance directly rather than through
+        /// ApplyStatusEffect (which would just replace it at the base values, not add on top),
+        /// since "stacks and refreshes each time" needs the SECOND use to add a further +3/+6/+3
+        /// on top of the first, not reset back down to it. Finally marks the Pinning itself as
+        /// SyphonedThisPin - on request, cashing in the benefit forces an immediate Release right
+        /// after (TurnMenuBuilder then shows ONLY Release, nothing else), the strategic trade-off
+        /// against just ending the turn still Pinning instead.
+        /// </summary>
+        private void CastSyphon(BaseUnit roachlin)
+        {
+            var pinning = roachlin.StatusEffects.FirstOrDefault(e => e.Name == "Pinning");
+            var target = pinning?.PinnedTarget;
+            if (target == null || !target.IsAlive)
+            {
+                ShowCombatMessage("Nothing to Syphon.");
+                return;
+            }
+
+            var move = RaceAttacks.RoachlinSyphon;
+            roachlin.SpendAP(move.APCost);
+            roachlin.CurrentMP = Math.Max(0, roachlin.CurrentMP - move.MPCost);
+
+            int damage = move.GetDamage(roachlin, target);
+            target.TakeDamage(damage, move.DamageType);
+            roachlin.Heal(damage);
+
+            var vigor = roachlin.StatusEffects.FirstOrDefault(e => e.Name == "Syphon Vigor");
+            if (vigor != null)
+            {
+                vigor.StrengthBonus += 3;
+                vigor.MaxHPBonus += 6;
+                vigor.DefenseBonus += 3;
+                vigor.TurnsRemaining = 2;
+            }
+            else
+            {
+                roachlin.ApplyStatusEffect(new StatusEffect
+                {
+                    Name = "Syphon Vigor",
+                    Type = StatusEffectType.Buff,
+                    TurnsRemaining = 2,
+                    StrengthBonus = 3,
+                    MaxHPBonus = 6,
+                    DefenseBonus = 3,
+                });
+            }
+
+            pinning.SyphonedThisPin = true;
+            ShowCombatMessage($"{roachlin.Name} syphons {target.Name} for {damage} damage, healing the same amount!");
         }
 
         /// <summary>
@@ -2229,14 +2361,14 @@ namespace SagesOfOzvaram
 
             if (action == "Equip (1 AP)")
             {
-                _playerUnit.CurrentAP -= 1;
+                _playerUnit.SpendAP(1);
                 _playerUnit.EquippedWeapon = (Weapon)_selectedItem;
                 ShowCombatMessage($"{_playerUnit.Name} equips {_selectedItem.Name}.");
                 CloseItemsFlowToTurnMenu();
             }
             else if (action == "Unequip (1 AP)")
             {
-                _playerUnit.CurrentAP -= 1;
+                _playerUnit.SpendAP(1);
                 _playerUnit.EquippedWeapon = null;
                 ShowCombatMessage($"{_playerUnit.Name} unequips {_selectedItem.Name}.");
                 CloseItemsFlowToTurnMenu();
@@ -2244,7 +2376,7 @@ namespace SagesOfOzvaram
             else if (action == "Use (1 AP)")
             {
                 var consumable = (ConsumableItem)_selectedItem;
-                _playerUnit.CurrentAP -= 1;
+                _playerUnit.SpendAP(1);
                 string message = consumable.Use(_playerUnit);
                 _playerUnit.RemoveConsumable(consumable);
                 ShowCombatMessage(message);
@@ -2465,8 +2597,13 @@ namespace SagesOfOzvaram
             // Snared (or any future PreventsMovement effect) blocks movement here directly rather
             // than at each caller - the player already never sees a Move option while snared (see
             // Combat.TurnMenuBuilder), but AI movement (WanderUnit/MoveAiUnitToward) has no menu to
-            // gate it, so this is the one chokepoint both paths actually share.
-            if (unit.StatusEffects.Any(e => e.PreventsMovement))
+            // gate it, so this is the one chokepoint both paths actually share. Knocked Down
+            // (IsKnockedDown, not a PreventsMovement StatusEffect - see ApplyKnockdown) needs the
+            // same guard for the same reason: the player's own menu already swaps Move for Stand
+            // Up while knocked down, but nothing stopped an AI-controlled knocked-down unit from
+            // still wandering/approaching via this same entrypoint until now - a real, if minor,
+            // pre-existing gap noticed while making Knocked Down a real, visible StatusEffect.
+            if (unit.StatusEffects.Any(e => e.PreventsMovement) || unit.IsKnockedDown)
                 return;
 
             var start = _hexGrid.WorldToHex(unit.Position);
@@ -2497,15 +2634,18 @@ namespace SagesOfOzvaram
 
             var affordablePath = path.Take(lastAffordableIndex + 1).ToList();
 
-            // A placed trap (see PlacedTrap/CastPlaceTrap) not on unit's own team (GetTeamRoot)
-            // triggers the instant it's reached, cutting the move short right there - unit never
-            // walks the rest of an already-affordable path through it, same as a real trap would
-            // stop someone mid-stride rather than let them walk clean through.
+            // A placed Trap (see Objects.Trap/CastPlaceTrap) triggers the instant it's reached -
+            // by ANY unit, any team, even Owner's own (nothing is immune by team) - cutting the
+            // move short right there - unit never walks the rest of an already-affordable path
+            // through it, same as a real trap would stop someone mid-stride rather than let them
+            // walk clean through. Range (0 for every current trap) is checked as a hex distance
+            // rather than exact-tile equality, so a future larger-area trap works the same way.
             int triggerIndex = -1;
-            PlacedTrap triggeredTrap = null;
+            Trap triggeredTrap = null;
             for (int i = 0; i < affordablePath.Count; i++)
             {
-                var trap = _placedTraps.FirstOrDefault(t => t.Tile == affordablePath[i] && GetTeamRoot(t.Owner) != GetTeamRoot(unit));
+                var (col, row) = affordablePath[i];
+                var trap = _placedTraps.FirstOrDefault(t => _hexGrid.GetDistance(t.Tile.col, t.Tile.row, col, row) <= t.Range);
                 if (trap != null)
                 {
                     triggeredTrap = trap;
@@ -2534,7 +2674,7 @@ namespace SagesOfOzvaram
             }
 
             unit.SetMovementPath(affordablePath.Select(hex => _hexGrid.HexToWorld(hex.col, hex.row)));
-            unit.CurrentAP = Math.Max(0, unit.CurrentAP - apCost);
+            unit.SpendAP(apCost);
 
             var finalTile = affordablePath[affordablePath.Count - 1];
             string moveMessage = $"{unit.Name} moved from ({start.col}, {start.row}) to ({finalTile.col}, {finalTile.row})";
@@ -2619,8 +2759,13 @@ namespace SagesOfOzvaram
                 return;
             }
 
-            // Knocked Down: stand up instead of trying (and failing) to move/attack this turn.
-            if (aiUnit.IsKnockedDown)
+            // Knocked Down: stand up instead of trying (and failing) to move/attack this turn -
+            // UNLESS Pinning means standing up would just fail anyway (see
+            // IsPinnedAndCannotEscape), in which case fall through to the normal attack logic
+            // below instead of wasting the turn on a stand-up attempt that can't succeed; a
+            // pinned Knocked Down unit can still attack/cast normally, just with the usual
+            // Knocked Down accuracy penalty (Move.GetHitChance).
+            if (aiUnit.IsKnockedDown && !IsPinnedAndCannotEscape(aiUnit, out _))
             {
                 aiUnit.TryStandUp();
                 return;
@@ -2798,6 +2943,15 @@ namespace SagesOfOzvaram
             return aiUnit.AvailableMovesWithSource
                 .Where(entry =>
                 {
+                    // IsLeap (e.g. the Dusk Roachlin's Leap) needs its own dedicated targeting
+                    // mode (tile-or-unit, a dual mode no other move has) that only the player's
+                    // menu dispatch currently understands - same scope cut every other
+                    // specially-flagged move (IsBlink, IsPlaceTrap, ...) already has, just for a
+                    // racial move instead of a SpellCard. AttackResolver would resolve it as a
+                    // plain 0-damage hit with no targeting of its own, which isn't what it does.
+                    if (entry.Move.IsLeap)
+                        return false;
+
                     int apCost = aiUnit.GetEffectiveAPCost(entry.Move, entry.SourceWeapon);
                     if (apCost > aiUnit.CurrentAP || entry.Move.MPCost > aiUnit.CurrentMP)
                         return false;
@@ -2827,14 +2981,14 @@ namespace SagesOfOzvaram
         /// </summary>
         private bool TryAiUtility(BaseUnit aiUnit)
         {
-            if (aiUnit.HP > aiUnit.MaxHP / 2 || aiUnit.CurrentAP < 1)
+            if (aiUnit.HP > aiUnit.EffectiveMaxHP / 2 || aiUnit.CurrentAP < 1)
                 return false;
 
             var potion = aiUnit.Consumables.Where(c => c.HealHP > 0).OrderByDescending(c => c.HealHP).FirstOrDefault();
             if (potion == null)
                 return false;
 
-            aiUnit.CurrentAP -= 1;
+            aiUnit.SpendAP(1);
             string message = potion.Use(aiUnit);
             aiUnit.RemoveConsumable(potion);
             ShowCombatMessage(message);
@@ -3003,6 +3157,12 @@ namespace SagesOfOzvaram
                 return;
             }
 
+            if (move.IsLeap)
+            {
+                OpenLeapTargeting(move);
+                return;
+            }
+
             var validTargets = GetValidAttackTargets(move, sourceWeapon);
             if (validTargets.Count == 0)
             {
@@ -3024,6 +3184,35 @@ namespace SagesOfOzvaram
 
         /// <summary>A unit's team identity - itself, or whoever summoned it (see BaseUnit.Owner). Two units are allied iff this is equal for both.</summary>
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
+
+        /// <summary>
+        /// True if some OTHER living unit currently has an active "Pinning" StatusEffect whose
+        /// PinnedTarget is `unit`, AND that pinner's EffectiveStrength is higher than `unit`'s own
+        /// (see Leap) - the "while the attacker is PINNING, and the target's STR is LOWER than
+        /// the attacker, the target remains KNOCKED DOWN, and cannot escape it" rule. Checked at
+        /// both of BaseUnit.TryStandUp's call sites (player's "Stand Up" menu choice, AI's own
+        /// knocked-down handling) rather than inside BaseUnit itself, since BaseUnit has no view
+        /// of every OTHER unit on the field to find the pinner with - only Game1 does. Out
+        /// parameter is the pinner itself, for the "cannot escape X's grip" message.
+        /// </summary>
+        private bool IsPinnedAndCannotEscape(BaseUnit unit, out BaseUnit pinner)
+        {
+            foreach (var other in _units)
+            {
+                if (other == unit || !other.IsAlive)
+                    continue;
+
+                var pinning = other.StatusEffects.FirstOrDefault(e => e.Name == "Pinning" && e.PinnedTarget == unit);
+                if (pinning != null && other.EffectiveStrength > unit.EffectiveStrength)
+                {
+                    pinner = other;
+                    return true;
+                }
+            }
+
+            pinner = null;
+            return false;
+        }
 
         /// <summary>
         /// Fog of War: every tile `teamRoot`'s team can currently see - the union of each living
@@ -3304,7 +3493,7 @@ namespace SagesOfOzvaram
         /// <summary>Spend _pendingMove's AP/MP, move the caster straight to destHex, consume the card, and return to the turn menu.</summary>
         private void ExecuteBlink((int col, int row) destHex)
         {
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
             _playerUnit.Position = _hexGrid.HexToWorld(destHex.col, destHex.row);
 
@@ -3332,6 +3521,198 @@ namespace SagesOfOzvaram
                 _turnMenuIndex = 0;
                 _turnMenuActive = true;
             }
+        }
+
+        /// <summary>
+        /// Opens Leap's own dual targeting mode (see _leapModeActive's own doc comment) -
+        /// ConfirmAttackMenuSelection already CHECKED AP/MP affordability before dispatching here,
+        /// same as every other move, but hasn't spent anything yet; the actual spend happens on
+        /// confirm (ExecuteLeapToTile/ExecuteLeapOntoUnit), same "pay on confirm, not on opening
+        /// the targeting mode" pattern Blink/Place Trap/Tame Beast all already follow.
+        /// </summary>
+        private void OpenLeapTargeting(Move move)
+        {
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            int range = move.GetEffectiveRange(_playerUnit, null);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
+
+            _leapValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, range)
+                .Where(hex => hex != casterHex && _hexGrid.IsInBounds(hex.col, hex.row)
+                    && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToHashSet();
+
+            _leapValidTargets = _units.Where(u => u != _playerUnit && u.IsAlive
+                    && _hexGrid.GetDistance(casterHex.col, casterHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= range
+                    && _hexGrid.GetNeighbors(_hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row)
+                        .Any(n => Pathfinder.IsPassable(_hexGrid, _map, n.col, n.row, occupied)))
+                .ToList();
+
+            if (_leapValidTiles.Count == 0 && _leapValidTargets.Count == 0)
+            {
+                ShowCombatMessage($"Nowhere to {move.Name}.");
+                return;
+            }
+
+            _attackMenuActive = false;
+            _leapModeActive = true;
+        }
+
+        /// <summary>Handle input while picking a Leap destination: click a highlighted tile to land there, a highlighted unit to pounce onto it instead, E to cancel back to the turn menu.</summary>
+        private void HandleLeapInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelLeap();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+
+                var targetUnit = _leapValidTargets.FirstOrDefault(u => _hexGrid.WorldToHex(u.Position) == clickedHex);
+                if (targetUnit != null)
+                {
+                    ExecuteLeapOntoUnit(targetUnit);
+                    return;
+                }
+
+                if (_leapValidTiles.Contains(clickedHex))
+                    ExecuteLeapToTile(clickedHex);
+            }
+        }
+
+        /// <summary>Spend _pendingMove's AP/MP, move the caster straight to destHex (a plain reposition, no landing effect), consume the card, and return to the turn menu.</summary>
+        private void ExecuteLeapToTile((int col, int row) destHex)
+        {
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+            _playerUnit.Position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+
+            ShowCombatMessage($"{_playerUnit.Name} leaps to open ground.");
+            CancelLeap();
+        }
+
+        /// <summary>
+        /// Spend _pendingMove's AP/MP, then resolve Leap's own landing effect against `target`.
+        /// If target's EffectiveStrength is LOWER than the caster's: the caster lands directly ON
+        /// target's own tile (sharing it - on request, the fiction of physically pinning
+        /// something down means standing on top of it, not next to it; see Release's own tile
+        /// prompt for how the caster steps back off once it lets go), applies Knocked Down to
+        /// target, and "Pinning" (PinnedTarget = target) to itself. Otherwise the pin fails: the
+        /// caster lands on whichever free tile adjacent to target OpenLeapTargeting already
+        /// confirmed exists instead (no tile-sharing without a successful pin), just a
+        /// combat-log line, no further effect. Deals no damage either way - Leap is pure
+        /// positioning + conditional CC, not an attack.
+        /// </summary>
+        private void ExecuteLeapOntoUnit(BaseUnit target)
+        {
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
+
+            if (target.EffectiveStrength < _playerUnit.EffectiveStrength)
+            {
+                _playerUnit.Position = target.Position;
+                target.ApplyKnockdown(1);
+                _playerUnit.ApplyStatusEffect(new StatusEffect
+                {
+                    Name = "Pinning",
+                    Type = StatusEffectType.Buff,
+                    TurnsRemaining = -1,
+                    PinnedTarget = target,
+                });
+                ShowCombatMessage($"{_playerUnit.Name} pins {target.Name} to the ground!");
+            }
+            else
+            {
+                var occupied = GetDestinationBlockingTiles(_playerUnit);
+                var targetHex = _hexGrid.WorldToHex(target.Position);
+                var landingHex = _hexGrid.GetNeighbors(targetHex.col, targetHex.row)
+                    .First(n => Pathfinder.IsPassable(_hexGrid, _map, n.col, n.row, occupied));
+                _playerUnit.Position = _hexGrid.HexToWorld(landingHex.col, landingHex.row);
+                ShowCombatMessage($"{_playerUnit.Name} leaps onto {target.Name}, but can't bring them down.");
+            }
+
+            CancelLeap();
+        }
+
+        private void CancelLeap()
+        {
+            _leapModeActive = false;
+            _pendingMove = null;
+            _leapValidTiles.Clear();
+            _leapValidTargets.Clear();
+
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        /// <summary>
+        /// The "Release" turn-menu option (see TurnMenuBuilder) - opens a plain empty-tile
+        /// targeting mode over every passable, unoccupied tile adjacent to the caster's CURRENT
+        /// position (shared with its pinned target while Pinning is active - see
+        /// ExecuteLeapOntoUnit) rather than instantly letting go, since the caster has to
+        /// physically step off that shared tile. No cost - Release is free either way. If
+        /// literally no adjacent tile is free (fully boxed in), Pinning simply can't be released
+        /// yet rather than leaving the caster stuck sharing a tile outside of an active pin.
+        /// </summary>
+        private void OpenReleaseTargeting()
+        {
+            var currentHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
+            _releaseValidTiles = _hexGrid.GetNeighbors(currentHex.col, currentHex.row)
+                .Where(hex => _hexGrid.IsInBounds(hex.col, hex.row) && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToHashSet();
+
+            if (_releaseValidTiles.Count == 0)
+            {
+                ShowCombatMessage($"{_playerUnit.Name} has nowhere to step back to.");
+                return;
+            }
+
+            _turnMenuActive = false;
+            _releaseModeActive = true;
+        }
+
+        /// <summary>Handle input while picking where to step off to on Release: click a highlighted adjacent tile to move there and let go, E to cancel back to the turn menu (still Pinning).</summary>
+        private void HandleReleaseInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelRelease();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_releaseValidTiles.Contains(clickedHex))
+                    ExecuteRelease(clickedHex);
+            }
+        }
+
+        /// <summary>Step the caster off to destHex, remove "Pinning" (freeing its former target to attempt standing up normally again), and return to the turn menu.</summary>
+        private void ExecuteRelease((int col, int row) destHex)
+        {
+            var pinning = _playerUnit.StatusEffects.FirstOrDefault(e => e.Name == "Pinning");
+            string targetName = pinning?.PinnedTarget?.Name ?? "its grip";
+
+            _playerUnit.Position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            _playerUnit.RemoveStatusEffect("Pinning");
+            ShowCombatMessage($"{_playerUnit.Name} releases {targetName}.");
+
+            CancelRelease();
+        }
+
+        private void CancelRelease()
+        {
+            _releaseModeActive = false;
+            _releaseValidTiles.Clear();
+
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
         }
 
         /// <summary>
@@ -3391,7 +3772,7 @@ namespace SagesOfOzvaram
         /// <summary>Spend _pendingMove's AP/MP, grant target a shield, consume the card, and return to the turn menu.</summary>
         private void ExecuteAllyShield(BaseUnit target)
         {
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
 
             int shieldAmount = _pendingMove.GetDamage(_playerUnit);
@@ -3492,7 +3873,7 @@ namespace SagesOfOzvaram
         /// </summary>
         private void ExecuteTameBeast(BaseUnit target)
         {
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
 
             bool success = _deckRandom.NextDouble() < _pendingMove.BaseAccuracy;
@@ -3533,9 +3914,66 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// The trap Move.IsPlaceTrap/CastPlaceTrap actually places - see Objects.Trap for why its
+        /// damage/status are hardcoded here rather than read off the casting Move (there's no
+        /// caster present at the moment it actually triggers, so nothing to scale off Strength/
+        /// Intelligence - the Move's own BaseDamage/InflictsStatusEffect fields are unused for
+        /// this spell, only its AP/MP/Range matter). Applies BOTH of its two afflictions
+        /// unconditionally (no chance roll - on request, replacing the original single 50%-chance
+        /// Bleeding this used to carry):
+        /// - Weak Root: PreventsMovement + ZeroesEvasion, TurnsRemaining 2 - the existing generic
+        ///   per-turn countdown (BaseUnit.TickStatusEffects, !RestrictsActions so it ticks
+        ///   automatically) decrements this once at the start of the victim's NEXT turn (to 1,
+        ///   staying active the whole way through it) and again at the start of the turn AFTER
+        ///   THAT (to 0, removed) - net effect: blocks movement for the rest of the turn it's
+        ///   triggered on PLUS the victim's entire next turn, exactly "until the end of the
+        ///   unit's next turn."
+        /// - Weak Bleed: EndOfTurn/AffectedUnitsTurn, 5% max HP (DamagePercentMaxHPPerTick,
+        ///   dispatched by TurnSystem.DispatchTimedEffects - see Combat.StatusEffectTiming) plus
+        ///   1% max HP per action (DamagePercentMaxHPPerAction, see BaseUnit.SpendAP) - both true
+        ///   damage, bypassing Defense/Resistance same as the older generic Bleeding mechanic.
+        ///   Indefinite duration (TurnsRemaining -1) - no duration was specified, so this persists
+        ///   like generic Bleeding does, with no cure path yet either (CuresBleed only clears the
+        ///   separate BleedPercentPerTurn field, not this). Dropping a victim under 5% max HP
+        ///   needs no extra code at all - BaseUnit.UpdateFaintStatus (already Faints anyone at or
+        ///   under that exact threshold) runs automatically inside ApplyTrueDamage already.
+        /// </summary>
+        private Trap CreateBearatTrap((int col, int row) tile, BaseUnit owner) => new Trap
+        {
+            Name = "Bearat Trap",
+            Tile = tile,
+            Owner = owner,
+            Range = 0,
+            FlatDamage = 1,
+            DamageType = DamageType.Sharp,
+            AppliedEffects = new List<StatusEffect>
+            {
+                new StatusEffect
+                {
+                    Name = "Weak Root",
+                    Type = StatusEffectType.Affliction,
+                    Timing = StatusEffectTiming.Active,
+                    TurnsRemaining = 2,
+                    PreventsMovement = true,
+                    ZeroesEvasion = true,
+                },
+                new StatusEffect
+                {
+                    Name = "Weak Bleed",
+                    Type = StatusEffectType.Affliction,
+                    Timing = StatusEffectTiming.EndOfTurn,
+                    TurnTrigger = StatusEffectTurnTrigger.AffectedUnitsTurn,
+                    TurnsRemaining = -1,
+                    DamagePercentMaxHPPerTick = 0.05f,
+                    DamagePercentMaxHPPerAction = 0.01f,
+                },
+            },
+        };
+
+        /// <summary>
         /// Cast an IsPlaceTrap spell (e.g. Place Trap): pays AP/MP up front like any other cast,
         /// then opens trap-placement targeting showing every passable, unoccupied, not-already-
-        /// trapped tile within Range of the caster - clicking one plants a PlacedTrap there (see
+        /// trapped tile within Range of the caster - clicking one plants a Trap there (see
         /// HandleTrapPlacementInput/ExecutePlaceTrap). Cancelling (E) refunds nothing since
         /// nothing is spent until a tile is actually chosen, same as teleport targeting.
         /// </summary>
@@ -3586,14 +4024,15 @@ namespace SagesOfOzvaram
             }
         }
 
-        /// <summary>Spend _pendingMove's AP/MP, record a new PlacedTrap at destHex owned by the caster, consume the card, and return to the turn menu.</summary>
+        /// <summary>Spend _pendingMove's AP/MP, record a new Trap (see CreateBearatTrap) at destHex owned by the caster, consume the card, and return to the turn menu.</summary>
         private void ExecutePlaceTrap((int col, int row) destHex)
         {
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - _playerUnit.GetEffectiveAPCost(_pendingMove, null));
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
 
-            _placedTraps.Add(new PlacedTrap { Tile = destHex, Owner = _playerUnit, SourceMove = _pendingMove });
-            ShowCombatMessage($"{_playerUnit.Name} sets {_pendingMove.Name}.");
+            var trap = CreateBearatTrap(destHex, _playerUnit);
+            _placedTraps.Add(trap);
+            ShowCombatMessage($"{_playerUnit.Name} sets a {trap.Name}.");
 
             if (_pendingSpellCard != null)
                 RemoveCardFromHand(_pendingSpellCard);
@@ -3620,30 +4059,30 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Resolve `trap` triggering against `mover` (called from MoveUnitTowards the instant a
-        /// unit not on the trap's own team reaches its tile): removes the trap (one use only),
-        /// deals its move's damage exactly like a landed attack would (no hit roll - a trap
-        /// doesn't miss), grants the same aggro a direct hit would, then rolls and applies its
-        /// InflictsStatusEffect (Snared) through AttackResolver's own switch, so it behaves
-        /// identically to a status effect landed by a real attack.
+        /// Resolve `trap` triggering against `mover` (called from MoveUnitTowards the instant ANY
+        /// unit - any team, even Owner's own - reaches a tile within its Range): removes the trap
+        /// (one use only), deals its flat damage with no hit roll (a trap doesn't miss) and no
+        /// stat scaling (see Objects.Trap), grants the same aggro a landed attack would, spawns a
+        /// floating damage number (SpawnDamageNumber - a trap trigger has no attack animation of
+        /// its own to otherwise carry that feedback), then applies every one of its AppliedEffects
+        /// unconditionally (no chance roll - see CreateBearatTrap for the Bearat Trap's own two).
         /// </summary>
-        private void TriggerTrap(PlacedTrap trap, BaseUnit mover)
+        private void TriggerTrap(Trap trap, BaseUnit mover)
         {
             _placedTraps.Remove(trap);
 
-            var move = trap.SourceMove;
-            int damage = move.GetDamage(trap.Owner, mover);
-            mover.TakeDamage(damage, move.DamageType);
+            mover.TakeDamage(trap.FlatDamage, trap.DamageType);
             mover.AddAggro(trap.Owner, 5);
-            if (damage > 0)
+            if (trap.FlatDamage > 0)
                 mover.AddAggro(trap.Owner, 2);
 
-            ShowCombatMessage($"{mover.Name} triggers {trap.Owner.Name}'s {move.Name} for {damage} damage!");
+            SpawnDamageNumber(mover, trap.FlatDamage);
+            ShowCombatMessage($"{mover.Name} triggers {trap.Owner.Name}'s {trap.Name} for {trap.FlatDamage} damage!");
 
-            if (move.InflictsStatusEffect != null && _deckRandom.NextDouble() < move.GetStatusEffectChance(trap.Owner, mover))
+            foreach (var effect in trap.AppliedEffects)
             {
-                AttackResolver.InflictMoveStatusEffect(mover, move);
-                ShowCombatMessage($"{mover.Name} is {move.InflictsStatusEffect}!");
+                mover.ApplyStatusEffect(effect);
+                ShowCombatMessage($"{mover.Name} is afflicted with {effect.Name}!");
             }
         }
 
@@ -4050,7 +4489,7 @@ namespace SagesOfOzvaram
         /// </summary>
         private void ExecuteSummon((int col, int row) destHex)
         {
-            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - SummonAPCost);
+            _playerUnit.SpendAP(SummonAPCost);
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingSummonCard.ManaCost);
 
             var position = _hexGrid.HexToWorld(destHex.col, destHex.row);
@@ -4155,7 +4594,7 @@ namespace SagesOfOzvaram
                 if (creatureTiles.Count == 0)
                     continue; // portal placed (if it needed to be) but nowhere for the creature itself - try another card
 
-                aiUnit.CurrentAP = Math.Max(0, aiUnit.CurrentAP - SummonAPCost);
+                aiUnit.SpendAP(SummonAPCost);
                 aiUnit.CurrentMP = Math.Max(0, aiUnit.CurrentMP - card.ManaCost);
 
                 var summonPos = _hexGrid.HexToWorld(creatureTiles[0].col, creatureTiles[0].row);
@@ -4318,6 +4757,12 @@ namespace SagesOfOzvaram
         /// from the attacker to the target. Purely presentational - runs regardless of hit/miss,
         /// so a whiffed swing/shot still visibly happens.
         /// </summary>
+        /// <summary>A floating "-N" number that rises and fades above target over 1 second (see ActiveDamageNumber/Draw's rendering of it) - currently only spawned from TriggerTrap, since a normal weapon/spell hit already gets equivalent feedback from its own Slash/Shooting animation plus the combat log, where a trap's trigger has neither.</summary>
+        private void SpawnDamageNumber(BaseUnit target, int amount)
+        {
+            _activeDamageNumbers.Add(new ActiveDamageNumber { Target = target, Amount = amount, Duration = 1f });
+        }
+
         private void SpawnAttackAnimations(BaseUnit attacker, Move move, List<AttackOutcome> outcomes)
         {
             Vector2 from = attacker.Position;
@@ -4843,9 +5288,10 @@ namespace SagesOfOzvaram
 
             // Trap placement (Move.IsPlaceTrap, e.g. Place Trap) - every valid tile highlighted
             // dark red/brown (distinct from every other mode's color), brighter where the mouse
-            // is hovering. Only shown while still choosing where to place it - once set, a trap
-            // draws no persistent marker at all (see PlacedTrap), matching its own "invisible"
-            // fluff since there's no fog-of-war system to hide it from only its owner.
+            // is hovering. Once actually placed, a Trap draws its own placeholder sprite instead
+            // (see the trap-rendering pass right before "Draw units" below) - visible only to its
+            // own team, unlike this placement-targeting highlight which only the caster ever sees
+            // anyway (it's their own targeting mode).
             if (_trapPlacementModeActive)
             {
                 var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
@@ -4854,6 +5300,45 @@ namespace SagesOfOzvaram
                     bool hovered = (col, row) == hoveredHex;
                     Color fill = hovered ? new Color(200, 90, 60, 180) : new Color(150, 60, 40, 120);
                     Color outline = hovered ? Color.White : Color.DarkRed;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
+            // Leap targeting (Move.IsLeap, e.g. the Dusk Roachlin's Leap) - both valid empty
+            // tiles AND valid unit targets highlighted the same teal color (a plain reposition
+            // and a pounce-onto-a-target are both just "a valid place to click" here, distinct
+            // from attack targeting's red and every other mode's own color), brighter under the
+            // mouse. A unit target highlights over its own tile, same as attack targeting does.
+            if (_leapModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _leapValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(100, 220, 210, 180) : new Color(60, 170, 160, 110);
+                    Color outline = hovered ? Color.White : Color.Teal;
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+                foreach (var target in _leapValidTargets)
+                {
+                    bool hovered = _hexGrid.WorldToHex(target.Position) == hoveredHex;
+                    Color fill = hovered ? new Color(100, 220, 210, 180) : new Color(60, 170, 160, 110);
+                    Color outline = hovered ? Color.White : Color.Teal;
+                    DrawHexFilled(target.Position, fill, outline);
+                }
+            }
+
+            // Release targeting (the "Release" turn-menu option while Pinning) - every adjacent
+            // tile the caster could step off onto, same teal as Leap's own highlight (stepping
+            // off is really just the back half of the same mechanic).
+            if (_releaseModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _releaseValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(100, 220, 210, 180) : new Color(60, 170, 160, 110);
+                    Color outline = hovered ? Color.White : Color.Teal;
                     DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
                 }
             }
@@ -4918,6 +5403,32 @@ namespace SagesOfOzvaram
                 const float size = 14f;
                 var rect = new Rectangle((int)(dropped.Position.X - size / 2f), (int)(dropped.Position.Y - size / 2f), (int)size, (int)size);
                 _spriteBatch.Draw(_whitePixel, rect, new Color(150, 90, 50));
+            }
+
+            // Placed Traps (Objects.Trap, e.g. Place Trap's "Bearat Trap") - visible ONLY to
+            // their own team (GetTeamRoot(trap.Owner) == GetTeamRoot(_playerUnit)), regardless of
+            // Fog of War's own vision-range check (fogVisibleTiles above) - a trap is a
+            // deliberate team secret, not just something far away, so an enemy standing right
+            // next to one still can't see it. Re-evaluated every frame against whichever team
+            // _playerUnit currently belongs to, so switching control to a different class (e.g.
+            // Test Mode cycling through every class on its own turn) immediately hides any trap
+            // that class didn't place. Drawn tinted (the placeholder Pawn sprite has no trap-like
+            // art of its own) and smaller than a real unit - it's a marker, not a creature.
+            if (_trapSpriteTexture != null && _playerUnit != null)
+            {
+                var viewerTeam = GetTeamRoot(_playerUnit);
+                foreach (var trap in _placedTraps)
+                {
+                    if (GetTeamRoot(trap.Owner) != viewerTeam)
+                        continue;
+
+                    const float trapScale = 0.3f;
+                    Vector2 trapWorldPos = _hexGrid.HexToWorld(trap.Tile.col, trap.Tile.row);
+                    Vector2 trapSize = new Vector2(_trapSpriteTexture.Width * trapScale, _trapSpriteTexture.Height * trapScale);
+                    Vector2 trapDrawPos = trapWorldPos - (trapSize / 2f);
+                    _spriteBatch.Draw(_trapSpriteTexture, trapDrawPos, null, new Color(140, 60, 40), 0f,
+                                    Vector2.Zero, trapScale, SpriteEffects.None, 0f);
+                }
             }
 
             // Whichever unit (if any) the mouse is currently over - drives which neutral/enemy
@@ -5018,26 +5529,28 @@ namespace SagesOfOzvaram
                     string dispositionSuffix = unit.Owner == null && unit.Factions.Contains(Faction.Wild)
                         ? $" [{unit.Disposition}]"
                         : "";
-                    string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.MaxHP}{dispositionSuffix}" : $"{unit.Name}: DEAD";
+                    string statusText = unit.IsAlive ? $"{unit.Name}: {unit.HP}/{unit.EffectiveMaxHP}{dispositionSuffix}" : $"{unit.Name}: DEAD";
                     Vector2 textSize = _font.MeasureString(statusText) * 0.4f;
                     Vector2 textPos = unit.Position - new Vector2(textSize.X / 2f, 48f);
                     Color textColor = !unit.IsAlive ? Color.DarkRed : (unit.IsFainted ? Color.Gray : Color.White);
                     _spriteBatch.DrawString(_font, statusText, textPos, textColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
 
-                    // Every active StatusEffect (Buffs cyan, Afflictions orange - e.g. Brace,
-                    // Deep Sleep, Meditate's live stacks, Stunned) shown as a small line right
-                    // above the name/HP text - the only persistent on-screen sign any is active,
-                    // beyond the fading combat-log message shown the moment one is applied. Fully
-                    // generic - a brand new StatusEffect shows up here automatically, no Game1
-                    // change needed.
-                    if (unit.StatusEffects.Count > 0)
+                    // Every active BUFF (e.g. Brace, Deep Sleep, Meditate's live stacks, Pinning)
+                    // shown as a small cyan line right above the name/HP text - the only
+                    // persistent on-screen sign any is active, beyond the fading combat-log
+                    // message shown the moment one is applied. Fully generic - a brand new Buff
+                    // StatusEffect shows up here automatically, no Game1 change needed. Used to
+                    // show Afflictions too (in orange) - now exclusively DrawUnitAfflictions' own
+                    // job instead (a detailed red line per affliction, not just its bare name),
+                    // so the two don't show duplicate/colliding text for the same effect.
+                    var buffs = unit.StatusEffects.Where(e => e.Type == StatusEffectType.Buff).ToList();
+                    if (buffs.Count > 0)
                     {
-                        string effectText = string.Join(", ", unit.StatusEffects.Select(e =>
+                        string effectText = string.Join(", ", buffs.Select(e =>
                             e.GrowsOverTime ? $"{e.Name} ({e.Stacks}/{e.MaxStacks})" : e.Name));
-                        Color effectColor = unit.Afflictions.Any() ? new Color(255, 150, 60) : Color.Cyan;
                         Vector2 effectTextSize = _font.MeasureString(effectText) * 0.35f;
                         Vector2 effectTextPos = unit.Position - new Vector2(effectTextSize.X / 2f, 68f);
-                        _spriteBatch.DrawString(_font, effectText, effectTextPos, effectColor, 0f, Vector2.Zero, 0.35f, SpriteEffects.None, 0f);
+                        _spriteBatch.DrawString(_font, effectText, effectTextPos, Color.Cyan, 0f, Vector2.Zero, 0.35f, SpriteEffects.None, 0f);
                     }
                 }
 
@@ -5055,7 +5568,10 @@ namespace SagesOfOzvaram
                 // the old check in a normal (non-Test-Mode) match where _playerUnit never moves.
                 bool showStatBonuses = GetTeamRoot(unit) == GetTeamRoot(_turnSystem.CurrentUnit) || unit == statHoveredUnit;
                 if (showStatBonuses)
+                {
                     DrawUnitStatBonuses(unit);
+                    DrawUnitAfflictions(unit);
+                }
             }
 
             // Simple slash/shooting attack effects (see SpawnAttackAnimations) - purely visual.
@@ -5070,6 +5586,23 @@ namespace SagesOfOzvaram
                     DrawSlashEffect(effect.To, t);
                 else
                     DrawShootingEffect(effect.From, effect.To, t, effect.ProjectileColor);
+            }
+
+            // Floating damage numbers (see SpawnDamageNumber) - rises 24px and fades out over its
+            // Duration, drawn in world space (camera-transformed, same as the attack effects just
+            // above) so it tracks the target correctly even if the camera pans mid-flight.
+            if (_font != null)
+            {
+                foreach (var dmg in _activeDamageNumbers)
+                {
+                    float t = MathHelper.Clamp(dmg.Elapsed / dmg.Duration, 0f, 1f);
+                    Vector2 pos = dmg.Target.Position + new Vector2(0f, -40f - 24f * t);
+                    string text = $"-{dmg.Amount}";
+                    Vector2 textSize = _font.MeasureString(text) * 0.4f;
+                    int alpha = (int)(255 * (1f - t));
+                    _spriteBatch.DrawString(_font, text, pos - new Vector2(textSize.X / 2f, 0f),
+                        new Color(255, 60, 60, alpha), 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+                }
             }
 
             _spriteBatch.End();
@@ -5134,6 +5667,10 @@ namespace SagesOfOzvaram
                     DrawBottomHint(viewportSize, "Select a beast to tame - E to cancel");
                 else if (_trapPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your trap - E to cancel");
+                else if (_leapModeActive)
+                    DrawBottomHint(viewportSize, "Click a tile to leap there, or a target to pounce onto it - E to cancel");
+                else if (_releaseModeActive)
+                    DrawBottomHint(viewportSize, "Click an adjacent tile to step off onto - E to cancel");
                 else if (_summonPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
                 else if (_portalPlacementModeActive)
@@ -5598,7 +6135,7 @@ namespace SagesOfOzvaram
                 lines.Add($"Class: {unit.Class}");
 
             lines.Add($"Level: {unit.Level}");
-            lines.Add($"HP: {unit.HP}/{unit.MaxHP}    MP: {unit.CurrentMP}/{unit.MaxMP}    AP: {unit.CurrentAP}/{unit.MaxAP}");
+            lines.Add($"HP: {unit.HP}/{unit.EffectiveMaxHP}    MP: {unit.CurrentMP}/{unit.MaxMP}    AP: {unit.CurrentAP}/{unit.MaxAP}");
             lines.Add($"STR: {unit.EffectiveStrength}    INT: {unit.EffectiveIntelligence}    DEF: {unit.TotalDefense}    RES: {unit.TotalResistance}");
             lines.Add($"ACC: {unit.EffectiveAccuracy}    EVA: {unit.EffectiveEvasion}    SPD: {unit.EffectiveSpeed}");
 
@@ -5638,19 +6175,43 @@ namespace SagesOfOzvaram
             if (effect.Name == "Guarding")
                 return $"Guard: +{unit.GetGuardBonusPercent():0}% DEF/RES";
 
+            var parts = GetStatusEffectDescriptorParts(unit, effect);
+            string summary = parts.Count > 0 ? string.Join(", ", parts) : "no stat effect";
+            string duration = effect.TurnsRemaining < 0 ? "" : $" ({effect.TurnsRemaining} turn{(effect.TurnsRemaining == 1 ? "" : "s")} left)";
+            return $"{effect.Name}: {summary}{duration}";
+        }
+
+        /// <summary>
+        /// Every short, human-readable descriptor a StatusEffect's own active fields produce
+        /// right now (e.g. "+3 STR", "-40% ACC", "-5% HP/turn") - shared by DescribeStatusEffectSource
+        /// (the unit detail box) and DrawUnitAfflictions (the on-screen affliction row), so the
+        /// two can never show different numbers for the same effect. "Guarding" is handled by
+        /// DescribeStatusEffectSource's own special case before this is ever called for it;
+        /// "Knocked Down" is handled HERE instead (by name) since its real -75% accuracy penalty
+        /// is a flat multiplier baked directly into Move.GetHitChance, not a StatusEffect field at
+        /// all - this is purely a readable mirror of that, not a second source of truth for it.
+        /// </summary>
+        private List<string> GetStatusEffectDescriptorParts(BaseUnit unit, StatusEffect effect)
+        {
             var parts = new List<string>();
+            if (effect.Name == "Knocked Down")
+                parts.Add("-75% ACC");
+
             if (effect.StrengthBonus != 0) parts.Add($"{SignedNumber(effect.StrengthBonus)} STR");
             if (effect.AccuracyBonus != 0) parts.Add($"{SignedNumber(effect.AccuracyBonus)} ACC");
             if (effect.DefenseBonus != 0) parts.Add($"{SignedNumber(effect.DefenseBonus)} DEF");
             if (effect.ResistanceBonus != 0) parts.Add($"{SignedNumber(effect.ResistanceBonus)} RES");
             if (effect.IntelligenceBonus != 0) parts.Add($"{SignedNumber(effect.IntelligenceBonus)} INT");
+            if (effect.MaxHPBonus != 0) parts.Add($"{SignedNumber(effect.MaxHPBonus)} Max HP");
+            if (effect.AccuracyReductionPercent > 0f) parts.Add($"-{effect.AccuracyReductionPercent * 100f:0}% ACC");
+            if (effect.ZeroesEvasion) parts.Add($"-{unit.Evasion} EVA");
             if (effect.HealPercentMaxHPPerTurn > 0f) parts.Add($"heals {effect.HealPercentMaxHPPerTurn * 100f:0}% max HP/turn");
+            if (effect.DamagePercentMaxHPPerTick > 0f) parts.Add($"-{effect.DamagePercentMaxHPPerTick * 100f:0}% HP/turn");
+            if (effect.DamagePercentMaxHPPerAction > 0f) parts.Add($"-{effect.DamagePercentMaxHPPerAction * 100f:0}% HP/action");
             if (effect.RestrictsActions) parts.Add("restricts actions");
-            if (effect.PreventsMovement) parts.Add("prevents movement");
+            if (effect.PreventsMovement) parts.Add("no movement");
 
-            string summary = parts.Count > 0 ? string.Join(", ", parts) : "no stat effect";
-            string duration = effect.TurnsRemaining < 0 ? "" : $" ({effect.TurnsRemaining} turn{(effect.TurnsRemaining == 1 ? "" : "s")} left)";
-            return $"{effect.Name}: {summary}{duration}";
+            return parts;
         }
 
         private static string SignedNumber(int value) => value > 0 ? $"+{value}" : value.ToString();
@@ -5775,14 +6336,58 @@ namespace SagesOfOzvaram
             }
         }
 
+        /// <summary>
+        /// Debuff/affliction row, drawn directly under DrawUnitStatBonuses' own buff row (92px
+        /// above the unit - this one starts at 84px, just below it, growing downward one line per
+        /// active affliction, toward the now-buffs-only name-list line at 68px) - on request, so
+        /// debuffs read as a visually separate row from buffs
+        /// rather than mixed into the same line, in red text (also on request, "so it's clearer").
+        /// One line per active Affliction-type StatusEffect (Buffs, e.g. Pinning, never show
+        /// here - that's what the row above is for): "{Name} [{comma-separated descriptor
+        /// parts}]" via the same GetStatusEffectDescriptorParts the unit detail box's own
+        /// DescribeStatusEffectSource uses, so the two never drift apart - a flat "-STR 3" style
+        /// entry per nonzero field (stat bonuses, MaxHPBonus, AccuracyReductionPercent,
+        /// ZeroesEvasion, the %HP ticks, PreventsMovement, ...), falling back to the bare name
+        /// with no brackets at all if an affliction happens to carry none right now (e.g.
+        /// Summoning Curse). Same showStatBonuses visibility gating as the buff row it sits under.
+        /// Supersedes an earlier version of this that only ever showed a Bleed-type affliction
+        /// via a dedicated blood-drop icon - this one is fully generic (so it already covers
+        /// Weak Bleed too, via its own DamagePercentMaxHPPerTick/PerAction parts) and was asked
+        /// for specifically because Knocked Down had NO indicator anywhere on screen at all.
+        /// </summary>
+        private void DrawUnitAfflictions(BaseUnit unit)
+        {
+            if (_font == null)
+                return;
+
+            var afflictions = unit.StatusEffects.Where(e => e.Type == StatusEffectType.Affliction).ToList();
+            if (afflictions.Count == 0)
+                return;
+
+            const float textScale = 0.32f;
+            const float lineSpacing = 2f;
+
+            float y = unit.Position.Y - 84f;
+            foreach (var effect in afflictions)
+            {
+                var parts = GetStatusEffectDescriptorParts(unit, effect);
+                string line = parts.Count > 0 ? $"{effect.Name} [{string.Join(", ", parts)}]" : effect.Name;
+
+                Vector2 size = _font.MeasureString(line) * textScale;
+                Vector2 pos = new Vector2(unit.Position.X - size.X / 2f, y);
+                _spriteBatch.DrawString(_font, line, pos, Color.Red, 0f, Vector2.Zero, textScale, SpriteEffects.None, 0f);
+                y += size.Y + lineSpacing;
+            }
+        }
+
         private void DrawUnitHealthBar(BaseUnit unit)
         {
             const float barWidth = 50f;
             const float barHeight = 6f;
-            float pixelsPerPoint = barWidth / Math.Max(1, unit.MaxHP);
+            float pixelsPerPoint = barWidth / Math.Max(1, unit.EffectiveMaxHP);
 
             float filledWidth = unit.HP * pixelsPerPoint;
-            float missingWidth = (unit.MaxHP - unit.HP) * pixelsPerPoint;
+            float missingWidth = (unit.EffectiveMaxHP - unit.HP) * pixelsPerPoint;
             float shieldWidth = unit.ShieldPoints * pixelsPerPoint;
 
             Vector2 barPos = unit.Position - new Vector2(barWidth / 2f, 60f);
@@ -5793,7 +6398,7 @@ namespace SagesOfOzvaram
                 new Rectangle((int)barPos.X, (int)barPos.Y, (int)(filledWidth + missingWidth), (int)barHeight),
                 new Color(35, 35, 35, 220));
 
-            Color hpColor = Color.Lerp(Color.Red, Color.LimeGreen, unit.HP / (float)Math.Max(1, unit.MaxHP));
+            Color hpColor = Color.Lerp(Color.Red, Color.LimeGreen, unit.HP / (float)Math.Max(1, unit.EffectiveMaxHP));
             if (filledWidth > 0f)
             {
                 _spriteBatch.Draw(_whitePixel,

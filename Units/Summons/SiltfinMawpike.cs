@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class SiltfinMawpike : BaseUnit
     {
         public SiltfinMawpike(Vector2 position = default)
-            : base("Siltfin Mawpike", maxHP: 16, speed: 8, race: Race.SiltfinMawpike, heroClass: HeroClass.None, position)
+            : base("Siltfin Mawpike", maxHP: 16, speed: 8, race: Race.SiltfinMawpike, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Carnivore;

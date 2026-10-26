@@ -28,6 +28,36 @@ namespace SagesOfOzvaram.Combat
         {
             var options = new List<TurnMenuOption>();
 
+            // Pinning: on request, the ENTIRE turn menu collapses while active - nothing else
+            // (not even View Map) is reachable, since the Roachlin is fully committed to its
+            // pinned target. The real choice this is meant to create: End the turn still
+            // Pinning (keeps the "cannot escape" lock on the target going into its own next
+            // turn, but gains nothing this turn) vs. Syphon (cash in the damage/heal/self-buff
+            // benefit, but that FORCES an immediate Release right after - no more Syphon, no
+            // more End, just Release - so the lock doesn't survive past this same turn either
+            // way). `StatusEffect.SyphonedThisPin` tracks which half of that choice already
+            // happened for THIS pin. Syphon still needs its own AP/MP affordable right now, same
+            // "don't offer what can't work" rule every other option here follows - End/Release
+            // have no cost, so no check on either. Hardcodes RaceAttacks.RoachlinSyphon rather
+            // than looking up "whichever move this unit's own race would use for Syphon" since
+            // only the Dusk Roachlin has this whole mechanic cluster at all right now.
+            var pinning = unit.StatusEffects.FirstOrDefault(e => e.Name == "Pinning");
+            if (pinning != null)
+            {
+                if (pinning.SyphonedThisPin)
+                {
+                    options.Add(new TurnMenuOption { Id = "Release", Label = "Release" });
+                }
+                else
+                {
+                    if (unit.CurrentAP >= RaceAttacks.RoachlinSyphon.APCost && unit.CurrentMP >= RaceAttacks.RoachlinSyphon.MPCost)
+                        options.Add(new TurnMenuOption { Id = "Syphon", Label = "Syphon" });
+                    bool canGuardWhilePinning = unit.CurrentAP >= unit.GuardAPCost;
+                    options.Add(new TurnMenuOption { Id = "End", Label = canGuardWhilePinning ? "Guard" : "End" });
+                }
+                return options;
+            }
+
             // Attack: shown only if the unit actually has a move it can afford right now - its
             // race's innate move is always in AvailableMoves (see RaceAttacks), but AP cost
             // varies per move/weapon-switch, so this is a real affordability check, not an

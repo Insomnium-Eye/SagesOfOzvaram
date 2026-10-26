@@ -10,7 +10,7 @@ namespace SagesOfOzvaram.Units.Heroes
     public class ApprenticeHunter : BaseUnit
     {
         public ApprenticeHunter(Vector2 position = default)
-            : base("Apprentice Hunter", maxHP: 55, speed: 8, race: Race.Human, heroClass: HeroClass.Hunter, position)
+            : base("Apprentice Hunter", maxHP: 55, speed: 8, race: Race.Human, heroClass: HeroClass.Hunter, rank: UnitRank.Elite, position)
         {
             SpriteAssetPath = "imgs/sprites/units/ApprenticeHunter/Hunter_Sprite_1";
             Scale = 0.65f;

@@ -49,7 +49,7 @@ namespace SagesOfOzvaram.Combat
         public static List<AttackOutcome> Resolve(BaseUnit attacker, BaseUnit primaryTarget, Move move,
             Weapon sourceWeapon, HexGrid grid, Map map, IEnumerable<BaseUnit> allUnits, HexDirection? aimDirection = null)
         {
-            attacker.CurrentAP = Math.Max(0, attacker.CurrentAP - attacker.GetEffectiveAPCost(move, sourceWeapon));
+            attacker.SpendAP(attacker.GetEffectiveAPCost(move, sourceWeapon));
             attacker.CurrentMP = Math.Max(0, attacker.CurrentMP - move.MPCost);
 
             // Callers should already have confirmed there's enough ammo before getting here
@@ -182,8 +182,7 @@ namespace SagesOfOzvaram.Combat
             return outcome;
         }
 
-        /// <summary>Public so Game1's trap-trigger logic (PlacedTrap/TriggerTrap) can apply a trap's own InflictsStatusEffect through the exact same path a direct attack would, rather than duplicating the switch below.</summary>
-        public static void InflictMoveStatusEffect(BaseUnit target, Move move)
+        private static void InflictMoveStatusEffect(BaseUnit target, Move move)
         {
             switch (move.InflictsStatusEffect)
             {

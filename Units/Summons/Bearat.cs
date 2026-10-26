@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class Bearat : BaseUnit
     {
         public Bearat(Vector2 position = default)
-            : base("Bearat", maxHP: 24, speed: 6, race: Race.Bearat, heroClass: HeroClass.None, position)
+            : base("Bearat", maxHP: 24, speed: 6, race: Race.Bearat, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Carnivore;

@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class Brambleboar : BaseUnit
     {
         public Brambleboar(Vector2 position = default)
-            : base("Brambleboar", maxHP: 20, speed: 6, race: Race.Brambleboar, heroClass: HeroClass.None, position)
+            : base("Brambleboar", maxHP: 20, speed: 6, race: Race.Brambleboar, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Omnivore;
