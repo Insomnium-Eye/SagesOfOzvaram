@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class RootmossStonegloom : BaseUnit
     {
         public RootmossStonegloom(Vector2 position = default)
-            : base("Rootmoss Stonegloom", maxHP: 30, speed: 3, race: Race.RootmossStonegloom, heroClass: HeroClass.None, position)
+            : base("Rootmoss Stonegloom", maxHP: 30, speed: 3, race: Race.RootmossStonegloom, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;

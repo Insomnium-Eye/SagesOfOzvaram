@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class GloamravenOssuary : BaseUnit
     {
         public GloamravenOssuary(Vector2 position = default)
-            : base("Gloamraven Ossuary", maxHP: 14, speed: 9, race: Race.GloamravenOssuary, heroClass: HeroClass.None, position)
+            : base("Gloamraven Ossuary", maxHP: 14, speed: 9, race: Race.GloamravenOssuary, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Carnivore;

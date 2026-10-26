@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class AetherfluffBeetle : BaseUnit
     {
         public AetherfluffBeetle(Vector2 position = default)
-            : base("Aetherfluff Beetle", maxHP: 10, speed: 5, race: Race.AetherfluffBeetle, heroClass: HeroClass.None, position)
+            : base("Aetherfluff Beetle", maxHP: 10, speed: 5, race: Race.AetherfluffBeetle, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;

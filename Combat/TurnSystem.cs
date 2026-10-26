@@ -66,6 +66,11 @@ namespace SagesOfOzvaram.Combat
         /// </summary>
         public void NextUnit()
         {
+            // The turn that's ending, not the one about to start - captured before _currentIndex
+            // moves, so DispatchTimedEffects(EndOfTurn, ...) below sees whoever just finished
+            // acting (see Combat.StatusEffectTiming.EndOfTurn, e.g. Weak Bleed).
+            DispatchTimedEffects(StatusEffectTiming.EndOfTurn, CurrentUnit);
+
             TotalTurnsTaken++;
             _currentIndex++;
             CameraTransitionElapsed = 0f;
@@ -108,6 +113,7 @@ namespace SagesOfOzvaram.Combat
             CurrentUnit.TickStatusEffects();
             CurrentUnit.TickStunBreakCooldown();
             CurrentUnit.TickSpeedReduction();
+            DispatchTimedEffects(StatusEffectTiming.StartOfTurn, CurrentUnit);
 
             if (CurrentUnit.IsFainted)
             {
@@ -121,6 +127,44 @@ namespace SagesOfOzvaram.Combat
             CurrentUnit.RegenMana();
             CurrentUnit.ClearGuard();
             CurrentUnit.ResetCardDrawState();
+        }
+
+        /// <summary>
+        /// Checks EVERY living unit's own StatusEffects (not just turnOwner's) for one matching
+        /// `timing` whose TurnTrigger condition is satisfied against `turnOwner` (whoever's turn
+        /// is starting - called from OnUnitTurnStart - or ending - called from NextUnit, before
+        /// _currentIndex moves), and applies its DamagePercentMaxHPPerTick as true damage if so
+        /// (see BaseUnit.ApplyTrueDamage - bypasses Defense/Resistance, same as a Bleed tick).
+        /// Looping every unit rather than just turnOwner is what makes SpecificUnitsTurn/
+        /// AnyOtherUnitsTurn actually work - an effect sitting on unit A that cares about unit B's
+        /// turn has to be checked at the moment B's turn boundary happens, not A's.
+        /// A NextTurn-triggered effect fires on the very first turn boundary (of either timing)
+        /// after it was applied, then is removed immediately - a one-shot, not a recurring tick.
+        /// </summary>
+        private void DispatchTimedEffects(StatusEffectTiming timing, BaseUnit turnOwner)
+        {
+            foreach (var unit in _allUnits.Where(u => u.IsAlive))
+            {
+                foreach (var effect in unit.StatusEffects.Where(e => e.Timing == timing).ToList())
+                {
+                    bool matches = effect.TurnTrigger switch
+                    {
+                        StatusEffectTurnTrigger.AffectedUnitsTurn => turnOwner == unit,
+                        StatusEffectTurnTrigger.SpecificUnitsTurn => turnOwner == effect.TriggerUnit,
+                        StatusEffectTurnTrigger.AnyOtherUnitsTurn => turnOwner != unit,
+                        StatusEffectTurnTrigger.NextTurn => true,
+                        _ => false,
+                    };
+                    if (!matches)
+                        continue;
+
+                    if (effect.DamagePercentMaxHPPerTick > 0f)
+                        unit.ApplyTrueDamage((int)Math.Round(unit.EffectiveMaxHP * effect.DamagePercentMaxHPPerTick));
+
+                    if (effect.TurnTrigger == StatusEffectTurnTrigger.NextTurn)
+                        unit.RemoveStatusEffect(effect.Name);
+                }
+            }
         }
 
         /// <summary>

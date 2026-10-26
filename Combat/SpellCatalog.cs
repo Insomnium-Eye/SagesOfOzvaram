@@ -552,13 +552,16 @@ namespace SagesOfOzvaram.Combat
 
         public static readonly SpellCard PlaceTrap = new SpellCard(
             "Place Trap",
-            "Places an invisible trap on a tile within 3 tiles. Triggers when any enemy or neutral unit passes "
-                + "through or lands on it, snaring and damaging them. Flying units are immune.",
+            "Places a Bearat Trap on a tile within 3 tiles, visible only to your own team. Triggers when ANY "
+                + "unit - any team, even your own - steps onto or through it, dealing a flat 1 physical damage "
+                + "with a chance to inflict Weak Bleeding. Flying units are immune.",
             HeroClass.Hunter,
-            new Move("Place Trap", "A trap only the one who set it will ever see.",
-                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 6,
-                strengthDivisor: 4f, damageType: DamageType.Sharp, isPlaceTrap: true,
-                inflictsStatusEffect: "Snared", statusEffectChance: 0.85f, statusDurationTurns: 2),
+            // The trap's own trigger-time effect (flat damage, Weak Bleeding chance) lives on
+            // Objects.Trap/Game1.CreateBearatTrap instead of here - there's no caster present at
+            // the moment a trap actually goes off, so nothing here would scale off Strength
+            // anyway. Only the casting cost/placement Range are real for this Move.
+            new Move("Place Trap", "A trap only your own team will ever see.",
+                apCost: 1, mpCost: 3, range: 3, baseAccuracy: 1f, baseDamage: 0, isPlaceTrap: true),
             "imgs/Cards/Spells/PlaceTrap_CardArt");
 
         public static readonly SpellCard TameBeast = new SpellCard(

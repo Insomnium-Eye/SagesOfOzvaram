@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class DuskRoachlinPriest : BaseUnit
     {
         public DuskRoachlinPriest(Vector2 position = default)
-            : base("Dusk Roachlin Priest", maxHP: 18, speed: 5, race: Race.DuskRoachlinPriest, heroClass: HeroClass.None, position)
+            : base("Dusk Roachlin Priest", maxHP: 18, speed: 5, race: Race.DuskRoachlinPriest, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet

@@ -8,7 +8,7 @@ namespace SagesOfOzvaram.Units.Summons
     public class MirebackSlogger : BaseUnit
     {
         public MirebackSlogger(Vector2 position = default)
-            : base("Mireback Slogger", maxHP: 26, speed: 4, race: Race.MirebackSlogger, heroClass: HeroClass.None, position)
+            : base("Mireback Slogger", maxHP: 26, speed: 4, race: Race.MirebackSlogger, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;
