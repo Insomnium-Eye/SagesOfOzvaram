@@ -145,16 +145,29 @@ namespace SagesOfOzvaram.Combat
         private static readonly int[] MeditateStackBonuses = { 2, 5, 8 };
         private const int MeditateMaxStacks = 3;
 
-        /// <summary>Meditate: if not already meditating, pays AP/MP and starts it - a "Meditating" StatusEffect (RestrictsActions, GrowsOverTime up to MeditateMaxStacks, interrupted outright by a hit for 10%+ of max HP). The card stays in hand (ConsumesCard: false) since it doubles as the off switch too: casting it again while already meditating ends it instead, no AP/MP spent (same "recast to toggle off" convention as Mana Shield), locking the current stack bonus in as a real, fixed-duration buff via BaseUnit.TryEndRestrictingEffect.</summary>
+        /// <summary>
+        /// Meditate: pays AP/MP and starts it - a "Meditating" StatusEffect (RestrictsActions,
+        /// GrowsOverTime up to MeditateMaxStacks, interrupted outright by a hit for 10%+ of max
+        /// HP). The card discards on cast like everything else (ConsumesCard: true, the default) -
+        /// it used to stay in hand instead, on the idea that recasting the SAME card while already
+        /// meditating would end it early (mirroring Mana Shield's own "recast to toggle off"
+        /// convention). That never actually worked: the instant Meditate's RestrictsActions kicks
+        /// in, the Cards menu itself becomes unreachable (GetRestrictingEffect() routes the whole
+        /// turn through the restricted menu instead - see "Self-induced CC menu" in the GDD), so
+        /// "cast it again from hand" could never be reached through real play in the first place -
+        /// only the restricted menu's own "End Meditation" action (BaseUnit.TryEndRestrictingEffect,
+        /// unchanged by this) ever actually ends it early. Keeping the card in hand for a toggle
+        /// that was never reachable just left it stuck there with no visible connection to
+        /// anything - including after an involuntary end (the 10%+ HP interrupt, or now the
+        /// automatic 3-turn expiry), which never touched the card either, since it was never meant
+        /// to be touched outside that dead toggle path. Discarding immediately removes all of that:
+        /// the live StatusEffect (started here) is the only thing that still exists once the card
+        /// is gone, and it ends - locks in, or is interrupted away entirely - purely on its own
+        /// terms from there.
+        /// </summary>
         private static CastResult CastMeditateSpell(SpellCard card, BaseUnit caster)
         {
             var move = card.Effect;
-
-            if (caster.IsMeditating)
-            {
-                caster.TryEndRestrictingEffect();
-                return CastResult.Ok($"{caster.Name} ends their meditation, locking in the bonus.", consumesCard: false);
-            }
 
             if (!CanAfford(move, caster))
                 return CastResult.Fail($"Not enough AP/MP for {move.Name}.");
@@ -194,7 +207,7 @@ namespace SagesOfOzvaram.Combat
                 InterruptDamagePercentMaxHP = 0.10f,
             });
 
-            return CastResult.Ok($"{caster.Name} begins meditating.", consumesCard: false);
+            return CastResult.Ok($"{caster.Name} begins meditating.");
         }
 
         /// <summary>Brace/Rally Cry/Steady Hands/Second Wind/Bandage Wound: pays AP/MP, then immediately applies a Strength/Accuracy/Defense/Resistance/Intelligence buff (BaseUnit.ApplyStatusEffect), an instant heal (BaseUnit.Heal), a Bleed cure (BaseUnit.BleedPercentPerTurn), and/or a next-turn AP grant (BaseUnit.BonusAPNextTurn) to the caster alone, or to every adjacent ally for a HitsAllAdjacent one.</summary>

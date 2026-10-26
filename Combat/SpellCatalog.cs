@@ -690,6 +690,25 @@ namespace SagesOfOzvaram.Combat
                 critChance: 0.30f, critMultiplier: 2.5f),
             "imgs/Cards/Spells/VitalShot_CardArt");
 
+        /// <summary>
+        /// Auto-granted (never drawn normally) once a class's deck AND hand are both completely
+        /// empty - see Game1.EnsureReshuffleCardIfNeeded/CastReshuffle. Deliberately NOT part of
+        /// AllCards below (so GetSpellsForClass/GetAllCards/every deck-building path never sees
+        /// it - a class could otherwise draw it randomly mid-match, defeating the "only once
+        /// you're actually out of cards" point of the mechanic) and has no RequiredClass gate of
+        /// its own since the grant logic already decides who gets one, not this card's data. 1
+        /// AP (the standing convention - see this class's own header comment) / 0 MP flat,
+        /// always - exempt from the reshuffle cost increase it itself causes, so reshuffling can
+        /// never price itself out of being affordable again later.
+        /// </summary>
+        public static readonly SpellCard Reshuffle = new SpellCard(
+            "Reshuffle",
+            "Shuffles every card you've used back into your deck. Each reshuffled card costs 1 more mana than before.",
+            requiredClass: null,
+            new Move("Reshuffle", "What's spent isn't gone - just harder to spend again.",
+                apCost: 1, mpCost: 0, range: 0, baseAccuracy: 1f, baseDamage: 0, isReshuffle: true),
+            "imgs/Cards/Spells/Reshuffle_CardArt");
+
         private static readonly List<SpellCard> AllCards = new List<SpellCard>
         {
             ArcaneBolt,

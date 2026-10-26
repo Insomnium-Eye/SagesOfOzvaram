@@ -55,5 +55,9 @@ namespace SagesOfOzvaram.Combat
         }
 
         public string DamageRangeLabel => $"{MinDamage}-{MaxDamage}";
+
+        /// <summary>A copy of this card with a different ManaCost - used by the Reshuffle mechanic (Game1.CastReshuffle) to give a reshuffled SummonCard a permanently higher cost without mutating the shared, catalog-wide instance every other class's deck/hand/discard pile still uses. Id is left at its default (0) - a runtime-only clone, never part of SummonCatalog.AllSummons.</summary>
+        public SummonCard WithManaCost(int manaCost) => new SummonCard(Name, manaCost, UnitType, Description,
+            Attack, Intelligence, Defense, Resistance, Accuracy, Evasion, Speed, MinDamage, MaxDamage, HP, ArtAssetPath);
     }
 }

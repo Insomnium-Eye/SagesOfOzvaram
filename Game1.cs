@@ -135,6 +135,9 @@ namespace SagesOfOzvaram
         private readonly Dictionary<HeroClass, List<object>> _classDecks = new Dictionary<HeroClass, List<object>>();
         private readonly Dictionary<HeroClass, List<object>> _classHands = new Dictionary<HeroClass, List<object>>();
 
+        /// <summary>Every card a class has actually USED (cast, successfully or not - see DiscardCard), one pile per class, same shape as _classHands/_classDecks. Nothing currently reads from these piles (no reshuffle-on-empty-deck mechanic exists yet - see Card/Deck System's "Depletion" note) - this exists so a used card has somewhere real to go instead of just vanishing, which is what this whole discard-pile system was added to fix.</summary>
+        private readonly Dictionary<HeroClass, List<object>> _classDiscardPiles = new Dictionary<HeroClass, List<object>>();
+
         private int _selectedCharacterIndex = 0;  // Sorcerer is the default selection
 
         /// <summary>Whichever unit the player currently has turn-menu control of - the real player hero on its own turn, or (see the per-turn handoff in Update) one of that hero's own ControllableBySummoner summons on ITS turn instead. Everywhere else in Game1 that reads "the player's unit" (AP/MP display, attack/move/cast execution, ...) means THIS, not necessarily the hero.</summary>
@@ -510,6 +513,7 @@ namespace SagesOfOzvaram
                     continue; // a summoned creature, not a "Summoner" - no deck/hand of its own
                 _classDecks[unit.Class] = BuildTestDeck(unit.Class);
                 _classHands[unit.Class] = new List<object>();
+                _classDiscardPiles[unit.Class] = new List<object>();
             }
 
             _playerUnit = _units[0];
@@ -519,8 +523,10 @@ namespace SagesOfOzvaram
             _turnSystem = new TurnSystem(_units);
             _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
             _turnSystem.UnitTurnStarted += LogUnitAggro;
+            _turnSystem.UnitTurnStarted += ApplyManaAuras;
             LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             LogUnitAggro(_turnSystem.CurrentUnit);
+            ApplyManaAuras(_turnSystem.CurrentUnit);
             _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
 
             // Reset every input-mode flag - whatever was on screen before "test mode" was typed
@@ -619,8 +625,10 @@ namespace SagesOfOzvaram
             _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
             _turnSystem.UnitTurnStarted += LogUnitAggro;
             _turnSystem.UnitTurnStarted += CheckWildAnimalSpawn;
+            _turnSystem.UnitTurnStarted += ApplyManaAuras;
             LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             LogUnitAggro(_turnSystem.CurrentUnit);
+            ApplyManaAuras(_turnSystem.CurrentUnit);
             _lastWildSpawnCheckTurn = 0;
             _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
             _cameraZoomTarget = 2.5f;
@@ -985,13 +993,28 @@ namespace SagesOfOzvaram
             else
             {
                 // Leveling System incentive: any beast (Wild-faction, tamed or not) that just
-                // died drops a Meat item on the ground at its own position, BEFORE the sweep
+                // died drops something on the ground at its own position, BEFORE the sweep
                 // below removes it - same per-frame catch-all reasoning as that sweep (every
                 // death cause, not just a direct attack), so a beast that bleeds out still drops
-                // its Meat even though AttackResolver's own kill check (no attacker to credit)
-                // wouldn't have granted a level for it.
+                // its loot even though AttackResolver's own kill check (no attacker to credit)
+                // wouldn't have granted a level for it. Meat is the default drop for every beast
+                // EXCEPT the Aetherfluff Beetle, a mana-aura creature (see ManaAuraRange/
+                // ApplyManaAuras) that drops 2 Minor MP Potions instead - thematically fitting
+                // (it IS the mana critter) and, practically, the only species-specific death
+                // drop that exists right now, so a direct type check is simplest rather than
+                // adding a generic "what does this species drop" field nothing else needs yet.
                 foreach (var deadBeast in _units.Where(u => !u.IsAlive && u.Factions.Contains(Faction.Wild)))
-                    _droppedItems.Add(new DroppedItem(ConsumableCatalog.Meat, deadBeast.Position));
+                {
+                    if (deadBeast is AetherfluffBeetle)
+                    {
+                        _droppedItems.Add(new DroppedItem(ConsumableCatalog.MinorMPPotion, deadBeast.Position));
+                        _droppedItems.Add(new DroppedItem(ConsumableCatalog.MinorMPPotion, deadBeast.Position));
+                    }
+                    else
+                    {
+                        _droppedItems.Add(new DroppedItem(ConsumableCatalog.Meat, deadBeast.Position));
+                    }
+                }
 
                 // Neither a summoned creature NOR an untamed Wild beast leaves a corpse the way a
                 // hero (one of the 4 summoners) does - the instant one's HP reaches 0 (a direct
@@ -1596,7 +1619,44 @@ namespace SagesOfOzvaram
                 _classHands[heroClass] = hand;
             }
 
+            // Covers the one path DiscardCard's own hook (see EnsureReshuffleCardIfNeeded) can't:
+            // a class whose deck was ALREADY empty the very first time its hand is initialized
+            // (the draw above found nothing, so hand is still empty too) - no discard ever
+            // happened, so that hook never ran.
+            EnsureReshuffleCardIfNeeded(heroClass);
+
             return hand;
+        }
+
+        /// <summary>
+        /// Reshuffle mechanic (on request): grants `heroClass` a single "Reshuffle" card
+        /// (`SpellCatalog.Reshuffle`) the moment its deck AND hand are BOTH completely empty -
+        /// the deck ran dry and every card drawn from it has since been used. No-op if either
+        /// still has anything in it, or if a Reshuffle card is already sitting in hand (never
+        /// grants a second one). Called from DiscardCard (every point a card actually leaves a
+        /// hand, player or AI) and EnsureHandInitialized (the one empty-from-the-start edge case
+        /// DiscardCard can't see, see its own comment there).
+        /// </summary>
+        private void EnsureReshuffleCardIfNeeded(HeroClass heroClass)
+        {
+            if (heroClass == HeroClass.None)
+                return;
+
+            bool deckEmpty = !_classDecks.TryGetValue(heroClass, out var deck) || deck == null || deck.Count == 0;
+            bool handEmpty = !_classHands.TryGetValue(heroClass, out var hand) || hand == null || hand.Count == 0;
+            if (!deckEmpty || !handEmpty)
+                return;
+
+            if (hand == null)
+            {
+                hand = new List<object>();
+                _classHands[heroClass] = hand;
+            }
+
+            hand.Add(SpellCatalog.Reshuffle);
+
+            if (_playerUnit != null && _playerUnit.Class == heroClass)
+                _availableHandCards = new List<object>(hand);
         }
 
         private void EnsurePlayerHandInitialized()
@@ -1675,11 +1735,38 @@ namespace SagesOfOzvaram
             _highlightedHandCardIndex = _handCardIndex;
         }
 
-        /// <summary>Remove a played card from the player's hand (consumed on a successful cast) and refresh the hand view.</summary>
+        /// <summary>
+        /// Moves `card` from `hand` into that class's discard pile (see _classDiscardPiles) - a
+        /// used card now goes SOMEWHERE real instead of just vanishing. Shared by the player's own
+        /// RemoveCardFromHand (which also refreshes the player-only hand-UI state on top) and AI's
+        /// TryAiSummon (which doesn't need any UI refresh at all, just the hand/discard-pile
+        /// bookkeeping) - the one place either path actually removes a card, so the two can never
+        /// drift into handling discard differently.
+        /// </summary>
+        private void DiscardCard(HeroClass heroClass, List<object> hand, object card)
+        {
+            if (!hand.Remove(card))
+                return;
+
+            if (!_classDiscardPiles.TryGetValue(heroClass, out var pile) || pile == null)
+            {
+                pile = new List<object>();
+                _classDiscardPiles[heroClass] = pile;
+            }
+            pile.Add(card);
+
+            // Reshuffle mechanic: this discard may have just emptied the hand while the deck was
+            // ALREADY empty (or vice versa isn't possible - a draw can't happen mid-discard) -
+            // check fresh every time a card actually leaves a hand, rather than hunting down
+            // every individual path that could cause it.
+            EnsureReshuffleCardIfNeeded(heroClass);
+        }
+
+        /// <summary>Discard a played card from the player's hand (consumed on a successful cast) and refresh the hand view.</summary>
         private void RemoveCardFromHand(object card)
         {
             if (_classHands.TryGetValue(_playerUnit.Class, out var hand) && hand != null)
-                hand.Remove(card);
+                DiscardCard(_playerUnit.Class, hand, card);
 
             _availableHandCards = new List<object>(hand ?? new List<object>());
             if (_availableHandCards.Count > 0)
@@ -3150,6 +3237,39 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// Mana-aura tick, subscribed to TurnSystem.UnitTurnStarted right alongside LogUnitAggro -
+        /// fires once at the start of EVERY unit's turn (`unitWhoseTurnStarted`), including an AI
+        /// unit's. For every living unit with a mana aura (BaseUnit.ManaAuraRange &gt; 0 -
+        /// currently just the Aetherfluff Beetle) OTHER than the one whose turn just started,
+        /// restores ManaAuraAmount MP (clamped at MaxMP) to every living unit within
+        /// ManaAuraRange of it - including the aura source itself (distance 0), and with NO team
+        /// filtering at all, matching the ability's own wording ("regardless of them being
+        /// friendly, neutral, or enemy"). Multiple auras overlapping the same target each apply
+        /// independently (no diminishing returns or stacking cap) - same as multiple Carnivores'
+        /// AngerRange checks already do nothing to prevent overlap either. Only logs a line when a
+        /// target's MP actually changed (skips anyone already at full MP) so this doesn't spam the
+        /// console once several units sit permanently inside a beetle's radius.
+        /// </summary>
+        private void ApplyManaAuras(BaseUnit unitWhoseTurnStarted)
+        {
+            foreach (var source in _units.Where(u => u.IsAlive && u.ManaAuraRange > 0 && u != unitWhoseTurnStarted))
+            {
+                var sourceHex = _hexGrid.WorldToHex(source.Position);
+                foreach (var target in _units.Where(u => u.IsAlive))
+                {
+                    var targetHex = _hexGrid.WorldToHex(target.Position);
+                    if (_hexGrid.GetDistance(sourceHex.col, sourceHex.row, targetHex.col, targetHex.row) > source.ManaAuraRange)
+                        continue;
+
+                    int before = target.CurrentMP;
+                    target.CurrentMP = Math.Min(target.MaxMP, target.CurrentMP + source.ManaAuraAmount);
+                    if (target.CurrentMP != before)
+                        _console.Log($"{source.Name}'s aura restores {target.CurrentMP - before} MP to {target.Name}.");
+                }
+            }
+        }
+
+        /// <summary>
         /// Prints a separator line, then a "{UnitName} - Turn {N}" header, to BOTH the in-game
         /// dev console (`~`) and the terminal log (GameLogger) every time a unit's turn actually
         /// starts (TurnSystem.UnitTurnStarted, subscribed right alongside LogUnitAggro and fired
@@ -3566,6 +3686,79 @@ namespace SagesOfOzvaram
             _pendingSpellCard = card;
             _cardMenuActive = false;
             _trapPlacementModeActive = true;
+        }
+
+        /// <summary>
+        /// Cast the auto-granted "Reshuffle" card (see EnsureReshuffleCardIfNeeded): pays its
+        /// own (free - 1 AP/0 MP, exempt from the surcharge it itself creates) cost, then moves
+        /// EVERY card currently in the caster's class discard pile back into its deck, shuffled -
+        /// each one cloned with its MP cost 1 higher than it currently is (Move.WithMPCostIncrease/
+        /// SpellCard.WithEffect/SummonCard.WithManaCost - the shared catalog instance every OTHER
+        /// class's copy of that card still uses is never touched), so reshuffling has a real,
+        /// permanent cost rather than being a free reset - and compounds on a card that gets
+        /// reshuffled more than once, since each clone's cost is read fresh off whatever it
+        /// currently is. No targeting step - resolves immediately, same as Conjure Potions. Needs
+        /// direct `_classDecks`/`_classDiscardPiles` access `Combat.SpellCaster` deliberately
+        /// doesn't have (it only ever touches the caster's own BaseUnit state), so this lives here
+        /// rather than there, same reasoning CastSummon/CastPlaceTrap/CastTameBeast already do.
+        /// </summary>
+        private void CastReshuffle(SpellCard card)
+        {
+            var move = card.Effect;
+            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+            if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
+                return;
+            }
+
+            _playerUnit.CurrentAP = Math.Max(0, _playerUnit.CurrentAP - apCost);
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - move.MPCost);
+
+            var heroClass = _playerUnit.Class;
+            _classDiscardPiles.TryGetValue(heroClass, out var pile);
+            // Reshuffle itself is excluded even if it somehow ended up in the pile (it's never
+            // drawn normally - not part of SpellCatalog.AllCards - but defend against it anyway
+            // rather than risk Reshuffle clones polluting a deck that could then draw them).
+            var toReshuffle = (pile ?? new List<object>()).Where(c => !(c is SpellCard sc && sc.Effect.IsReshuffle)).ToList();
+
+            if (toReshuffle.Count == 0)
+            {
+                ShowCombatMessage($"{_playerUnit.Name} has no used cards to reshuffle.");
+            }
+            else
+            {
+                if (!_classDecks.TryGetValue(heroClass, out var deck) || deck == null)
+                {
+                    deck = new List<object>();
+                    _classDecks[heroClass] = deck;
+                }
+
+                foreach (var usedCard in toReshuffle)
+                {
+                    object upgraded = usedCard switch
+                    {
+                        SpellCard sc => sc.WithEffect(sc.Effect.WithMPCostIncrease(1)),
+                        SummonCard smc => smc.WithManaCost(smc.ManaCost + 1),
+                        _ => usedCard
+                    };
+                    deck.Add(upgraded);
+                }
+                pile.Clear();
+
+                for (int i = deck.Count - 1; i > 0; i--)
+                {
+                    int j = _deckRandom.Next(i + 1);
+                    (deck[i], deck[j]) = (deck[j], deck[i]);
+                }
+
+                ShowCombatMessage($"{_playerUnit.Name} reshuffles their used cards back into their deck - each now costs 1 more mana.");
+            }
+
+            RemoveCardFromHand(card);
+            _cardMenuActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
         }
 
         /// <summary>Handle input while picking a trap's placement tile: click a highlighted tile to plant it there, E to cancel back to the Cards menu.</summary>
@@ -4167,7 +4360,7 @@ namespace SagesOfOzvaram
                 _turnSystem.AddUnitMidTurn(summon);
 
                 ShowCombatMessage($"{aiUnit.Name} summons a {summon.Name}.");
-                hand.Remove(card); // NOT RemoveCardFromHand - that's hardcoded to _playerUnit's own hand/UI state, wrong unit here
+                DiscardCard(aiUnit.Class, hand, card); // NOT RemoveCardFromHand - that's hardcoded to _playerUnit's own hand/UI state, wrong unit here
 
                 return true;
             }
@@ -4231,6 +4424,8 @@ namespace SagesOfOzvaram
                     CastTameBeast(spellCard);
                 else if (spellCard.Effect.IsPlaceTrap)
                     CastPlaceTrap(spellCard);
+                else if (spellCard.Effect.IsReshuffle)
+                    CastReshuffle(spellCard);
                 else if (SpellCastsAsAttack(spellCard))
                     CastSpellAsAttack(spellCard);
                 else if (SpellCaster.CanResolveInstantly(spellCard.Effect))

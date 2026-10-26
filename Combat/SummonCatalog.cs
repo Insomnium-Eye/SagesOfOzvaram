@@ -23,7 +23,7 @@ namespace SagesOfOzvaram.Combat
             "Aetherfluff Beetle",
             manaCost: 1,
             unitType: "Beast",
-            description: "A curious little burrow-beast that generates 5 mana for every allied unit within 4 tiles at the start of each turn.",
+            description: "At the start of each other unit's turn, restore 5 mana of any unit within 4 tiles.",
             attack: 0, intelligence: 2, defense: 4, resistance: 4, accuracy: 5, evasion: 8, speed: 5,
             minDamage: 0, maxDamage: 0, hp: 10,
             artAssetPath: "imgs/Cards/Summons/GenericSummon_CardArt");

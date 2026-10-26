@@ -396,6 +396,20 @@ namespace SagesOfOzvaram.Units
         public int AngerRange { get; set; } = 0;
 
         /// <summary>
+        /// Radius (in tiles) of this unit's own passive mana aura - 0 (the default) means it has
+        /// none. At the start of every OTHER living unit's turn (see Game1.ApplyManaAuras,
+        /// subscribed to TurnSystem.UnitTurnStarted), every living unit within this range of THIS
+        /// one - friendly, neutral, or enemy alike, no team filtering at all - restores
+        /// ManaAuraAmount MP, clamped at MaxMP. Currently only the Aetherfluff Beetle has one (see
+        /// its own constructor and SummonCard description) - a generic field rather than a
+        /// hardcoded type check, so any future mana-aura creature just needs to set these two.
+        /// </summary>
+        public int ManaAuraRange { get; set; } = 0;
+
+        /// <summary>MP restored to everything in ManaAuraRange, once per OTHER unit's turn start - see ManaAuraRange.</summary>
+        public int ManaAuraAmount { get; set; } = 0;
+
+        /// <summary>
         /// How far (in tiles) this unit can see, for the Fog of War system - a team's revealed
         /// area each frame is the union of every one of its living units' own ViewRange (see
         /// Game1.GetVisibleTilesForTeam), so a scouting summon genuinely extends what its owner

@@ -87,6 +87,7 @@ namespace SagesOfOzvaram.Combat
         public bool CuresBleed { get; }              // true = clears the target's BleedPercentPerTurn to 0 on cast (e.g. Bandage Wound) - handled alongside HealFlat/HealPercentMaxHP in SpellCaster.CastSelfUtility, not AttackResolver
         public bool IsTameBeast { get; }             // true = attempts to tame a nearby Wild/Neutral/unowned beast at or below the caster's Level within Range (BaseAccuracy = success chance) - handled by Game1's tame-beast targeting mode, not AttackResolver or SpellCaster
         public bool IsPlaceTrap { get; }             // true = places an invisible, persistent trap on an empty tile within Range instead of attacking immediately - BaseDamage/StrengthDivisor/InflictsStatusEffect/StatusEffectChance/StatusDurationTurns are all reused as the trap's own trigger-time formula, applied once a unit not on the placer's team steps onto or through its tile - handled by Game1's trap-placement targeting mode and PlacedTrap tracking, not AttackResolver or SpellCaster
+        public bool IsReshuffle { get; }             // true = shuffles every card in the caster's class discard pile back into their deck, each one cloned with its MP cost +1 (see Move.WithMPCostIncrease) - auto-granted to a hand once that class's deck AND hand are both empty (Game1.EnsureReshuffleCardIfNeeded), never drawn normally (not part of SpellCatalog.AllCards) - handled by Game1.CastReshuffle, not AttackResolver or SpellCaster
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -118,7 +119,7 @@ namespace SagesOfOzvaram.Combat
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
-                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false,
+                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isReshuffle = false,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -167,11 +168,43 @@ namespace SagesOfOzvaram.Combat
             CuresBleed = curesBleed;
             IsTameBeast = isTameBeast;
             IsPlaceTrap = isPlaceTrap;
+            IsReshuffle = isReshuffle;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;
             ResistanceBuff = resistanceBuff;
             IntelligenceBuff = intelligenceBuff;
+        }
+
+        /// <summary>
+        /// A copy of this Move, identical in every field except MPCost (increased by `amount`) -
+        /// used by the Reshuffle mechanic (Game1.CastReshuffle) to give a reshuffled SpellCard's
+        /// Effect a permanently higher cost without mutating the shared, catalog-wide Move
+        /// instance every other copy of that card (in every other class's deck/hand/discard pile)
+        /// still uses. Every field is read back off `this` and passed straight through to a new
+        /// Move - mechanical, but the only way to get a modified copy at all, since every field
+        /// here is a read-only property with no setter.
+        /// </summary>
+        public Move WithMPCostIncrease(int amount)
+        {
+            return new Move(Name, Description, APCost, MPCost + amount, Range,
+                BaseAccuracy, BaseDamage, DamageType,
+                StrengthDivisor, IntelligenceDivisor,
+                KnockbackBase, KnockbackDamagePerTile,
+                InflictsStatusEffect, BleedRank,
+                CritChance, CritMultiplier, GuaranteedCritOnBackstab,
+                StatusEffectChance,
+                BonusDamageVsGuardingMultiplier, AttackerAdvanceTiles,
+                ConsumesWeapon, HitsAllAdjacent, HitsCone,
+                HealFlat, HealPercentMaxHP, GrantedAP,
+                StatusDurationTurns, TargetsAllies, SpeedReductionPercent,
+                CanInflictKnockdown, KnockdownChanceIfStrongerSTR, KnockdownChanceOtherwise,
+                KnockdownStandUpAPCost, AccuracyFalloffPerTile,
+                AccuracyBands,
+                RequiredAmmoType, AnimationType,
+                IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
+                IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsReshuffle,
+                StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
         }
 
         /// <summary>

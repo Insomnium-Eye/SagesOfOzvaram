@@ -36,5 +36,8 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>The card's type line, e.g. "Spell - Sorcerer", or "Spell - Generic" for a class-less spell.</summary>
         public string ClassLabel => $"Spell - {(RequiredClass.HasValue ? RequiredClass.Value.ToString() : "Generic")}";
+
+        /// <summary>A copy of this card with a different Effect (e.g. Move.WithMPCostIncrease's own output) - same Name/Description/RequiredClass/ArtAssetPath, so it renders/tints/gates identically, just at the new Effect's cost. Deliberately leaves Id at its default (0) - the clone is a runtime-only instance (see Game1.CastReshuffle), never part of SpellCatalog.AllCards, so it has no real catalog Id to carry and shouldn't collide with one that does.</summary>
+        public SpellCard WithEffect(Move effect) => new SpellCard(Name, Description, RequiredClass, effect, ArtAssetPath);
     }
 }
