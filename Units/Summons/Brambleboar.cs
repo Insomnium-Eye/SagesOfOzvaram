@@ -14,7 +14,7 @@ namespace SagesOfOzvaram.Units.Summons
             Diet = Diet.Omnivore;
             ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
-            Strength = 11;     // "Attack" on the card
+            Strength = 10;     // "Attack" on the card - Gore now scales 1:1 with this (on request)
             Intelligence = 2;
             Defense = 7;
             Resistance = 4;

@@ -15,7 +15,7 @@ namespace SagesOfOzvaram.Units.Summons
             AngerRange = 3;
             ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
-            Strength = 8;      // "Attack" on the card
+            Strength = 7;      // "Attack" on the card - Precision Strike now scales 1:1 with this (on request)
             Intelligence = 6;
             Defense = 5;
             Resistance = 6;

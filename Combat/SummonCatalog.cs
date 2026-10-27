@@ -15,7 +15,7 @@ namespace SagesOfOzvaram.Combat
             manaCost: 5,
             unitType: "Roachlin",
             description: "A light-blind cave dweller that swarms prey in numbers, striking from darkness.",
-            attack: 8, intelligence: 3, defense: 6, resistance: 4, accuracy: 7, evasion: 6, speed: 9,
+            attack: 9, intelligence: 3, defense: 6, resistance: 4, accuracy: 7, evasion: 6, speed: 9,
             minDamage: 3, maxDamage: 12, hp: 12,
             artAssetPath: "imgs/Cards/Summons/DuskRoachlin_CardArt1");
 
@@ -42,7 +42,7 @@ namespace SagesOfOzvaram.Combat
             manaCost: 8,
             unitType: "Beast",
             description: "A burly, rodent-like beast with heavy frame, thick hide, and relentless pressure in close combat.",
-            attack: 12, intelligence: 2, defense: 9, resistance: 4, accuracy: 7, evasion: 5, speed: 6,
+            attack: 11, intelligence: 2, defense: 9, resistance: 4, accuracy: 7, evasion: 5, speed: 6,
             minDamage: 6, maxDamage: 16, hp: 24,
             artAssetPath: "imgs/Cards/Summons/GenericSummon_CardArt");
 
@@ -69,7 +69,7 @@ namespace SagesOfOzvaram.Combat
             manaCost: 6,
             unitType: "Beast",
             description: "A dense, thorn-backed boar that tears through enemy lines and leaves bleeding wounds behind its charge.",
-            attack: 11, intelligence: 2, defense: 7, resistance: 4, accuracy: 7, evasion: 5, speed: 6,
+            attack: 10, intelligence: 2, defense: 7, resistance: 4, accuracy: 7, evasion: 5, speed: 6,
             minDamage: 5, maxDamage: 15, hp: 20,
             artAssetPath: "imgs/Cards/Summons/GenericSummon_CardArt");
 
@@ -78,7 +78,7 @@ namespace SagesOfOzvaram.Combat
             manaCost: 5,
             unitType: "Beast",
             description: "A river-dwelling predator with a heavy jaw and jagged fin-spines, built to strike through mud and shallows.",
-            attack: 9, intelligence: 3, defense: 6, resistance: 5, accuracy: 8, evasion: 6, speed: 8,
+            attack: 8, intelligence: 3, defense: 6, resistance: 5, accuracy: 8, evasion: 6, speed: 8,
             minDamage: 4, maxDamage: 12, hp: 16,
             artAssetPath: "imgs/Cards/Summons/GenericSummon_CardArt");
 
@@ -87,7 +87,7 @@ namespace SagesOfOzvaram.Combat
             manaCost: 7,
             unitType: "Beast",
             description: "A skeletal-winged scavenger that stalks the edges of battle, marking enemies and cutting through the dark with precise attacks.",
-            attack: 8, intelligence: 6, defense: 5, resistance: 6, accuracy: 10, evasion: 8, speed: 9,
+            attack: 7, intelligence: 6, defense: 5, resistance: 6, accuracy: 10, evasion: 8, speed: 9,
             minDamage: 3, maxDamage: 11, hp: 14,
             artAssetPath: "imgs/Cards/Summons/GenericSummon_CardArt");
 

@@ -553,9 +553,11 @@ namespace SagesOfOzvaram
             _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
             _turnSystem.UnitTurnStarted += LogUnitAggro;
             _turnSystem.UnitTurnStarted += ApplyManaAuras;
+            _turnSystem.UnitTurnStarted += ResetCombatMessageCount;
             LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             LogUnitAggro(_turnSystem.CurrentUnit);
             ApplyManaAuras(_turnSystem.CurrentUnit);
+            ResetCombatMessageCount(_turnSystem.CurrentUnit);
             _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
 
             // Reset every input-mode flag - whatever was on screen before "test mode" was typed
@@ -594,18 +596,6 @@ namespace SagesOfOzvaram
             all.AddRange(SpellCatalog.GetSpellsForClass(heroClass));
             all.AddRange(SummonCatalog.AllSummons);
             var ordered = all.OrderBy(IsCardTested).ToList();
-
-            // Dusk Roachlin forced to the very front - EnsurePlayerHandInitialized draws the
-            // starting hand off the front of this deck, so without this it'd only show up once
-            // every untested spell ahead of it (in catalog order) had already been drawn/tested,
-            // rather than being available to test-summon right away.
-            int roachlinIndex = ordered.FindIndex(c => c is SummonCard summon && summon.Name == "Dusk Roachlin");
-            if (roachlinIndex > 0)
-            {
-                var roachlin = ordered[roachlinIndex];
-                ordered.RemoveAt(roachlinIndex);
-                ordered.Insert(0, roachlin);
-            }
 
             return ordered;
         }
@@ -657,9 +647,11 @@ namespace SagesOfOzvaram
             _turnSystem.UnitTurnStarted += LogUnitAggro;
             _turnSystem.UnitTurnStarted += CheckWildAnimalSpawn;
             _turnSystem.UnitTurnStarted += ApplyManaAuras;
+            _turnSystem.UnitTurnStarted += ResetCombatMessageCount;
             LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first unit's turn before this subscription could catch it
             LogUnitAggro(_turnSystem.CurrentUnit);
             ApplyManaAuras(_turnSystem.CurrentUnit);
+            ResetCombatMessageCount(_turnSystem.CurrentUnit);
             _lastWildSpawnCheckTurn = 0;
             _renderer.CameraPosition = _hexGrid.HexToWorld(10, 7);
             _cameraZoomTarget = 2.5f;
@@ -1455,7 +1447,9 @@ namespace SagesOfOzvaram
                             if (!_hasAiActedThisTurn)
                             {
                                 _hasAiActedThisTurn = true;
-                                RunSimpleAI(_turnSystem.CurrentUnit);
+                                var batchedUnit = _turnSystem.CurrentUnit;
+                                RunSimpleAI(batchedUnit);
+                                LogIfAiTurnWasSilent(batchedUnit);
                             }
                             else if (!_hasAutoAdvancedThisTurn)
                             {
@@ -1474,7 +1468,9 @@ namespace SagesOfOzvaram
                             if (!isPlayerTurn && !_turnSystem.TransitioningCamera && !_hasAiActedThisTurn)
                             {
                                 _hasAiActedThisTurn = true;
-                                RunSimpleAI(_turnSystem.CurrentUnit);
+                                var actingUnit = _turnSystem.CurrentUnit;
+                                RunSimpleAI(actingUnit);
+                                LogIfAiTurnWasSilent(actingUnit);
                             }
 
                             // Auto-advance to next unit after 3 seconds (once per unit, non-player units only)
@@ -2045,10 +2041,13 @@ namespace SagesOfOzvaram
             {
                 _turnMenuActive = false;
 
-                // The slot displays as "Guard" (see DrawTurnMenu) whenever the unit can afford
-                // it; selecting it then spends the AP and applies the Guard stance on top of
-                // ending the turn.
-                if (_playerUnit.CurrentAP >= _playerUnit.GuardAPCost)
+                // The slot displays as "Guard" (see TurnMenuBuilder) whenever the unit can afford
+                // it AND isn't Knocked Down (bracing while flat on your back makes no sense, and
+                // the label already reflects that - see TurnMenuBuilder's own canGuard check);
+                // selecting it then spends the AP and applies the Guard stance on top of ending
+                // the turn. Mirrors that same condition here rather than just reading CurrentAP
+                // again, so the actual behavior can never drift from what the label promised.
+                if (!_playerUnit.IsKnockedDown && _playerUnit.CurrentAP >= _playerUnit.GuardAPCost)
                 {
                     _playerUnit.SpendAP(_playerUnit.GuardAPCost);
                     _playerUnit.ApplyGuard();
@@ -2145,8 +2144,9 @@ namespace SagesOfOzvaram
         /// only ever shown while `roachlin` HasStatusEffect("Pinning") and hasn't already Syphoned
         /// this same pin (TurnMenuBuilder's own SyphonedThisPin check), so PinnedTarget is
         /// guaranteed non-null (and AP/MP affordable too) - the null/dead check below is
-        /// defensive only. Deals RoachlinSyphon's flat BaseDamage (no hit roll, no Strength
-        /// scaling - "a SET amount of physical damage"), heals the Roachlin by that same damage
+        /// defensive only. Deals RoachlinSyphon's damage (no hit roll - BaseAccuracy 1f; a flat
+        /// base PLUS a mild +STR/5 modifier, deliberately gentler than Claw Crush's full 1:1
+        /// scaling - see RoachlinSyphon's own doc comment), heals the Roachlin by that same damage
         /// value, then grants - or, if "Syphon Vigor" is already active, STACKS on top of and
         /// refreshes - a 2-turn self-buff: +3 STR, +6 Max HP, +3 DEF. Stacking/refreshing is done
         /// by mutating the existing StatusEffect instance directly rather than through
@@ -2767,6 +2767,12 @@ namespace SagesOfOzvaram
             string moveMessage = $"{unit.Name} moved from ({start.col}, {start.row}) to ({finalTile.col}, {finalTile.row})";
             GameLogger.Log(moveMessage);
             _console.Log(moveMessage);
+            // Logged directly rather than through ShowCombatMessage (deliberately - a move
+            // shouldn't flash an on-screen message for every single step the player takes), but
+            // it still needs to count toward _combatMessagesThisUnitTurn - otherwise a unit that
+            // only moved this turn (no attack, no cast) would be wrongly flagged as having done
+            // "nothing" by LogIfAiTurnWasSilent right after a log line proving it actually moved.
+            _combatMessagesThisUnitTurn++;
 
             if (triggeredTrap != null)
                 TriggerTrap(triggeredTrap, unit);
@@ -2842,7 +2848,9 @@ namespace SagesOfOzvaram
             // still use whatever AP remains to move/attack, same as a normal turn would.
             if (aiUnit.GetRestrictingEffect() != null && !aiUnit.TryEndRestrictingEffect())
             {
+                var restrictingEffect = aiUnit.GetRestrictingEffect();
                 aiUnit.ConsumeRestrictingEffectTurn();
+                ShowCombatMessage($"{aiUnit.Name} is still {restrictingEffect.Name} and can't act.");
                 return;
             }
 
@@ -2854,7 +2862,10 @@ namespace SagesOfOzvaram
             // Knocked Down accuracy penalty (Move.GetHitChance).
             if (aiUnit.IsKnockedDown && !IsPinnedAndCannotEscape(aiUnit, out _))
             {
-                aiUnit.TryStandUp();
+                bool stoodUp = aiUnit.TryStandUp();
+                ShowCombatMessage(stoodUp
+                    ? $"{aiUnit.Name} stands back up."
+                    : $"{aiUnit.Name} is Knocked Down and can't afford to stand up.");
                 return;
             }
 
@@ -3302,6 +3313,29 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// Bug fix: if `movedUnit` was the PinnedTarget of some other living unit's active
+        /// "Pinning" (see ExecuteLeapOntoUnit - the pinner shares `movedUnit`'s own tile the
+        /// whole time a pin holds) and the two no longer share a tile after this move - e.g. the
+        /// pinned target just teleported away via Blink/Disengage, the one way a Knocked Down
+        /// unit can actually move despite the normal "Move" lock - the pin breaks immediately:
+        /// the pinner's "Pinning" StatusEffect is removed outright (nothing to lock in, unlike
+        /// Meditate), resetting it to its normal stance/turn menu, and `movedUnit` is free to
+        /// "Stand Up" normally again (IsPinnedAndCannotEscape no longer finds an active pin on
+        /// it). Call right after any teleport-style move that could reposition a Knocked Down
+        /// unit - currently just ExecuteBlink (Blink/Disengage).
+        /// </summary>
+        private void ReleasePinOnMovedTarget(BaseUnit movedUnit)
+        {
+            var pinner = _units.FirstOrDefault(u => u.IsAlive && u != movedUnit
+                && u.StatusEffects.Any(e => e.Name == "Pinning" && e.PinnedTarget == movedUnit));
+            if (pinner == null || pinner.Position == movedUnit.Position)
+                return;
+
+            pinner.RemoveStatusEffect("Pinning");
+            ShowCombatMessage($"{pinner.Name} loses its grip on {movedUnit.Name}.");
+        }
+
+        /// <summary>
         /// Fog of War: every tile `teamRoot`'s team can currently see - the union of each living
         /// member's own BaseUnit.ViewRange (hero 5, Beast/Roachlin summon 3) around its current
         /// position, so a scouting summon genuinely extends the team's sight rather than just
@@ -3616,6 +3650,7 @@ namespace SagesOfOzvaram
             _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
             _playerUnit.Position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            ReleasePinOnMovedTarget(_playerUnit);
 
             ShowCombatMessage($"{_playerUnit.Name} uses {_pendingMove.Name}.");
 
@@ -5063,6 +5098,30 @@ namespace SagesOfOzvaram
             _combatLogTimer = 4f;
             GameLogger.Log(message);
             _console.Log(message);
+            _combatMessagesThisUnitTurn++;
+        }
+
+        /// <summary>
+        /// How many ShowCombatMessage calls have happened since the CURRENT unit's turn started -
+        /// reset to 0 by ResetCombatMessageCount, subscribed to TurnSystem.UnitTurnStarted right
+        /// alongside LogUnitTurnDivider/LogUnitAggro/ApplyManaAuras, so it's accurate for every
+        /// unit's turn, player or AI, batched or not. Checked right after RunSimpleAI returns (see
+        /// its two call sites in Update) to guarantee a visible "X does nothing this turn." log
+        /// line whenever an AI turn would otherwise produce NO log output at all (on request -
+        /// AI Turn Batching can make several units act within the same frame, with nothing shown
+        /// on screen beyond "Other units are taking their turns..." - without this, a silently
+        /// idle unit's entire turn left no trace anywhere, including the terminal log, which is
+        /// exactly the trail needed to diagnose where a stuck/hung turn sequence actually stopped).
+        /// </summary>
+        private int _combatMessagesThisUnitTurn = 0;
+
+        private void ResetCombatMessageCount(BaseUnit unit) => _combatMessagesThisUnitTurn = 0;
+
+        /// <summary>Called right after RunSimpleAI(aiUnit) returns, at BOTH of its call sites (batched and individually-presented AI turns) - see _combatMessagesThisUnitTurn's own doc comment for why this exists.</summary>
+        private void LogIfAiTurnWasSilent(BaseUnit aiUnit)
+        {
+            if (_combatMessagesThisUnitTurn == 0)
+                ShowCombatMessage($"{aiUnit.Name} does nothing this turn.");
         }
 
         /// <summary>Handle input while picking a target for _pendingMove: click a highlighted unit to attack it, E to cancel back to the attack submenu.</summary>

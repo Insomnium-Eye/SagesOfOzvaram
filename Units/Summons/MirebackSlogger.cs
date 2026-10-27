@@ -14,7 +14,7 @@ namespace SagesOfOzvaram.Units.Summons
             Diet = Diet.Herbivore;
             ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
-            Strength = 10;     // "Attack" on the card
+            Strength = 10;     // "Attack" on the card - Shove now scales 1:1 with this (on request); unchanged number, old baseDamage-5/STR-2.2 formula rounded to the same 10
             Intelligence = 2;
             Defense = 11;
             Resistance = 4;

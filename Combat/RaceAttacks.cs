@@ -47,9 +47,15 @@ namespace SagesOfOzvaram.Combat
             // doc comment) for the third move of the kit, Syphon.
             [Race.Roachlin] = new List<Move>
             {
+                // 1:1 STR scaling, on request (see Units.Summons.DuskRoachlin's own Strength =
+                // 9) - baseDamage 0, strengthDivisor 1f, so damage is simply EffectiveStrength
+                // itself (9 at baseline). Previously a flat 5 + STR/2.5 (~8 at the old STR of 8) -
+                // same rough output, just expressed as a direct 1:1 ratio instead of a
+                // base-plus-divisor formula, same new convention applied to every other beast's
+                // own main attack below (see each one's own comment).
                 new Move("Claw Crush", "A crushing clawed strike aimed to wound.",
                     apCost: 1, mpCost: 0, range: 1,
-                    baseAccuracy: 0.90f, baseDamage: 5, damageType: DamageType.Sharp, strengthDivisor: 2.5f,
+                    baseAccuracy: 0.90f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 1f,
                     inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Weak, statusEffectChance: 0.15f),
                 new Move("Leap", "Wings hidden along its back unfurl - not for flight, just for distance - as it pounces toward its mark.",
                     apCost: 2, mpCost: 3, range: 3,
@@ -66,15 +72,24 @@ namespace SagesOfOzvaram.Combat
                 apCost: 1, mpCost: 0, range: 1,
                 baseAccuracy: 0.90f, baseDamage: 0, damageType: DamageType.Blunt) },
 
+            // 1:1 STR scaling, on request: each of these beasts' main attack is now baseDamage 0,
+            // strengthDivisor 1f - damage is simply EffectiveStrength itself - with that STR
+            // value set (see each one's own Units.Summons.* constructor) to whatever the attack
+            // used to deal at the beast's OLD Strength, so moving to the new flat-ratio
+            // convention didn't change actual combat output, just how it's expressed. Cinder
+            // Dust (LanternmothCinderwing) and Shadow Weave (DuskRoachlinPriest) are deliberately
+            // excluded - both scale with Intelligence, not Strength, as actual caster-type
+            // attacks, not beasts throwing their own weight around; Nudge (AetherfluffBeetle) is
+            // excluded too - 0 damage either way, "this creature isn't built to fight."
             [Race.Bearat] = new List<Move> { new Move(
                 "Maul", "A heavy, clubbing swipe from a thick-hided brute.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.75f, baseDamage: 6, damageType: DamageType.Blunt, strengthDivisor: 2.4f) },
+                baseAccuracy: 0.75f, baseDamage: 0, damageType: DamageType.Blunt, strengthDivisor: 1f) },
 
             [Race.MirebackSlogger] = new List<Move> { new Move(
                 "Shove", "Puts its full armored weight behind a crushing push.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.70f, baseDamage: 5, damageType: DamageType.Blunt, strengthDivisor: 2.2f,
+                baseAccuracy: 0.70f, baseDamage: 0, damageType: DamageType.Blunt, strengthDivisor: 1f,
                 knockbackBase: 1, knockbackDamagePerTile: 3) },
 
             [Race.LanternmothCinderwing] = new List<Move> { new Move(
@@ -85,24 +100,24 @@ namespace SagesOfOzvaram.Combat
             [Race.Brambleboar] = new List<Move> { new Move(
                 "Gore", "A thorn-backed charge that tears flesh and leaves it bleeding.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.75f, baseDamage: 5, damageType: DamageType.Sharp, strengthDivisor: 2.2f,
+                baseAccuracy: 0.75f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 1f,
                 inflictsStatusEffect: "Bleeding", bleedRank: StatusRank.Minor, statusEffectChance: 0.35f) },
 
             [Race.SiltfinMawpike] = new List<Move> { new Move(
                 "Snap Bite", "A fast, jagged-jawed bite from the shallows.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.80f, baseDamage: 4, damageType: DamageType.Sharp, strengthDivisor: 2.25f) },
+                baseAccuracy: 0.80f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 1f) },
 
             [Race.GloamravenOssuary] = new List<Move> { new Move(
                 "Precision Strike", "A carefully placed strike aimed at a vital spot.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.85f, baseDamage: 3, damageType: DamageType.Sharp, strengthDivisor: 2f,
+                baseAccuracy: 0.85f, baseDamage: 0, damageType: DamageType.Sharp, strengthDivisor: 1f,
                 critChance: 0.30f, critMultiplier: 3f) },
 
             [Race.RootmossStonegloom] = new List<Move> { new Move(
                 "Stone Slam", "A slow, immense blow with the weight of old stone behind it.",
                 apCost: 1, mpCost: 0, range: 1,
-                baseAccuracy: 0.70f, baseDamage: 5, damageType: DamageType.Blunt, strengthDivisor: 2.25f) },
+                baseAccuracy: 0.70f, baseDamage: 0, damageType: DamageType.Blunt, strengthDivisor: 1f) },
         };
 
         /// <summary>
@@ -112,14 +127,18 @@ namespace SagesOfOzvaram.Combat
         /// the specific unit the Roachlin is currently pinning (StatusEffect.PinnedTarget), never
         /// a free choice from "every enemy in range" the generic attack-target list would offer,
         /// and its lifesteal + stacking self-buff (see CastSyphon) aren't expressible as plain
-        /// Move/AttackResolver data anyway - this Move's BaseDamage/DamageType are the only
-        /// fields CastSyphon actually reads; BaseAccuracy is 1f (no roll, same as a trap trigger)
-        /// and StrengthDivisor is deliberately 0 ("a SET amount of physical damage" - no scaling).
+        /// Move/AttackResolver data anyway - this Move's BaseDamage/StrengthDivisor/DamageType
+        /// are the only fields CastSyphon actually reads (via the normal GetDamage(roachlin,
+        /// target) formula, same as any other move); BaseAccuracy is 1f (no roll, same as a trap
+        /// trigger). Deliberately only a MILD +STR/5 modifier on top of its flat base - on
+        /// request, NOT the full 1:1 ratio Claw Crush and every other beast's main attack now
+        /// use (see InnateMoves above) - Syphon is the Roachlin's secondary, Pinning-only move,
+        /// not its main attack.
         /// </summary>
         public static readonly Move RoachlinSyphon = new Move(
             "Syphon", "A sharp proboscis, driven deep - what it drains, the Roachlin keeps.",
             apCost: 1, mpCost: 2, range: 1,
-            baseAccuracy: 1f, baseDamage: 5, damageType: DamageType.Sharp);
+            baseAccuracy: 1f, baseDamage: 5, damageType: DamageType.Sharp, strengthDivisor: 5f);
 
         public static List<Move> GetInnateMoves(Race race) => InnateMoves[race];
     }

@@ -14,7 +14,7 @@ namespace SagesOfOzvaram.Units.Summons
             Diet = Diet.Herbivore;
             ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
-            Strength = 9;      // "Attack" on the card
+            Strength = 9;      // "Attack" on the card - Stone Slam now scales 1:1 with this (on request); unchanged number, old baseDamage-5/STR-2.25 formula landed on the same 9
             Intelligence = 3;
             Defense = 12;
             Resistance = 7;

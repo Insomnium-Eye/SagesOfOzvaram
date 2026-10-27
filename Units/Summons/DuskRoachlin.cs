@@ -20,7 +20,7 @@ namespace SagesOfOzvaram.Units.Summons
             // for a small swarm creature rather than the biggest thing on the field.
             Scale = 0.4f;
 
-            Strength = 8;      // "Attack" on the card
+            Strength = 9;      // "Attack" on the card - Claw Crush now scales 1:1 with this (on request)
             Intelligence = 3;
             Defense = 6;
             Resistance = 4;

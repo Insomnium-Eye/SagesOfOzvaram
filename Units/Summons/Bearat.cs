@@ -15,7 +15,7 @@ namespace SagesOfOzvaram.Units.Summons
             AngerRange = 3;
             ViewRange = 3;
             SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
-            Strength = 12;     // "Attack" on the card
+            Strength = 11;     // "Attack" on the card - Maul now scales 1:1 with this (on request)
             Intelligence = 2;
             Defense = 9;
             Resistance = 4;

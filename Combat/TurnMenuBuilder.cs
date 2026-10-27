@@ -97,7 +97,11 @@ namespace SagesOfOzvaram.Combat
 
             // End always displays as Guard once it's affordable - same action either way
             // (ending the turn), just a more useful default label when there's AP to spare.
-            bool canGuard = unit.CurrentAP >= unit.GuardAPCost;
+            // Bug fix: NEVER while Knocked Down, regardless of AP - bracing defensively makes no
+            // sense while flat on the ground, so this always shows (and - see
+            // Game1.ConfirmTurnMenuSelection's matching check - actually behaves as) plain "End"
+            // for a Knocked Down unit instead.
+            bool canGuard = !unit.IsKnockedDown && unit.CurrentAP >= unit.GuardAPCost;
             options.Add(new TurnMenuOption { Id = "End", Label = canGuard ? "Guard" : "End" });
 
             // Move: while Knocked Down this slot is "Stand Up" instead (standing up is itself
