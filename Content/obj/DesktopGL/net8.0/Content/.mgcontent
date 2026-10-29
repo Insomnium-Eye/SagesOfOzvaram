@@ -4,7 +4,7 @@
   <Platform>DesktopGL</Platform>
   <Config />
   <SourceFiles>
-    <File>/home/zog/Desktop/Work/Games/Sages of Ozvaram/files/SagesOfOzvaram/Content/Fonts/DefaultFont.spritefont</File>
+    <File>C:/Users/ebm22/Desktop/SagesOfOzvaram/SagesOfOzvaram/Content/Fonts/DefaultFont.spritefont</File>
   </SourceFiles>
   <DestFiles>
     <File xsi:nil="true" />

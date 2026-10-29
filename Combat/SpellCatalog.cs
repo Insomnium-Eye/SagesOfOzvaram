@@ -578,16 +578,19 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Eagle Eye", "See the shot before you take it.",
                 apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "Eagle Eye", statusDurationTurns: 3),
+                inflictsStatusEffect: "Eagle Eye", statusDurationTurns: 3, accuracyBuff: 10),
             "imgs/Cards/Spells/EagleEye_CardArt");
 
         public static readonly SpellCard MultiShot = new SpellCard(
             "Multi-Shot",
-            "Fires three arrows at once, striking the primary target plus up to 2 more enemies within range.",
+            "Requires a Bow or Crossbow. Fires three arrows at once: all three strike a lone target, or split 2-and-1 "
+                + "against two, or one each against three - always the primary target plus whichever OTHER enemies are "
+                + "closest to it, within range.",
             HeroClass.Hunter,
             new Move("Multi-Shot", "Why loose one arrow when you can loose three.",
                 apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
-                strengthDivisor: 4f, damageType: DamageType.Sharp),
+                strengthDivisor: 4f, damageType: DamageType.Sharp, animationType: AttackAnimationType.Shooting,
+                isMultiShot: true, requiredWeaponTypes: new[] { WeaponType.Bow, WeaponType.Crossbow }),
             "imgs/Cards/Spells/MultiShot_CardArt");
 
         public static readonly SpellCard PiercingShot = new SpellCard(

@@ -1142,14 +1142,30 @@ namespace SagesOfOzvaram
                     // Camera continuously tracks whichever unit is acting, so it follows
                     // smoothly even as that unit walks tile-by-tile mid-turn (its Position
                     // animates via UpdateMovementAnimation above) instead of only snapping once
-                    // when the turn starts. Fully suppressed (no auto-recenter at all) while
-                    // free-looking the map (_viewingMap) or picking a Move destination
-                    // (_movementModeActive) - both hand the camera entirely to WASD/scroll
-                    // panning instead (see HandleMapControls); ResumeFromMapView and
-                    // OpenMovementMode each do their own one-time snap on entry.
+                    // when the turn starts. Suppressed while free-looking the map (_viewingMap),
+                    // picking a Move destination (_movementModeActive), or in any targeting mode
+                    // (IsTargetingModeActive) - see SnapCameraToCursor's own doc comment for what
+                    // drives the camera in all of those instead.
+                    bool wasdHeld = keyboardState.IsKeyDown(Keys.W) || keyboardState.IsKeyDown(Keys.A)
+                        || keyboardState.IsKeyDown(Keys.S) || keyboardState.IsKeyDown(Keys.D);
+
                     if (_viewingMap || _movementModeActive)
                     {
-                        // Manual panning owns the camera here - nothing to do.
+                        // WASD (see HandleMapControls) still owns the camera outright while
+                        // actually held, exactly as before - ResumeFromMapView/OpenMovementMode's
+                        // own one-time entry snap is untouched either way. The moment it's NOT
+                        // held, snap to the cursor instead of sitting dead still, so "View Map/
+                        // Move" counts as a cursor-following mode too, as requested, without ever
+                        // fighting WASD for the same frame's movement (mutually exclusive, not
+                        // additive - additive is exactly what caused the near-identical
+                        // "scroll-to-zoom fights the per-frame unit-lock" jitter HandleMapControls'
+                        // own Zoom comment already documents).
+                        if (!wasdHeld)
+                            SnapCameraToCursor(mouseState);
+                    }
+                    else if (IsTargetingModeActive)
+                    {
+                        SnapCameraToCursor(mouseState);
                     }
                     else
                     {
@@ -1251,39 +1267,17 @@ namespace SagesOfOzvaram
                         // below, which fast-forwards it with no dwell either) gets no camera
                         // attention at all - left exactly wherever it already was, rather than
                         // panning to every wild animal/unseen enemy's turn one at a time.
-                        if (!_currentUnitTurnBatched && _targetingModeActive)
-                        {
-                            // Picking a target for an attack or a damage-dealing spell cast (both
-                            // go through _targetingModeActive - see HandleTargetingInput): ease
-                            // toward whichever candidate the mouse is CURRENTLY over
-                            // (_hoveredAttackTarget, recomputed every Draw frame) instead of the
-                            // acting unit's own position - a target "a bit far" away used to need
-                            // manual panning first before it could even be clicked precisely.
-                            //
-                            // Bug fix: this used to be an if/else-if alongside the normal per-turn
-                            // lock below, so the INSTANT hover was lost (e.g. the candidate's own
-                            // approach moved it out from under a stationary mouse, a near-certainty
-                            // with a gradual ease) it fell through to that else-if and hard-SNAPPED
-                            // the camera back onto the caster - which could then put the candidate
-                            // back under the mouse, re-hovering it, easing toward it again, losing
-                            // hover again, snapping back again... a genuine jitter loop, not the
-                            // intended "just stay put" behavior the comment below already described
-                            // but the code never actually implemented. Now entirely self-contained:
-                            // while actually hovering something, ease toward it (gradual, not an
-                            // instant snap, for the same reason - closing the gap in one frame would
-                            // risk the exact same un-hover-then-snap-back cycle); the instant nothing
-                            // IS hovered, this whole block simply does nothing at all, leaving the
-                            // camera exactly where it last was - it can no longer fall through to the
-                            // caster-lock branch while targeting mode is still open, only once it
-                            // actually closes (cast or cancel) does the normal per-turn lock resume.
-                            if (_hoveredAttackTarget != null)
-                            {
-                                _cameraTarget = _hoveredAttackTarget.Position;
-                                float followAmount = 1f - MathF.Pow(0.0001f, deltaTime);
-                                _renderer.CameraPosition = Vector2.Lerp(_renderer.CameraPosition, _cameraTarget, MathHelper.Clamp(followAmount, 0f, 1f));
-                            }
-                        }
-                        else if (!_currentUnitTurnBatched)
+                        // _targetingModeActive (weapon attack / damage-spell targeting) used to
+                        // have its own dedicated branch here - ease toward whichever candidate
+                        // the mouse was hovering (_hoveredAttackTarget), with a whole bug-fix
+                        // history of its own around a jitter loop that gradual easing produced.
+                        // On request ("camera is still drifting"), ALL targeting is now a hard
+                        // snap to the cursor instead (see IsTargetingModeActive/
+                        // SnapCameraToCursor, now including _targetingModeActive), so that
+                        // dedicated branch - and the drift it was built on - is gone entirely;
+                        // this generic unit-lock below is simply never reached while any
+                        // targeting mode is open, caught earlier in the outer if/else chain.
+                        if (!_currentUnitTurnBatched)
                         {
                             _cameraTarget = _turnSystem.CurrentUnit.Position;
 
@@ -3284,6 +3278,53 @@ namespace SagesOfOzvaram
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
 
         /// <summary>
+        /// True while any tile/target-picking targeting mode is open - on request, every one of
+        /// these now gets a cursor-following camera (see the camera-tracking block in Update)
+        /// instead of staying hard-locked onto the acting unit for the mode's entire duration,
+        /// which is what the reported "camera jitters while clicking during a cast/attack" was:
+        /// the camera re-locked onto the (stationary) caster every single frame throughout
+        /// targeting regardless of where the player was aiming, then visibly snapped the instant
+        /// a click actually resolved a move that moved the caster (Blink, Leap, a knockback, a
+        /// Place Trap/summon placement confirming, ...). Deliberately excludes _viewingMap/
+        /// _movementModeActive - those already have their own WASD/scroll-driven camera control
+        /// (see HandleMapControls) and aren't part of this report.
+        /// </summary>
+        /// <summary>
+        /// True while any tile/target-picking targeting mode is open, `_targetingModeActive`
+        /// (weapon attack / damage-spell targeting) included - on request, the camera now snaps
+        /// directly to whichever tile the cursor is over for every one of these (see
+        /// SnapCameraToCursor). `_targetingModeActive` previously had its own, materially
+        /// different treatment instead (ease toward whichever candidate the mouse was hovering,
+        /// `_hoveredAttackTarget`, staying put entirely when nothing was hovered) - a real,
+        /// previously bug-fixed feature in its own right, but still a gradual EASE rather than an
+        /// instant snap, which is exactly what "camera is still drifting" (reported after the
+        /// easier/jitter fix from before) was about. Folded in here instead, so every targeting
+        /// mode in the game now behaves identically: wherever the cursor is, the camera already is.
+        /// </summary>
+        private bool IsTargetingModeActive =>
+            _targetingModeActive || _coneAimingModeActive || _teleportModeActive || _allyTargetModeActive ||
+            _tameBeastModeActive || _trapPlacementModeActive || _leapModeActive || _releaseModeActive ||
+            _summonPlacementModeActive || _portalPlacementModeActive;
+
+        /// <summary>
+        /// Snaps the camera directly onto whichever hex the mouse currently points at - on
+        /// request, replacing an earlier bounded-speed EASE toward the cursor (250px/s, slower
+        /// than WASD's 400px/s so manual panning in View Map/Move always led while held) that
+        /// was meant to fix the original "jitter while clicking during targeting" report but
+        /// still read as "drifting" once that was fixed, since the camera took a fraction of a
+        /// second to actually arrive rather than simply being there already. No easing, no
+        /// bounded step - every targeting mode (IsTargetingModeActive) and View Map/Move
+        /// (whenever WASD isn't held) call this every single frame, so the camera is always
+        /// centered exactly on the cursor's hex with zero lag.
+        /// </summary>
+        private void SnapCameraToCursor(MouseState mouseState)
+        {
+            var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            var cursorHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+            _renderer.CameraPosition = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
+        }
+
+        /// <summary>
         /// True if some OTHER living unit currently has an active "Pinning" StatusEffect whose
         /// PinnedTarget is `unit`, AND that pinner's EffectiveStrength is higher than `unit`'s own
         /// (see Leap) - the "while the attacker is PINNING, and the target's STR is LOWER than
@@ -3551,17 +3592,54 @@ namespace SagesOfOzvaram
         /// <summary>
         /// Cast a damage-dealing SpellCard through the exact same AP/MP-check, targeting, and
         /// AttackResolver pipeline a weapon attack uses - sourceWeapon is null throughout, same
-        /// as a racial move. The card is only removed from hand once it actually resolves (see
+        /// as a racial move (so the move's own BaseDamage/StrengthDivisor always applies, not
+        /// whatever AttackPower some other weapon carries - see RequiredWeaponTypes' own doc
+        /// comment on Move). The card is only removed from hand once it actually resolves (see
         /// ExecutePendingAttack) - cancelling target selection leaves it in hand untouched.
         /// </summary>
         private void CastSpellAsAttack(SpellCard card)
         {
             var move = card.Effect;
-            int apCost = _playerUnit.GetEffectiveAPCost(move, null);
+
+            // Weapon requirement (e.g. Multi-Shot: Bow or Crossbow), on request. Checked and -
+            // if needed - paid for/equipped BEFORE the rest of this move's own AP/MP, as one
+            // atomic affordability check (equipApCost included in the check below), so the
+            // player never ends up having drawn a new weapon for nothing because the spell
+            // itself turned out unaffordable. The equip itself (SpendAP + EquippedWeapon
+            // assignment) happens separately from AttackResolver.Resolve's own weapon-switch
+            // handling (which never runs here, since sourceWeapon stays null throughout) -
+            // mirrors it manually instead, same +1 AP cost, same "becomes the equipped weapon"
+            // result, just without touching the move's own damage formula.
+            Weapon weaponToEquip = null;
+            if (move.RequiredWeaponTypes != null && move.RequiredWeaponTypes.Length > 0)
+            {
+                bool alreadyEquipped = _playerUnit.EquippedWeapon != null && _playerUnit.EquippedWeapon.Type.HasValue
+                    && move.RequiredWeaponTypes.Contains(_playerUnit.EquippedWeapon.Type.Value);
+                if (!alreadyEquipped)
+                {
+                    weaponToEquip = _playerUnit.Inventory.FirstOrDefault(w => w.Type.HasValue && move.RequiredWeaponTypes.Contains(w.Type.Value));
+                    if (weaponToEquip == null)
+                    {
+                        string required = string.Join(" or ", move.RequiredWeaponTypes);
+                        ShowCombatMessage($"{move.Name} requires a {required} equipped.");
+                        return;
+                    }
+                }
+            }
+
+            int equipApCost = weaponToEquip != null ? 1 : 0;
+            int apCost = move.APCost + equipApCost;
             if (apCost > _playerUnit.CurrentAP || move.MPCost > _playerUnit.CurrentMP)
             {
                 ShowCombatMessage($"Not enough AP/MP for {move.Name}.");
                 return;
+            }
+
+            if (weaponToEquip != null)
+            {
+                _playerUnit.SpendAP(1);
+                _playerUnit.EquippedWeapon = weaponToEquip;
+                ShowCombatMessage($"{_playerUnit.Name} draws {weaponToEquip.Name}.");
             }
 
             if (!move.HitsAllAdjacent)
@@ -5289,23 +5367,28 @@ namespace SagesOfOzvaram
             // lock would snap the zoom right back to its old value the very next frame, making
             // the scroll wheel look like it does nothing beyond a 1-frame flicker.
             //
-            // Outside free-look (_viewingMap/_movementModeActive), that SAME per-frame block also
-            // re-locks CameraPosition to the current unit every single frame - so zooming "toward
-            // the cursor" (Zoom's normal behavior, shifting CameraPosition along with ZoomLevel)
-            // fought that lock every frame while scrolling: one frame nudges the camera toward
-            // the cursor, the very next snaps it back to the unit, over and over, which is the
-            // "jitter" scrolling while unit-locked produced. Passing the camera's OWN current
-            // position as the "cursor" zeroes out that position shift (see HexGridRenderer.Zoom)
-            // so only ZoomLevel actually changes, matching what the position-lock already holds
-            // steady anyway. Free-look modes have no such lock fighting it, so the cursor-relative
-            // zoom (truly centered on the mouse) is kept there, where it works as intended.
+            // Only while actually unit-locked (not _viewingMap/_movementModeActive, and - since
+            // that same report's fix - not any targeting mode either, see IsTargetingModeActive/
+            // PanCameraTowardCursor), that SAME per-frame block also re-locks CameraPosition to
+            // the current unit every single frame - so zooming "toward the cursor" (Zoom's normal
+            // behavior, shifting CameraPosition along with ZoomLevel) fought that lock every frame
+            // while scrolling: one frame nudges the camera toward the cursor, the very next snaps
+            // it back to the unit, over and over, which is the "jitter" scrolling while
+            // unit-locked produced (the exact same class of bug - a per-frame lock fighting
+            // something else moving the camera - as the "jitter while clicking during targeting"
+            // report that led to targeting modes no longer being unit-locked at all). Passing the
+            // camera's OWN current position as the "cursor" zeroes out that position shift (see
+            // HexGridRenderer.Zoom) so only ZoomLevel actually changes, matching what the
+            // position-lock already holds steady anyway. Every cursor-following mode (free-look
+            // AND targeting) has no such lock fighting it, so the cursor-relative zoom (truly
+            // centered on the mouse) is kept there, where it works as intended.
             // Suppressed while the item-detail view is open - its own info panel claims the
             // scroll wheel to scroll its (possibly overflowing) text instead (see
             // HandleItemDetailInput/DrawItemDetail); without this, the same wheel notch would
             // both scroll the panel AND zoom the camera underneath it.
             if (!_itemDetailActive)
             {
-                bool cameraIsUnitLocked = !_viewingMap && !_movementModeActive;
+                bool cameraIsUnitLocked = !_viewingMap && !_movementModeActive && !IsTargetingModeActive;
                 Vector2 zoomOrigin = cameraIsUnitLocked ? _renderer.CameraPosition : new Vector2(mouseState.X, mouseState.Y);
                 if (mouseState.ScrollWheelValue > _previousMouseState.ScrollWheelValue)
                 {
