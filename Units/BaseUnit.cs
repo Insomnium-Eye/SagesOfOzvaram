@@ -458,11 +458,64 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public int GetAggro(BaseUnit toward) => _aggro.TryGetValue(toward, out int value) ? value : 0;
 
-        /// <summary>Raise (or lower, with a negative amount, though nothing does yet) this unit's aggro toward `toward` by `amount`, clamped to the Aggro System's 0-20 range.</summary>
+        /// <summary>Raise (or lower, with a negative amount) this unit's aggro toward `toward` by `amount`, clamped to the Aggro System's 0-20 range.</summary>
         public void AddAggro(BaseUnit toward, int amount)
         {
             int current = GetAggro(toward);
             _aggro[toward] = Math.Clamp(current + amount, 0, 20);
+        }
+
+        /// <summary>
+        /// Aggro System (reworked, on request): how many aggro points a single hit worth
+        /// `percentOfMaxHP` (0-100, the receiving unit's own EffectiveMaxHP) generates/removes -
+        /// 0-19% is worth 1, then +1 more for every additional 10% band (20-29% = 2, 30-39% = 3,
+        /// ...). Shared by both directions of ApplyDamageAggro below, so taking and dealing damage
+        /// always agree on the same banding for the same hit.
+        /// </summary>
+        public static int GetDamageAggroBand(float percentOfMaxHP) =>
+            percentOfMaxHP < 20f ? 1 : 2 + (int)Math.Floor((percentOfMaxHP - 20f) / 10f);
+
+        /// <summary>
+        /// Aggro System (reworked, on request): call on the unit that just TOOK `damageDealt`
+        /// from `dealer`. Taking damage raises this unit's aggro toward `dealer` by the % band
+        /// GetDamageAggroBand gives for how big a chunk of this unit's own max HP that hit
+        /// represented; dealing damage symmetrically LOWERS `dealer`'s own aggro toward this unit
+        /// by that same band (on request: "dealing damage removes aggression the same way taking
+        /// it does") - landing a hit satisfies some of the attacker's own aggression toward the
+        /// target, rather than aggro only ever climbing. No-op if no damage actually landed or
+        /// there's no real dealer to credit/debit (e.g. a self-inflicted true-damage tick, which
+        /// goes through BleedSource/StatusEffect.Source instead - see ApplyBleedTick/
+        /// TurnSystem.DispatchTimedEffects).
+        /// </summary>
+        public void ApplyDamageAggro(BaseUnit dealer, int damageDealt)
+        {
+            if (dealer == null || dealer == this || damageDealt <= 0)
+                return;
+
+            float percent = EffectiveMaxHP > 0 ? (damageDealt / (float)EffectiveMaxHP) * 100f : 100f;
+            int band = GetDamageAggroBand(percent);
+            AddAggro(dealer, band);
+            dealer.AddAggro(this, -band);
+        }
+
+        /// <summary>
+        /// Aggro System (reworked, on request): call on the unit an affliction (Bleeding, Snared,
+        /// Stunned, Knocked Down, ...) was just successfully PLACED on, by `inflicter`. Raises
+        /// this unit's aggro toward `inflicter` by 1 (receiving an affliction generates aggro
+        /// toward whoever placed it - see ApplyBleedTick/TurnSystem.DispatchTimedEffects for the
+        /// matching "generates 1 more every tick" half), and symmetrically lowers `inflicter`'s
+        /// own aggro toward this unit by 1 ("placing an affliction on a target reduces 1
+        /// aggression from the target," on request - placing it satisfies some of the inflicter's
+        /// own aggression, same reasoning as ApplyDamageAggro, but this side is NOT repeated on
+        /// every tick, only on placement).
+        /// </summary>
+        public void ApplyAfflictionPlacementAggro(BaseUnit inflicter)
+        {
+            if (inflicter == null || inflicter == this)
+                return;
+
+            AddAggro(inflicter, 1);
+            inflicter.AddAggro(this, -1);
         }
 
         /// <summary>Wipe every aggro value this unit holds - called when a new match starts (EnterOriginalMode/EnterTestMode), matching the GDD's "resets between map sections/chapters" rule (the closest existing equivalent until real sections/chapters exist).</summary>
@@ -495,6 +548,9 @@ namespace SagesOfOzvaram.Units
 
         /// <summary>Bleed magnitude as a % of MAX HP lost when this unit's turn starts. 0 = not bleeding.</summary>
         public float BleedPercentPerTurn { get; set; } = 0f;
+
+        /// <summary>Whoever inflicted the current BleedPercentPerTurn (see Combat.AttackResolver.InflictMoveStatusEffect's "Bleeding" case) - read by ApplyBleedTick to credit 1 aggro toward them every turn this bleed actually ticks (Aggro System: afflictions generate aggro on every tick, not just on being placed). Stale/irrelevant once BleedPercentPerTurn is back to 0 (CuresBleed), since ApplyBleedTick's own early-return means it's never read at that point.</summary>
+        public BaseUnit BleedSource { get; set; }
 
         /// <summary>True while a "Stunned" StatusEffect is active - see StatusEffects/GetRestrictingEffect.</summary>
         public bool IsStunned => HasStatusEffect("Stunned");
@@ -990,8 +1046,12 @@ namespace SagesOfOzvaram.Units
         /// BEFORE that mitigation: a racial vulnerability bonus (see RaceCatalog), if this
         /// unit's Race is vulnerable to damageType specifically (e.g. Lethios + Frost) - so DEF/RES
         /// still mitigates a portion of the inflated amount, rather than being tacked on after.
+        /// `attacker` is optional (null = unknown/no real attacker, e.g. none of the current
+        /// callers happen to omit it, but a future one might) - only read for the guaranteed
+        /// racial reaction below, to credit its own Aggro System placement aggro (see
+        /// BaseUnit.ApplyAfflictionPlacementAggro); the damage itself never needed an attacker.
         /// </summary>
-        public virtual void TakeDamage(int damage, DamageType damageType = DamageType.Sharp)
+        public virtual void TakeDamage(int damage, DamageType damageType = DamageType.Sharp, BaseUnit attacker = null)
         {
             var racialMods = RaceCatalog.GetModifiers(Race);
             float rawDamage = damage;
@@ -1013,7 +1073,14 @@ namespace SagesOfOzvaram.Units
                     Name = "Weak Blind",
                     Type = StatusEffectType.Affliction,
                     AccuracyReductionPercent = 0.40f,
+                    Source = attacker,
                 });
+
+                // Aggro System: this is still "placing an affliction," same as any other one -
+                // on request, this now generates aggro too, even though it's a guaranteed
+                // reaction rather than a rolled InflictsStatusEffect.
+                if (attacker != null)
+                    ApplyAfflictionPlacementAggro(attacker);
             }
         }
 
@@ -1081,6 +1148,13 @@ namespace SagesOfOzvaram.Units
 
             int bleedDamage = (int)Math.Round(EffectiveMaxHP * BleedPercentPerTurn);
             ApplyTrueDamage(bleedDamage);
+
+            // Aggro System: receiving an affliction generates aggro towards whoever inflicted it
+            // every time it TICKS, not just when it's placed (see ApplyAfflictionPlacementAggro
+            // for the placement half) - BleedSource is null for a bleed with no tracked inflicter
+            // (shouldn't happen in practice, but costs nothing to guard).
+            if (BleedSource != null)
+                AddAggro(BleedSource, 1);
         }
 
         private void UpdateFaintStatus()

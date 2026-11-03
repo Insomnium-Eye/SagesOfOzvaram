@@ -28,15 +28,24 @@ namespace SagesOfOzvaram.Combat
             public string Message { get; }
             public bool ConsumesCard { get; }
 
-            private CastResult(bool success, string message, bool consumesCard)
+            /// <summary>Aggro System (reworked, on request): every unit actually healed (HP went up) by this cast - Game1.ResolveInstantCast broadcasts 1 aggro toward the caster, per healed unit, to every hostile within range (flat per target, not per HP - on request). Empty for a cast that healed no one.</summary>
+            public List<BaseUnit> HealedTargets { get; }
+
+            /// <summary>Aggro System (reworked, on request): every unit actually cured of an affliction (CuresBleed, only counted if it actually had something to cure) by this cast - Game1.ResolveInstantCast broadcasts 2 aggro toward the caster, per cured target, to every hostile within range. Empty for a cast that cured no one.</summary>
+            public List<BaseUnit> CuredTargets { get; }
+
+            private CastResult(bool success, string message, bool consumesCard, List<BaseUnit> healedTargets, List<BaseUnit> curedTargets)
             {
                 Success = success;
                 Message = message;
                 ConsumesCard = consumesCard;
+                HealedTargets = healedTargets ?? new List<BaseUnit>();
+                CuredTargets = curedTargets ?? new List<BaseUnit>();
             }
 
-            public static CastResult Fail(string message) => new CastResult(false, message, false);
-            public static CastResult Ok(string message, bool consumesCard = true) => new CastResult(true, message, consumesCard);
+            public static CastResult Fail(string message) => new CastResult(false, message, false, null, null);
+            public static CastResult Ok(string message, bool consumesCard = true, List<BaseUnit> healedTargets = null, List<BaseUnit> curedTargets = null) =>
+                new CastResult(true, message, consumesCard, healedTargets, curedTargets);
         }
 
         /// <summary>Whether `move` is a self/ally utility effect (a stat buff, an instant heal, a Bleed cure, and/or a next-turn AP grant) that CastSelfUtility can resolve - aimed either at the caster alone (Range 0, not HitsAllAdjacent) or every adjacent ally (HitsAllAdjacent + TargetsAllies). A card with InflictsStatusEffect set but none of these fields (e.g. Meditate before it gets its own IsMeditateSpell handling) describes a mechanic this can't fully resolve and is deliberately excluded - applying only part of a card's effect would misrepresent what it does.</summary>
@@ -108,6 +117,7 @@ namespace SagesOfOzvaram.Combat
                 return CastResult.Fail($"Not enough AP/MP for {move.Name}.");
 
             PayCost(move, caster);
+            int hpBefore = caster.HP;
             caster.Heal((int)System.Math.Round(caster.EffectiveMaxHP * move.HealPercentMaxHP));
             caster.ApplyStatusEffect(new StatusEffect
             {
@@ -119,7 +129,13 @@ namespace SagesOfOzvaram.Combat
                 HealPercentMaxHPPerTurn = move.HealPercentMaxHP,
             });
 
-            return CastResult.Ok($"{caster.Name} falls into a Deep Sleep, healing {move.HealPercentMaxHP:P0} of their max HP.");
+            // Aggro System: this immediate heal counts toward the healing-aggro broadcast same as
+            // any other heal - the recurring per-turn tick (HealPercentMaxHPPerTurn above) is a
+            // documented scope cut (see GDD), since crediting that one needs BaseUnit.
+            // TickStatusEffects to reach back out through Game1 for the distance check, which
+            // nothing else currently needs it to do.
+            var healedTargets = caster.HP > hpBefore ? new List<BaseUnit> { caster } : null;
+            return CastResult.Ok($"{caster.Name} falls into a Deep Sleep, healing {move.HealPercentMaxHP:P0} of their max HP.", healedTargets: healedTargets);
         }
 
         /// <summary>Conjure Potions: pays AP/MP, then grants the caster one each of a Minor HP/MP/AP Potion (ConsumableCatalog) straight into its Consumables - see BaseUnit.AddConsumable. No targeting needed (always self), consumed from hand like any other card.</summary>
@@ -234,6 +250,8 @@ namespace SagesOfOzvaram.Combat
             bool hasStatBuff = move.StrengthBuff > 0 || move.AccuracyBuff > 0 || move.DefenseBuff > 0
                 || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0;
             string buffName = move.InflictsStatusEffect ?? move.Name;
+            var healedTargets = new List<BaseUnit>();
+            var curedTargets = new List<BaseUnit>();
             foreach (var target in targets)
             {
                 if (hasStatBuff)
@@ -252,12 +270,29 @@ namespace SagesOfOzvaram.Combat
                 }
                 if (move.GrantedAP > 0)
                     target.BonusAPNextTurn += move.GrantedAP;
+
+                // Aggro System (reworked, on request): healing - self included - broadcasts 1
+                // aggro toward the caster to every hostile unit in range, per target actually
+                // healed (flat per target, regardless of how much HP it restored) - Game1.
+                // ResolveInstantCast does the actual broadcast once it sees HealedTargets, since
+                // only it has the unit list/grid a distance check needs.
+                int hpBeforeHeal = target.HP;
                 if (move.HealFlat > 0)
                     target.Heal(move.HealFlat);
                 if (move.HealPercentMaxHP > 0f)
                     target.Heal((int)Math.Round(target.EffectiveMaxHP * move.HealPercentMaxHP));
+                if (target.HP > hpBeforeHeal)
+                    healedTargets.Add(target);
+
                 if (move.CuresBleed)
                 {
+                    // Aggro System (reworked, on request): "removes an affliction" broadcasts 2
+                    // aggro toward the caster to every hostile in range, per target actually
+                    // cured - only counted if there was really something to cure, same "don't
+                    // credit a no-op" reasoning HealedTargets above already follows.
+                    bool hadSomethingToCure = target.BleedPercentPerTurn > 0f
+                        || target.StatusEffects.Any(e => e.DamagePercentMaxHPPerTick > 0f);
+
                     target.BleedPercentPerTurn = 0f;
 
                     // Also clears a StatusEffect-based bleed (e.g. Weak Bleed, see the Bearat
@@ -267,13 +302,16 @@ namespace SagesOfOzvaram.Combat
                     // which Weak Bleed never actually used, so curing it did nothing - a real gap.
                     foreach (var bleedEffect in target.StatusEffects.Where(e => e.DamagePercentMaxHPPerTick > 0f).ToList())
                         target.RemoveStatusEffect(bleedEffect.Name);
+
+                    if (hadSomethingToCure)
+                        curedTargets.Add(target);
                 }
             }
 
             string message = move.HitsAllAdjacent
                 ? $"{caster.Name} uses {move.Name} on {targets.Count} {(targets.Count == 1 ? "ally" : "allies")}."
                 : $"{caster.Name} uses {move.Name} on themself.";
-            return CastResult.Ok(message);
+            return CastResult.Ok(message, healedTargets: healedTargets, curedTargets: curedTargets);
         }
     }
 }

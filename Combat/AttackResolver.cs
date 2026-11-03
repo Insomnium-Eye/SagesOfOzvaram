@@ -116,14 +116,14 @@ namespace SagesOfOzvaram.Combat
             float hitChance = move.GetHitChance(attacker, target, sourceWeapon, distanceTiles);
             if (Rng.NextDouble() > hitChance)
             {
-                // Aggro System: simply being attacked raises the target's aggro toward the
-                // attacker, hit or miss - a miss still reads as "this one's coming for me."
-                target.AddAggro(attacker, 5);
+                // Aggro System (reworked, on request): a miss deals 0% damage, so it generates no
+                // aggro at all now - only actually taking damage does (see ApplyDamageAggro
+                // below). This is a deliberate change from the old flat "+5 just for being
+                // attacked, hit or miss" rule.
                 return outcome; // miss - nothing else happens
             }
 
             outcome.Hit = true;
-            target.AddAggro(attacker, 5); // same base "I was attacked" aggro a miss gets
 
             bool crit = move.IsGuaranteedCrit(isBackstab) || Rng.NextDouble() < move.CritChance;
             outcome.Crit = crit;
@@ -133,18 +133,23 @@ namespace SagesOfOzvaram.Combat
                 damage = (int)Math.Round(damage * move.CritMultiplier);
             outcome.Damage = damage;
 
-            target.TakeDamage(damage, move.DamageType);
-            if (damage > 0)
-                target.AddAggro(attacker, 2); // Aggro System: ADDITIONAL aggro for actually drawing blood, on top of the +5 above
+            target.TakeDamage(damage, move.DamageType, attacker);
 
             // A specialist's bonus flat damage (possibly a different DamageType, e.g. the
-            // Cleric's +3 Light on Mace Bash) is mitigated separately from the main hit.
+            // Cleric's +3 Light on Mace Bash) is mitigated separately from the main hit, but
+            // still counts toward the SAME aggro band as the main hit - one hit, one band, not two.
             var (bonusDamage, bonusDamageType) = move.GetSpecialistBonusDamage(attacker, sourceWeapon);
             if (bonusDamage > 0)
             {
-                target.TakeDamage(bonusDamage, bonusDamageType);
+                target.TakeDamage(bonusDamage, bonusDamageType, attacker);
                 outcome.Damage += bonusDamage;
             }
+
+            // Aggro System (reworked, on request): taking damage raises the target's aggro
+            // toward the attacker (banded by % of the target's own max HP - see
+            // BaseUnit.GetDamageAggroBand), and dealing damage symmetrically lowers the
+            // attacker's own aggro toward the target by that same band.
+            target.ApplyDamageAggro(attacker, outcome.Damage);
 
             outcome.TargetFainted = target.IsFainted;
 
@@ -164,14 +169,18 @@ namespace SagesOfOzvaram.Combat
 
             if (move.InflictsStatusEffect != null && Rng.NextDouble() < move.GetStatusEffectChance(attacker, target))
             {
-                InflictMoveStatusEffect(target, move);
+                InflictMoveStatusEffect(attacker, target, move);
                 outcome.StatusApplied = move.InflictsStatusEffect;
+                // Aggro System: placing an affliction reduces 1 aggro from the target (and
+                // generates 1 toward the attacker) - see ApplyAfflictionPlacementAggro.
+                target.ApplyAfflictionPlacementAggro(attacker);
             }
 
             if (Rng.NextDouble() < move.GetKnockdownChance(attacker, target))
             {
                 target.ApplyKnockdown(move.KnockdownStandUpAPCost);
                 outcome.StatusApplied = outcome.StatusApplied != null ? outcome.StatusApplied + ", Knocked Down" : "Knocked Down";
+                target.ApplyAfflictionPlacementAggro(attacker); // Knocked Down counts as an affliction placement too
             }
 
             outcome.KnockbackTiles = ApplyKnockback(attacker, target, move, damage, grid, map, allUnits);
@@ -182,7 +191,7 @@ namespace SagesOfOzvaram.Combat
             return outcome;
         }
 
-        private static void InflictMoveStatusEffect(BaseUnit target, Move move)
+        private static void InflictMoveStatusEffect(BaseUnit attacker, BaseUnit target, Move move)
         {
             switch (move.InflictsStatusEffect)
             {
@@ -198,12 +207,20 @@ namespace SagesOfOzvaram.Combat
                         Type = StatusEffectType.Affliction,
                         TurnsRemaining = snareTurns,
                         PreventsMovement = true,
+                        Source = attacker,
                     });
                     break;
                 case "Bleeding":
                     // Take the stronger of any existing bleed and this hit's rank - a weaker
                     // follow-up hit shouldn't downgrade a bleed a harder hit already applied.
-                    target.BleedPercentPerTurn = Math.Max(target.BleedPercentPerTurn, BleedEffect.GetPercent(move.BleedRank ?? StatusRank.Weak));
+                    // Whoever lands the hit that WINS that comparison is credited as the
+                    // BleedSource (Aggro System: a bleed generates aggro toward its inflicter
+                    // every turn it ticks, not just when placed) - a weaker follow-up that loses
+                    // the comparison doesn't steal credit for a harder bleed it didn't cause.
+                    float newPercent = BleedEffect.GetPercent(move.BleedRank ?? StatusRank.Weak);
+                    if (newPercent >= target.BleedPercentPerTurn)
+                        target.BleedSource = attacker;
+                    target.BleedPercentPerTurn = Math.Max(target.BleedPercentPerTurn, newPercent);
                     break;
                 case "Stunned":
                     // Take the longer of this and any Stun already active, rather than shortening
@@ -217,6 +234,7 @@ namespace SagesOfOzvaram.Combat
                         RestrictsActions = true,
                         EndEffectLabel = "Break Stun",
                         EndEffectAPCost = BaseUnit.StunBreakAPCost,
+                        Source = attacker,
                     });
                     break;
                 case "Slowed":

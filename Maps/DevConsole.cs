@@ -51,6 +51,9 @@ namespace SagesOfOzvaram.Maps
         /// <summary>Set by Game1 after construction - "original mode" switches back to the normal 20x15 procedural map, character select, and standard decks/AP/MP, undoing "test mode" entirely. See Game1.EnterOriginalMode.</summary>
         public Func<string> OriginalModeCallback { get; set; }
 
+        /// <summary>Set by Game1 after construction - "openworld mode" (on request) switches to Open World: a single hero exploring a procedurally generated, chunk-streamed map with no combat wired in yet. Goes through the same character-select screen Arena uses. See Game1.EnterOpenWorldMode.</summary>
+        public Func<string> OpenWorldModeCallback { get; set; }
+
         /// <summary>
         /// Set by Game1 after construction - "summon &lt;UnitID&gt; &lt;Team&gt;" hands the raw
         /// (unitId, team) pair off to Game1, which opens tile-click placement for that summon
@@ -121,6 +124,9 @@ namespace SagesOfOzvaram.Maps
                         break;
                     case "original":
                         HandleOriginalCommand(parts);
+                        break;
+                    case "openworld":
+                        HandleOpenWorldCommand(parts);
                         break;
                     case "summon":
                         HandleSummonCommand(parts);
@@ -593,6 +599,31 @@ namespace SagesOfOzvaram.Maps
                     break;
                 default:
                     AddOutput($"Unknown original action: {action}");
+                    break;
+            }
+        }
+
+        private void HandleOpenWorldCommand(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                AddOutput("Usage: openworld mode");
+                return;
+            }
+
+            string action = parts[1].ToLower();
+            switch (action)
+            {
+                case "mode":
+                    if (OpenWorldModeCallback == null)
+                    {
+                        AddOutput("Error: openworld mode not connected to the console.");
+                        break;
+                    }
+                    AddOutput(OpenWorldModeCallback());
+                    break;
+                default:
+                    AddOutput($"Unknown openworld action: {action}");
                     break;
             }
         }

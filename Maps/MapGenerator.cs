@@ -30,28 +30,34 @@ namespace SagesOfOzvaram.Maps
         }
  
         /// <summary>
-        /// Generate a procedural map.
+        /// Generate a procedural map. `offsetX`/`offsetY` (Open World mode, on request) shift
+        /// WHERE in the underlying noise field this map samples from, without changing its own
+        /// local (0,0)-based tile coordinates - two calls on the SAME MapGenerator instance (same
+        /// `_perlin` permutation table) with offsets exactly `width`/`height` apart sample
+        /// adjoining, non-overlapping windows of one continuous noise field, so the two resulting
+        /// maps tile seamlessly if placed edge-to-edge (see Game1's Open World chunk streaming).
+        /// 0,0 (the default) is every pre-existing caller's behavior, unchanged.
         /// </summary>
-        public Map GenerateMap(int width, int height, float scale = 0.1f, int octaves = 4)
+        public Map GenerateMap(int width, int height, float scale = 0.1f, int octaves = 4, int offsetX = 0, int offsetY = 0)
         {
             Map map = new Map(width, height);
             map.Name = $"Procedural Map (Seed: {_seed})";
             map.BiomeType = "mixed";
- 
+
             // Generate terrain using Perlin noise with multiple octaves (Fractional Brownian Motion)
             for (int col = 0; col < width; col++)
             {
                 for (int row = 0; row < height; row++)
                 {
-                    float noiseValue = GetOctaveNoise(col, row, scale, octaves);
-                    
+                    float noiseValue = GetOctaveNoise(col + offsetX, row + offsetY, scale, octaves);
+
                     // Determine tile type based on noise value
                     Tile tile = map.GetTile(col, row);
                     tile.Type = GetTerrainType(noiseValue);
                     tile.Passable = tile.Type != "mountain"; // Only mountain is impassable for now; water is passable but costs extra AP (see Pathfinder)
                 }
             }
- 
+
             return map;
         }
  

@@ -91,7 +91,7 @@ namespace SagesOfOzvaram
         // "Debug" (EnterTestMode, the small 3x3 map, controlling every unit) - see
         // HandleStartMenuInput/ConfirmStartMenuSelection/DrawStartMenu.
         private int _startMenuIndex = 0;
-        private static readonly string[] StartMenuLabels = { "Arena", "Debug" };
+        private static readonly string[] StartMenuLabels = { "Arena", "Debug", "Open World" };
 
         // Current screen - Initialize always sets this explicitly to StartMenu; the field default
         // here only matters if something somehow read it before Initialize runs.
@@ -105,6 +105,41 @@ namespace SagesOfOzvaram
         /// attacks if already in range, just never paths toward the player - while active.
         /// </summary>
         private bool _testModeActive = false;
+
+        /// <summary>
+        /// Open World mode (on request): a single hero explores a procedurally generated,
+        /// effectively infinite map built from fixed-size chunks, streamed in and out as the
+        /// player approaches a chunk's edge - exploration only for now, no wild beasts/combat
+        /// wired in (see EnterOpenWorldMode/CheckOpenWorldChunkTransition). Like _testModeActive,
+        /// this just gates the handful of places real combat-mode assumptions (the FFA win
+        /// check, Fog of War) don't apply here.
+        /// </summary>
+        private bool _openWorldModeActive = false;
+
+        /// <summary>Tile width/height of a single Open World chunk - the unit both of map generation and of streaming (crossing into a chunk's outer quarter in any direction loads/restores its neighbor - see CheckOpenWorldChunkTransition). The user's own example number.</summary>
+        private const int OpenWorldChunkSize = 20;
+
+        /// <summary>Which chunk (in chunk-coordinates, NOT tile coordinates) is currently loaded as `_map` - (0,0) is the one the player spawns into.</summary>
+        private (int cx, int cy) _openWorldCurrentChunk = (0, 0);
+
+        /// <summary>
+        /// Every Open World chunk ever generated this match, keyed by chunk coordinate - kept for
+        /// the rest of the match (on request: "saving the bottom ones, to recreate if the player
+        /// moves down") rather than evicted, so moving back into a previously-visited chunk
+        /// restores it exactly instead of generating a new random one. Cleared on leaving Open
+        /// World (EnterTestMode/EnterOriginalMode) since nothing references stale chunks once the
+        /// match itself is gone.
+        /// </summary>
+        private readonly Dictionary<(int cx, int cy), Map> _openWorldChunkCache = new Dictionary<(int cx, int cy), Map>();
+
+        /// <summary>
+        /// One MapGenerator instance for the whole Open World match (not one per chunk) - sharing
+        /// its `_perlin` permutation table across every chunk, combined with GenerateMap's
+        /// offsetX/offsetY, is what makes adjoining chunks' terrain tile seamlessly instead of
+        /// each chunk being an independent, seam-bordered noise sample.
+        /// </summary>
+        private MapGenerator _openWorldGenerator;
+
         private static readonly string[] AvatarFileNames =
         {
             "ApprenticeSorc_Avatar",     // matches _units[0] (Sorcerer)
@@ -180,6 +215,20 @@ namespace SagesOfOzvaram
         private List<(Move Move, Weapon SourceWeapon)> _attackMenuMoves = new List<(Move, Weapon)>();
         private int _attackMenuIndex = 0;
         private bool _attackMenuActive = false;
+
+        // Abilities submenu (opened from the "Abilities" turn-menu option - see Combat.AbilityCatalog)
+        private List<string> _abilitiesMenuLabels = new List<string>();
+        private List<Move> _abilitiesMenuAbilities = new List<Move>();
+        private int _abilitiesMenuIndex = 0;
+        private bool _abilitiesMenuActive = false;
+
+        // Summon Portal ability targeting (see AbilityCatalog.SummonPortal/CastSummonPortal) -
+        // deliberately its own flag/tile-set rather than reusing _portalPlacementModeActive
+        // (CastSummon's own Phase 1), which always chains into creature placement afterward -
+        // this one stops once the portal itself is placed, no chaining, so entangling the two
+        // risked breaking the existing summon-a-creature flow for no real benefit.
+        private bool _abilityPortalPlacementModeActive = false;
+        private HashSet<(int col, int row)> _abilityPortalPlacementValidTiles = new HashSet<(int col, int row)>();
 
         // Target selection (opened after confirming a single-target move in the attack submenu -
         // a HitsAllAdjacent move like Sword Spin skips this and resolves immediately)
@@ -388,6 +437,7 @@ namespace SagesOfOzvaram
             _console.ListCardsCallback = ListCardsCommand;
             _console.TestModeCallback = EnterTestMode;
             _console.OriginalModeCallback = EnterOriginalMode;
+            _console.OpenWorldModeCallback = EnterOpenWorldMode;
             _console.SummonCallback = DevSummonCommand;
 
             // Actual typed characters for the console - KeyboardState (polled in
@@ -576,12 +626,16 @@ namespace SagesOfOzvaram
             _trapPlacementModeActive = false;
             _leapModeActive = false;
             _releaseModeActive = false;
+            _abilitiesMenuActive = false;
+            _abilityPortalPlacementModeActive = false;
             _placedTraps.Clear();
             _droppedItems.Clear();
             _summonPlacementModeActive = false;
             _portalPlacementModeActive = false;
             _movementModeActive = false;
             _viewingMap = false;
+            _openWorldModeActive = false;
+            _openWorldChunkCache.Clear();
 
             var playerDeck = _classDecks[_playerUnit.Class];
             int untestedCount = playerDeck.Count(c => !IsCardTested(c));
@@ -673,6 +727,79 @@ namespace SagesOfOzvaram
             _trapPlacementModeActive = false;
             _leapModeActive = false;
             _releaseModeActive = false;
+            _abilitiesMenuActive = false;
+            _abilityPortalPlacementModeActive = false;
+            _placedTraps.Clear();
+            _droppedItems.Clear();
+            _summonPlacementModeActive = false;
+            _portalPlacementModeActive = false;
+            _movementModeActive = false;
+            _viewingMap = false;
+            _openWorldModeActive = false;
+            _openWorldChunkCache.Clear();
+
+            return "Original Mode restored - normal 20x15 procedural map, character select, standard decks/AP/MP.";
+        }
+
+        /// <summary>
+        /// Dev-console "openworld mode" handler (see DevConsole.OpenWorldModeCallback) and the
+        /// Start Menu's "Open World" option (on request) - a single hero exploring a
+        /// procedurally generated, chunk-streamed map with no combat wired in yet (see
+        /// _openWorldModeActive's own doc comment). Unlike EnterTestMode/EnterOriginalMode, this
+        /// does NOT spawn a unit or construct TurnSystem itself - Open World still goes through
+        /// normal character select (same screen Arena uses) to pick which of the 4 hero classes
+        /// to actually play, and ConfirmCharacterSelection's own Open World branch is what spawns
+        /// just that one chosen hero (at the new world's center) and builds TurnSystem around it,
+        /// once picked. The 4 instances spawned into `_units` here exist ONLY so
+        /// DrawCharacterSelect's existing unchanged code (which reads `_units[i].Name` for each
+        /// portrait's label) has something to read - 3 of them are discarded the moment a choice
+        /// is actually confirmed.
+        /// </summary>
+        private string EnterOpenWorldMode()
+        {
+            GameLogger.ResetForNewMatch();
+            _hasLoggedAnyUnitTurn = false;
+
+            _openWorldModeActive = true;
+            _testModeActive = false;
+            _openWorldChunkCache.Clear();
+            _openWorldGenerator = new MapGenerator(Environment.TickCount);
+            _openWorldCurrentChunk = (0, 0);
+
+            _hexGrid = new HexGrid(OpenWorldChunkSize, OpenWorldChunkSize, tileSize: 32f);
+            _map = GenerateOpenWorldChunk(0, 0);
+            _console.SetMap(_map);
+
+            _units.Clear();
+            _units.Add(new ApprenticeSorcerer());
+            _units.Add(new ApprenticeWarrior());
+            _units.Add(new ApprenticeCleric());
+            _units.Add(new ApprenticeHunter());
+            foreach (var unit in _units)
+                unit.LoadContent(Content, GraphicsDevice);
+
+            _playerUnit = null; // picked via character select, same as Arena
+            _playerHero = null;
+
+            _gameState = GameState.CharacterSelect;
+            _selectedCharacterIndex = 0;
+
+            // Reset every input-mode flag, same reasoning as EnterTestMode/EnterOriginalMode.
+            _turnMenuActive = false;
+            _cardMenuActive = false;
+            _itemsMenuActive = false;
+            _itemDetailActive = false;
+            _attackMenuActive = false;
+            _targetingModeActive = false;
+            _coneAimingModeActive = false;
+            _teleportModeActive = false;
+            _allyTargetModeActive = false;
+            _tameBeastModeActive = false;
+            _trapPlacementModeActive = false;
+            _leapModeActive = false;
+            _releaseModeActive = false;
+            _abilitiesMenuActive = false;
+            _abilityPortalPlacementModeActive = false;
             _placedTraps.Clear();
             _droppedItems.Clear();
             _summonPlacementModeActive = false;
@@ -680,7 +807,74 @@ namespace SagesOfOzvaram
             _movementModeActive = false;
             _viewingMap = false;
 
-            return "Original Mode restored - normal 20x15 procedural map, character select, standard decks/AP/MP.";
+            return "Open World mode active - pick your hero to spawn into a fresh, streaming map.";
+        }
+
+        /// <summary>
+        /// The chunk at (cx,cy) - restored from _openWorldChunkCache if the player has already
+        /// been there (on request: "saving ... to recreate"), generated fresh and cached
+        /// otherwise. offsetX/offsetY (chunk coordinate * OpenWorldChunkSize) are what make a
+        /// freshly generated chunk's terrain line up seamlessly with whichever neighbors already
+        /// exist - see MapGenerator.GenerateMap's own doc comment.
+        /// </summary>
+        private Map GenerateOpenWorldChunk(int cx, int cy)
+        {
+            if (_openWorldChunkCache.TryGetValue((cx, cy), out var cached))
+                return cached;
+
+            var chunk = _openWorldGenerator.GenerateMap(OpenWorldChunkSize, OpenWorldChunkSize, scale: 0.08f, octaves: 4,
+                offsetX: cx * OpenWorldChunkSize, offsetY: cy * OpenWorldChunkSize);
+            _openWorldChunkCache[(cx, cy)] = chunk;
+            return chunk;
+        }
+
+        /// <summary>
+        /// Open World streaming (on request): called right after the player's own move resolves
+        /// (MoveUnitTowards), with `tile` being the hex it actually ended up on. Checks whether
+        /// that tile is within the outer quarter of the CURRENTLY loaded chunk toward any edge -
+        /// independently per axis, so a corner (e.g. simultaneously within the north quarter AND
+        /// the west quarter) transitions diagonally in one step rather than needing two separate
+        /// moves - and if so, swaps `_map` to the neighboring chunk in that direction (restoring
+        /// it from cache, or generating it fresh - either way also caching the chunk being left,
+        /// so moving back later restores it rather than regenerating something new - see
+        /// GenerateOpenWorldChunk), repositions the player to the mirrored tile just inside the
+        /// new chunk's own near edge (continuing the same depth of travel rather than snapping to
+        /// the dead center), and snaps the camera straight there instead of letting it lerp
+        /// across the whole old chunk first. The threshold triggers well before the player could
+        /// ever reach the true edge tile (row/col 0 or Size-1), so normal AP-gated movement never
+        /// actually hits Pathfinder's own out-of-bounds limit - this is why no change to
+        /// Pathfinder/HexGrid's bounds checking was needed at all.
+        /// </summary>
+        private void CheckOpenWorldChunkTransition((int col, int row) tile)
+        {
+            int quarter = OpenWorldChunkSize / 4;
+            int dx = 0, dy = 0;
+            if (tile.col < quarter) dx = -1;
+            else if (tile.col >= OpenWorldChunkSize - quarter) dx = 1;
+            if (tile.row < quarter) dy = -1;
+            else if (tile.row >= OpenWorldChunkSize - quarter) dy = 1;
+
+            if (dx == 0 && dy == 0)
+                return;
+
+            _openWorldChunkCache[_openWorldCurrentChunk] = _map;
+
+            var target = (_openWorldCurrentChunk.cx + dx, _openWorldCurrentChunk.cy + dy);
+            _map = GenerateOpenWorldChunk(target.Item1, target.Item2);
+            _console.SetMap(_map);
+            _openWorldCurrentChunk = target;
+
+            int newCol = dx != 0 ? OpenWorldChunkSize - 1 - tile.col : tile.col;
+            int newRow = dy != 0 ? OpenWorldChunkSize - 1 - tile.row : tile.row;
+
+            _playerUnit.SetMovementPath(Enumerable.Empty<Vector2>()); // cancel any in-flight walk animation - this is a scene cut, not a continued walk
+            _playerUnit.Position = _hexGrid.HexToWorld(newCol, newRow);
+            _renderer.CameraPosition = _playerUnit.Position; // snap instead of letting the per-frame lerp pan across the whole old chunk first
+
+            ShowCombatMessage("You press on into an uncharted stretch of the world.");
+            string logMessage = $"Open World: entered chunk ({target.Item1}, {target.Item2})";
+            GameLogger.Log(logMessage);
+            _console.Log(logMessage);
         }
 
         protected override void LoadContent()
@@ -1071,7 +1265,7 @@ namespace SagesOfOzvaram
                 var stillStandingTeams = _units
                     .Where(u => !u.IsFainted && !(u.Owner == null && u.Factions.Contains(Faction.Wild)))
                     .Select(GetTeamRoot).Distinct().ToList();
-                if (!_testModeActive && stillStandingTeams.Count <= 1)
+                if (!_testModeActive && !_openWorldModeActive && stillStandingTeams.Count <= 1)
                 {
                     _matchWinner = stillStandingTeams.Count == 1 ? stillStandingTeams[0] : null;
                     _gameState = GameState.MatchOver;
@@ -1196,6 +1390,8 @@ namespace SagesOfOzvaram
                                 _trapPlacementModeActive = false;
                                 _leapModeActive = false;
                                 _releaseModeActive = false;
+                                _abilitiesMenuActive = false;
+                                _abilityPortalPlacementModeActive = false;
                                 _summonPlacementModeActive = false;
                                 _portalPlacementModeActive = false;
                                 _movementModeActive = false;
@@ -1235,6 +1431,8 @@ namespace SagesOfOzvaram
                                     _trapPlacementModeActive = false;
                                     _leapModeActive = false;
                                     _releaseModeActive = false;
+                                    _abilitiesMenuActive = false;
+                                    _abilityPortalPlacementModeActive = false;
                                     _summonPlacementModeActive = false;
                                     _portalPlacementModeActive = false;
                                     _movementModeActive = false;
@@ -1384,6 +1582,10 @@ namespace SagesOfOzvaram
                         {
                             HandlePortalPlacementInput(keyboardState, mouseState);
                         }
+                        else if (_abilityPortalPlacementModeActive)
+                        {
+                            HandleAbilityPortalPlacementInput(keyboardState, mouseState);
+                        }
                         else if (_movementModeActive)
                         {
                             HandleMovementInput(keyboardState, mouseState);
@@ -1391,6 +1593,10 @@ namespace SagesOfOzvaram
                         else if (_cardMenuActive)
                         {
                             HandleCardMenuInput(keyboardState, mouseState);
+                        }
+                        else if (_abilitiesMenuActive)
+                        {
+                            HandleAbilitiesMenuInput(keyboardState, mouseState);
                         }
                         else if (_itemsMenuActive)
                         {
@@ -1424,6 +1630,8 @@ namespace SagesOfOzvaram
                         _trapPlacementModeActive = false;
                         _leapModeActive = false;
                         _releaseModeActive = false;
+                        _abilitiesMenuActive = false;
+                        _abilityPortalPlacementModeActive = false;
                         _summonPlacementModeActive = false;
                         _portalPlacementModeActive = false;
                         _movementModeActive = false;
@@ -1601,7 +1809,11 @@ namespace SagesOfOzvaram
         /// original pre-Test-Mode flow. "Debug" (index 1) routes straight to EnterTestMode - the
         /// small 3x3 map with every unit player-controlled on its own turn - mirroring exactly
         /// what Initialize() used to do unconditionally before this menu existed, including the
-        /// one-time camera/auto-advance setup EnterTestMode's caller is responsible for.
+        /// one-time camera/auto-advance setup EnterTestMode's caller is responsible for. "Open
+        /// World" (index 2, on request) routes to EnterOpenWorldMode - same character-select
+        /// detour as Arena (ConfirmCharacterSelection's own Open World branch is what actually
+        /// spawns the chosen hero, since EnterOpenWorldMode itself has no single unit yet to pick
+        /// a camera/auto-advance target from).
         /// </summary>
         private void ConfirmStartMenuSelection()
         {
@@ -1609,12 +1821,16 @@ namespace SagesOfOzvaram
             {
                 EnterOriginalMode();
             }
-            else // Debug
+            else if (_startMenuIndex == 1) // Debug
             {
                 EnterTestMode();
                 _cameraTarget = _turnSystem.CurrentUnit.Position;
                 _hasAutoAdvancedThisTurn = false;
                 _hasAiActedThisTurn = false;
+            }
+            else // Open World
+            {
+                EnterOpenWorldMode();
             }
         }
 
@@ -1654,6 +1870,43 @@ namespace SagesOfOzvaram
 
         private void ConfirmCharacterSelection()
         {
+            // Open World (on request): EnterOpenWorldMode populated _units[0..3] with 4 fresh,
+            // unpositioned instances purely so this screen's existing per-portrait name labels
+            // have something to read - unlike Arena, nothing else about them (position, deck,
+            // turn order) is real yet. Only the one actually chosen survives past this point;
+            // the other 3 are simply dropped (never added to a turn order, never rendered).
+            if (_openWorldModeActive)
+            {
+                var chosen = _units[_selectedCharacterIndex];
+                _units.Clear();
+                _units.Add(chosen);
+
+                int center = OpenWorldChunkSize / 2;
+                chosen.Position = FindValidSpawnPosition(center, center, new Random());
+
+                _playerUnit = chosen;
+                _playerHero = chosen;
+                GenerateClassDecks();
+                EnsurePlayerHandInitialized();
+
+                _turnSystem = new TurnSystem(_units);
+                _turnSystem.UnitTurnStarted += LogUnitTurnDivider;
+                _turnSystem.UnitTurnStarted += LogUnitAggro;
+                _turnSystem.UnitTurnStarted += ApplyManaAuras;
+                _turnSystem.UnitTurnStarted += ResetCombatMessageCount;
+                LogUnitTurnDivider(_turnSystem.CurrentUnit); // the constructor already starts the first (only) unit's turn before this subscription could catch it
+                LogUnitAggro(_turnSystem.CurrentUnit);
+                ApplyManaAuras(_turnSystem.CurrentUnit);
+                ResetCombatMessageCount(_turnSystem.CurrentUnit);
+                _renderer.CameraPosition = chosen.Position;
+                _cameraZoomTarget = 2.5f;
+                _hasAutoAdvancedThisTurn = false;
+                _hasAiActedThisTurn = false;
+
+                _gameState = GameState.Playing;
+                return;
+            }
+
             _playerUnit = _units[_selectedCharacterIndex];
             _playerHero = _playerUnit;
             EnsurePlayerHandInitialized();
@@ -2090,6 +2343,11 @@ namespace SagesOfOzvaram
                 _turnMenuActive = false;
                 OpenCardMenu();
             }
+            else if (optionId == "Abilities")
+            {
+                _turnMenuActive = false;
+                OpenAbilitiesMenu();
+            }
             else if (optionId == "Items")
             {
                 _turnMenuActive = false;
@@ -2172,8 +2430,12 @@ namespace SagesOfOzvaram
             roachlin.CurrentMP = Math.Max(0, roachlin.CurrentMP - move.MPCost);
 
             int damage = move.GetDamage(roachlin, target);
-            target.TakeDamage(damage, move.DamageType);
+            target.TakeDamage(damage, move.DamageType, roachlin);
+            target.ApplyDamageAggro(roachlin, damage); // Aggro System: Syphon bypasses AttackResolver, so it needs this call directly
+            int hpBeforeHeal = roachlin.HP;
             roachlin.Heal(damage);
+            if (roachlin.HP > hpBeforeHeal)
+                BroadcastAggroToHostiles(roachlin, 1); // Aggro System: Syphon heals the Roachlin itself - still "a caster heals itself"
 
             var vigor = roachlin.StatusEffects.FirstOrDefault(e => e.Name == "Syphon Vigor");
             if (vigor != null)
@@ -2776,10 +3038,42 @@ namespace SagesOfOzvaram
 
             if (triggeredTrap != null)
                 TriggerTrap(triggeredTrap, unit);
+
+            // Open World streaming (on request): only the player's own movement can ever trigger
+            // a chunk transition - there's no AI/other units in this mode at all to also check.
+            if (_openWorldModeActive && unit == _playerUnit)
+                CheckOpenWorldChunkTransition(finalTile);
         }
 
         /// <summary>Minimum aggro (of the Aggro System's 0-20 range) before a unit is forced to target whoever it's held against - see Aggro System.</summary>
         private const int AggroForcedTargetThreshold = 10;
+
+        /// <summary>
+        /// Aggro System (reworked, on request): how far (in tiles) a healer/cleanser's own
+        /// support actions reach when broadcasting aggro to hostile units - "the standard aggro
+        /// range," per the request. Nothing distance-gated aggro generation before this; every
+        /// other aggro trigger (taking/dealing damage, an affliction landing/ticking) applies
+        /// directly between the two units actually involved, with no range check needed at all.
+        /// </summary>
+        private const int HealingAggroRange = 10;
+
+        /// <summary>
+        /// Aggro System (reworked, on request): broadcasts `amount` aggro toward `caster`, to
+        /// every living unit not on caster's own team (GetTeamRoot) within HealingAggroRange
+        /// tiles of it - the "healing/cleansing draws attention from everyone nearby" rule.
+        /// Called once per healed/cured TARGET (not once per cast), so an AoE heal that lands on
+        /// 3 allies calls this 3 times, each hostile in range ending up +3 total (on request).
+        /// </summary>
+        private void BroadcastAggroToHostiles(BaseUnit caster, int amount)
+        {
+            var casterHex = _hexGrid.WorldToHex(caster.Position);
+            foreach (var hostile in _units.Where(u => u.IsAlive && u != caster && GetTeamRoot(u) != GetTeamRoot(caster)))
+            {
+                var hostileHex = _hexGrid.WorldToHex(hostile.Position);
+                if (_hexGrid.GetDistance(casterHex.col, casterHex.row, hostileHex.col, hostileHex.row) <= HealingAggroRange)
+                    hostile.AddAggro(caster, amount);
+            }
+        }
 
         /// <summary>Aggro gained by every unit a Wild Carnivore finds within its own AngerRange when it turns Hostile (see RunAggroDrivenSummonAI) - the user's own example number.</summary>
         private const int WildAngerAggroGain = 5;
@@ -3280,6 +3574,77 @@ namespace SagesOfOzvaram
             _targetingModeActive = true;
         }
 
+        /// <summary>Opens the Abilities submenu (see Combat.AbilityCatalog/TurnMenuBuilder's own "Abilities" entry) - every ability the player's unit currently has, same list+"Back" shape as OpenAttackMenu.</summary>
+        private void OpenAbilitiesMenu()
+        {
+            _abilitiesMenuAbilities = AbilityCatalog.GetAbilitiesFor(_playerUnit);
+            _abilitiesMenuLabels = _abilitiesMenuAbilities
+                .Select(ability => FormatAbilityLabel(ability))
+                .ToList();
+            _abilitiesMenuLabels.Add("Back");
+            _abilitiesMenuIndex = 0;
+            _abilitiesMenuActive = true;
+        }
+
+        /// <summary>Build an ability's submenu label, e.g. "Summon Portal (2 AP, 5 MP)" - same shape FormatAttackLabel already uses, minus the ammo part (no current ability needs it).</summary>
+        private string FormatAbilityLabel(Move ability)
+        {
+            int apCost = _playerUnit.GetEffectiveAPCost(ability, null);
+            string cost = $"{apCost} AP";
+            if (ability.MPCost > 0)
+                cost += $", {ability.MPCost} MP";
+            return $"{ability.Name} ({cost})";
+        }
+
+        /// <summary>Handle input on the Abilities submenu: W/S or mouse-hover to highlight an option, click or E to confirm.</summary>
+        private void HandleAbilitiesMenuInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.S) && !_previousKeyboardState.IsKeyDown(Keys.S))
+                _abilitiesMenuIndex = (_abilitiesMenuIndex + 1) % _abilitiesMenuLabels.Count;
+            if (keyboardState.IsKeyDown(Keys.W) && !_previousKeyboardState.IsKeyDown(Keys.W))
+                _abilitiesMenuIndex = (_abilitiesMenuIndex - 1 + _abilitiesMenuLabels.Count) % _abilitiesMenuLabels.Count;
+
+            Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, _abilitiesMenuLabels.Count);
+
+            for (int i = 0; i < optionRects.Length; i++)
+            {
+                if (optionRects[i].Contains(mouseState.X, mouseState.Y))
+                {
+                    _abilitiesMenuIndex = i;
+                    if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+                        ConfirmAbilitiesMenuSelection();
+                }
+            }
+
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+                ConfirmAbilitiesMenuSelection();
+        }
+
+        /// <summary>Dispatches the selected ability by its Move.Is* flag - just IsSummonPortal for now, same one-flag-per-case shape ConfirmAttackMenuSelection/TryCastSelectedCard already use for their own specially-flagged moves.</summary>
+        private void ConfirmAbilitiesMenuSelection()
+        {
+            string label = _abilitiesMenuLabels[_abilitiesMenuIndex];
+
+            if (label == "Back")
+            {
+                _abilitiesMenuActive = false;
+                _turnMenuIndex = 0;
+                _turnMenuActive = true;
+                return;
+            }
+
+            var ability = _abilitiesMenuAbilities[_abilitiesMenuIndex];
+
+            if (ability.IsSummonPortal)
+            {
+                CastSummonPortal(ability);
+                return;
+            }
+
+            ShowCombatMessage($"{ability.Name} can't be used yet - no execution system for that effect.");
+        }
+
         /// <summary>A unit's team identity - itself, or whoever summoned it (see BaseUnit.Owner). Two units are allied iff this is equal for both.</summary>
         private static BaseUnit GetTeamRoot(BaseUnit unit) => unit.Owner ?? unit;
 
@@ -3770,6 +4135,7 @@ namespace SagesOfOzvaram
             {
                 _playerUnit.Position = target.Position;
                 target.ApplyKnockdown(1);
+                target.ApplyAfflictionPlacementAggro(_playerUnit); // Aggro System: Leap's pin bypasses AttackResolver too
                 _playerUnit.ApplyStatusEffect(new StatusEffect
                 {
                     Name = "Pinning",
@@ -4299,17 +4665,21 @@ namespace SagesOfOzvaram
         {
             _placedTraps.Remove(trap);
 
-            mover.TakeDamage(trap.FlatDamage, trap.DamageType);
-            mover.AddAggro(trap.Owner, 5);
-            if (trap.FlatDamage > 0)
-                mover.AddAggro(trap.Owner, 2);
+            mover.TakeDamage(trap.FlatDamage, trap.DamageType, trap.Owner);
+            mover.ApplyDamageAggro(trap.Owner, trap.FlatDamage); // Aggro System: a trap trigger is still "taking damage from" its Owner
 
             SpawnDamageNumber(mover, trap.FlatDamage);
             ShowCombatMessage($"{mover.Name} triggers {trap.Owner.Name}'s {trap.Name} for {trap.FlatDamage} damage!");
 
             foreach (var effect in trap.AppliedEffects)
             {
+                // Aggro System: credits the tick-based half (StatusEffect.Source, e.g. Weak
+                // Bleed's DamagePercentMaxHPPerTick) in addition to the one-time placement half
+                // right below - trap.AppliedEffects' own instances are reused as-is (see
+                // CreateBearatTrap), so this is harmless to set even if it's already set.
+                effect.Source = trap.Owner;
                 mover.ApplyStatusEffect(effect);
+                mover.ApplyAfflictionPlacementAggro(trap.Owner);
                 ShowCombatMessage($"{mover.Name} is afflicted with {effect.Name}!");
             }
         }
@@ -4651,6 +5021,92 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
+        /// The "Summon Portal" ability (see Combat.AbilityCatalog.SummonPortal, granted to every
+        /// Elite/Hero-rank unit) - pays AP/MP up front, then opens its own standalone placement
+        /// targeting (HandleAbilityPortalPlacementInput/ExecuteSummonPortalAbility) rather than
+        /// chaining into creature placement the way CastSummon's own Phase 1 does. Refuses
+        /// outright if the caster already has a living Generic Portal of their own - nothing to
+        /// gain from a second one, and PlayerHasActiveGenericPortal/GetGenericPortalSurcharge
+        /// already treat it as "available" the instant it exists, regardless of which path
+        /// created it - so the normal summon-a-creature surcharge is already waived from here on
+        /// with no further plumbing needed.
+        /// </summary>
+        private void CastSummonPortal(Move ability)
+        {
+            if (PlayerHasActiveGenericPortal(_playerUnit))
+            {
+                ShowCombatMessage($"{_playerUnit.Name} already has a Generic Portal standing.");
+                return;
+            }
+
+            int apCost = _playerUnit.GetEffectiveAPCost(ability, null);
+            if (apCost > _playerUnit.CurrentAP || ability.MPCost > _playerUnit.CurrentMP)
+            {
+                ShowCombatMessage($"Not enough AP/MP for {ability.Name}.");
+                return;
+            }
+
+            var casterHex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var occupied = GetDestinationBlockingTiles(_playerUnit);
+            _abilityPortalPlacementValidTiles = _hexGrid.GetHexesInRadius(casterHex.col, casterHex.row, GenericPortalPlacementRange)
+                .Where(hex => hex != casterHex && Pathfinder.IsPassable(_hexGrid, _map, hex.col, hex.row, occupied))
+                .ToHashSet();
+
+            if (_abilityPortalPlacementValidTiles.Count == 0)
+            {
+                ShowCombatMessage($"Nowhere to place a portal.");
+                return;
+            }
+
+            _abilitiesMenuActive = false;
+            _abilityPortalPlacementModeActive = true;
+        }
+
+        /// <summary>Handle input while picking the Summon Portal ability's placement tile: click a highlighted tile to conjure it there, E to cancel back to the turn menu (nothing's been spent yet).</summary>
+        private void HandleAbilityPortalPlacementInput(KeyboardState keyboardState, MouseState mouseState)
+        {
+            if (keyboardState.IsKeyDown(Keys.E) && !_previousKeyboardState.IsKeyDown(Keys.E))
+            {
+                CancelAbilityPortalPlacement();
+                return;
+            }
+
+            if (mouseState.LeftButton == ButtonState.Pressed && _previousMouseState.LeftButton == ButtonState.Released)
+            {
+                Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                var clickedHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                if (_abilityPortalPlacementValidTiles.Contains(clickedHex))
+                    ExecuteSummonPortalAbility(clickedHex);
+            }
+        }
+
+        /// <summary>Spend the Summon Portal ability's AP/MP, conjure a Portal at destHex owned by the caster, and return straight to the turn menu - no creature-placement chain, unlike CastSummon's own Phase 1/ExecutePortalPlacement.</summary>
+        private void ExecuteSummonPortalAbility((int col, int row) destHex)
+        {
+            var ability = AbilityCatalog.SummonPortal;
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(ability, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - ability.MPCost);
+
+            var position = _hexGrid.HexToWorld(destHex.col, destHex.row);
+            var portal = new Portal("Generic Portal", GenericPortalHP, GenericPortalDefense, GenericPortalResistance, position);
+            portal.Owner = _playerUnit;
+            portal.LoadContent(Content, GraphicsDevice);
+            _units.Add(portal);
+
+            ShowCombatMessage($"{_playerUnit.Name} conjures a Generic Portal.");
+
+            CancelAbilityPortalPlacement();
+        }
+
+        private void CancelAbilityPortalPlacement()
+        {
+            _abilityPortalPlacementModeActive = false;
+            _abilityPortalPlacementValidTiles.Clear();
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
+        }
+
+        /// <summary>
         /// Phase 2 of CastSummon: open placement targeting for the creature itself - every
         /// passable, unoccupied tile within SummonPlacementRange of the caster's Generic Portal
         /// (just conjured in Phase 1, or already standing from an earlier summon), same mechanics
@@ -4936,6 +5392,14 @@ namespace SagesOfOzvaram
 
             if (result.ConsumesCard)
                 RemoveCardFromHand(card);
+
+            // Aggro System (reworked, on request): broadcast the healing/cleanse aggro this cast
+            // actually earned - once per target healed/cured, not once per cast (see
+            // BroadcastAggroToHostiles).
+            for (int i = 0; i < result.HealedTargets.Count; i++)
+                BroadcastAggroToHostiles(_playerUnit, 1);
+            for (int i = 0; i < result.CuredTargets.Count; i++)
+                BroadcastAggroToHostiles(_playerUnit, 2);
 
             _cardMenuActive = false;
             _turnMenuIndex = 0;
@@ -5402,7 +5866,7 @@ namespace SagesOfOzvaram
             // constraints for fast iteration (see "AP/MP effectively unlimited"), and fog would
             // actively work against testing by hiding the very units/AI behavior being tested -
             // and in the one state this far down in Draw that can still have no _playerUnit at all.
-            HashSet<(int col, int row)> fogVisibleTiles = (!_testModeActive && _playerUnit != null)
+            HashSet<(int col, int row)> fogVisibleTiles = (!_testModeActive && !_openWorldModeActive && _playerUnit != null)
                 ? GetVisibleTilesForTeam(GetTeamRoot(_playerUnit))
                 : null;
 
@@ -5619,6 +6083,21 @@ namespace SagesOfOzvaram
             {
                 var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
                 foreach (var (col, row) in _portalPlacementValidTiles)
+                {
+                    bool hovered = (col, row) == hoveredHex;
+                    Color fill = hovered ? new Color(190, 140, 255, 180) : new Color(140, 90, 220, 110);
+                    Color outline = hovered ? Color.White : new Color(170, 110, 255);
+                    DrawHexFilled(_hexGrid.HexToWorld(col, row), fill, outline);
+                }
+            }
+
+            // Summon Portal ABILITY placement (AbilityCatalog.SummonPortal, via CastSummonPortal)
+            // - its own standalone targeting step, separate from CastSummon's Phase 1 above, but
+            // the same purple highlight since visually it's the same action to the player.
+            if (_abilityPortalPlacementModeActive)
+            {
+                var hoveredHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+                foreach (var (col, row) in _abilityPortalPlacementValidTiles)
                 {
                     bool hovered = (col, row) == hoveredHex;
                     Color fill = hovered ? new Color(190, 140, 255, 180) : new Color(140, 90, 220, 110);
@@ -5899,6 +6378,9 @@ namespace SagesOfOzvaram
                 if (_attackMenuActive)
                     DrawAttackMenu(viewportSize);
 
+                if (_abilitiesMenuActive)
+                    DrawAbilitiesMenu(viewportSize);
+
                 if (_viewingMap)
                     DrawMapViewIndicator(viewportSize);
 
@@ -5928,6 +6410,8 @@ namespace SagesOfOzvaram
                 else if (_summonPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your summon - E to cancel");
                 else if (_portalPlacementModeActive)
+                    DrawBottomHint(viewportSize, "Click a highlighted tile to place your Generic Portal - E to cancel");
+                else if (_abilityPortalPlacementModeActive)
                     DrawBottomHint(viewportSize, "Click a highlighted tile to place your Generic Portal - E to cancel");
                 else if (_devSummonModeActive)
                     DrawBottomHint(viewportSize, $"Click a tile to place {_pendingDevSummonCard.Name} ({(_pendingDevSummonOwner != null ? _pendingDevSummonOwner.Name : "Neutral")}) - E to cancel");
@@ -6101,6 +6585,32 @@ namespace SagesOfOzvaram
 
                 _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
                 _spriteBatch.DrawString(_font, _attackMenuLabels[i],
+                    new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
+            }
+        }
+
+        /// <summary>The Abilities submenu - same highlight-on-hover/selected-row, AP/MP-affordability-tinted style DrawAttackMenu already uses.</summary>
+        private void DrawAbilitiesMenu(Vector2 viewportSize)
+        {
+            Rectangle[] optionRects = GetMenuOptionRects(viewportSize, _abilitiesMenuLabels.Count);
+
+            for (int i = 0; i < _abilitiesMenuLabels.Count; i++)
+            {
+                bool selected = i == _abilitiesMenuIndex;
+                Color bg = selected ? new Color(255, 200, 0, 220) : new Color(0, 0, 0, 200);
+
+                // "Back" has no entry in _abilitiesMenuAbilities (it's the trailing extra label).
+                bool affordable = true;
+                if (i < _abilitiesMenuAbilities.Count)
+                {
+                    var ability = _abilitiesMenuAbilities[i];
+                    affordable = _playerUnit.CurrentAP >= _playerUnit.GetEffectiveAPCost(ability, null)
+                        && _playerUnit.CurrentMP >= ability.MPCost;
+                }
+                Color textColor = !affordable ? Color.Red : (selected ? Color.Black : Color.White);
+
+                _spriteBatch.Draw(_whitePixel, optionRects[i], bg);
+                _spriteBatch.DrawString(_font, _abilitiesMenuLabels[i],
                     new Vector2(optionRects[i].X + 8, optionRects[i].Y + 6), textColor);
             }
         }
@@ -6348,6 +6858,11 @@ namespace SagesOfOzvaram
             lines.AddRange(GetUnitStatLines(unit));
 
             lines.Add(new string('-', 28));
+            lines.Add("Abilities:");
+            var abilityLines = GetAbilitySourceLines(unit);
+            lines.AddRange(abilityLines.Count > 0 ? abilityLines : new List<string> { "None" });
+
+            lines.Add(new string('-', 28));
             lines.Add("Active Effects:");
             var sourceLines = GetBuffDebuffSourceLines(unit);
             lines.AddRange(sourceLines.Count > 0 ? sourceLines : new List<string> { "None" });
@@ -6394,6 +6909,18 @@ namespace SagesOfOzvaram
             lines.Add($"ACC: {unit.EffectiveAccuracy}    EVA: {unit.EffectiveEvasion}    SPD: {unit.EffectiveSpeed}");
 
             return lines;
+        }
+
+        /// <summary>
+        /// One line per ability `unit` currently has (see Combat.AbilityCatalog) for the unit
+        /// detail box's new "Abilities:" section - name plus its AP/MP cost, so a glance here
+        /// tells the player both what a unit can do and whether it could afford it right now.
+        /// </summary>
+        private List<string> GetAbilitySourceLines(BaseUnit unit)
+        {
+            return AbilityCatalog.GetAbilitiesFor(unit)
+                .Select(ability => $"{ability.Name} ({ability.APCost} AP, {ability.MPCost} MP): {ability.Description}")
+                .ToList();
         }
 
         /// <summary>

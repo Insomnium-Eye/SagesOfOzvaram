@@ -89,6 +89,7 @@ namespace SagesOfOzvaram.Combat
         public bool IsPlaceTrap { get; }             // true = places a persistent Objects.Trap on an empty tile within Range instead of attacking immediately, visible only to the caster's own team - this Move's own BaseDamage/InflictsStatusEffect etc. are unused for it (the Trap object carries its own hardcoded trigger-time effect instead, since there's no caster present when it actually goes off - see Game1.CreateBearatTrap); only APCost/MPCost/Range matter here - handled by Game1's trap-placement targeting mode and _placedTraps tracking, not AttackResolver or SpellCaster
         public bool IsLeap { get; }                  // true = pounces to either an empty tile within Range OR directly onto a living unit within Range (e.g. the Dusk Roachlin's Leap) - deals no damage of its own; landing on a unit whose EffectiveStrength is lower than the caster's applies Knocked Down to them and "Pinning" to the caster (see Game1.ExecuteLeapOntoUnit). Handled by Game1's own dedicated tile-or-unit targeting mode (opened from ConfirmAttackMenuSelection, not the generic attack-target list), not AttackResolver - also excluded from GetUsableAttacks' AI candidate list for the same reason every other specially-flagged move is (AttackResolver doesn't know what to do with it)
         public bool IsReshuffle { get; }             // true = shuffles every card in the caster's class discard pile back into their deck, each one cloned with its MP cost +1 (see Move.WithMPCostIncrease) - auto-granted to a hand once that class's deck AND hand are both empty (Game1.EnsureReshuffleCardIfNeeded), never drawn normally (not part of SpellCatalog.AllCards) - handled by Game1.CastReshuffle, not AttackResolver or SpellCaster
+        public bool IsSummonPortal { get; }          // true = conjures a Generic Portal on an empty tile within Range instead of attacking - an Ability (see Combat.AbilityCatalog), not a SpellCard/racial move, granted innately by Rank/Race/unit identity rather than drawn/equipped. Same cost/range/mechanics as Phase 1 of Game1.CastSummon, just standalone - handled by Game1.CastSummonPortal, not AttackResolver or SpellCaster
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -120,7 +121,7 @@ namespace SagesOfOzvaram.Combat
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
-                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false,
+                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -171,6 +172,7 @@ namespace SagesOfOzvaram.Combat
             IsPlaceTrap = isPlaceTrap;
             IsLeap = isLeap;
             IsReshuffle = isReshuffle;
+            IsSummonPortal = isSummonPortal;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;
@@ -205,7 +207,7 @@ namespace SagesOfOzvaram.Combat
                 AccuracyBands,
                 RequiredAmmoType, AnimationType,
                 IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
-                IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle,
+                IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal,
                 StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
         }
 

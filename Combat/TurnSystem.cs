@@ -159,7 +159,15 @@ namespace SagesOfOzvaram.Combat
                         continue;
 
                     if (effect.DamagePercentMaxHPPerTick > 0f)
+                    {
                         unit.ApplyTrueDamage((int)Math.Round(unit.EffectiveMaxHP * effect.DamagePercentMaxHPPerTick));
+
+                        // Aggro System: an affliction generates aggro toward whoever inflicted it
+                        // every time it TICKS, not just when placed (see StatusEffect.Source/
+                        // BaseUnit.ApplyAfflictionPlacementAggro for the one-time placement half).
+                        if (effect.Source != null)
+                            unit.AddAggro(effect.Source, 1);
+                    }
 
                     if (effect.TurnTrigger == StatusEffectTurnTrigger.NextTurn)
                         unit.RemoveStatusEffect(effect.Name);

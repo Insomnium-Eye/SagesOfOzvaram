@@ -74,6 +74,15 @@ namespace SagesOfOzvaram.Combat
             if (unit.Class != HeroClass.None && SpellCatalog.GetSpellsForClass(unit.Class).Count > 0)
                 options.Add(new TurnMenuOption { Id = "Cards", Label = "Cards" });
 
+            // Abilities: granted innately by Rank/Race/unit identity (see Combat.AbilityCatalog),
+            // NOT drawn/equipped - its own category, distinct from Attack/Cards/Items. Shown only
+            // once the unit actually has at least one AND can currently afford at least one of
+            // them, same "don't offer what can't work" rule every option here already follows.
+            bool hasAffordableAbility = AbilityCatalog.GetAbilitiesFor(unit)
+                .Any(ability => unit.GetEffectiveAPCost(ability, null) <= unit.CurrentAP && ability.MPCost <= unit.CurrentMP);
+            if (hasAffordableAbility)
+                options.Add(new TurnMenuOption { Id = "Abilities", Label = "Abilities" });
+
             // Items: shown once the unit actually has something to manage - a weapon in
             // Inventory, a consumable (e.g. a potion from Conjure Potions), or (once it exists)
             // a piece of Equipment. See Game1.OpenItemsMenu for where these get combined into

@@ -67,6 +67,17 @@ namespace SagesOfOzvaram.Combat
         /// <summary>The one specific unit TurnTrigger.SpecificUnitsTurn compares against - unused by every other TurnTrigger.</summary>
         public BaseUnit TriggerUnit;
 
+        /// <summary>
+        /// Aggro System (reworked, on request): whoever INFLICTED this Affliction, if it was an
+        /// external hostile unit rather than a self-cast Buff (Guarding, Meditate, Deep Sleep,
+        /// ...) - null for those, and for any Affliction applied with no real "attacker" in scope
+        /// (e.g. "Summoning Curse"). Read by TurnSystem.DispatchTimedEffects to credit 1 aggro
+        /// toward this unit every time a DamagePercentMaxHPPerTick tick actually lands (the
+        /// one-time placement credit itself is BaseUnit.ApplyAfflictionPlacementAggro, called
+        /// directly wherever the effect is first applied, not read off this field at all).
+        /// </summary>
+        public BaseUnit Source;
+
         /// <summary>Pinning only (on request): true once Syphon has been used during THIS particular pin - at that point Combat.TurnMenuBuilder shows ONLY Release, no more Syphon/End, forcing the caster to let go right away rather than cashing in the Syphon benefit AND keeping the "cannot escape" lock going. Starts false on every fresh Pinning (a new Leap always creates a brand new StatusEffect instance), so it has no carry-over between separate pins.</summary>
         public bool SyphonedThisPin;
 
