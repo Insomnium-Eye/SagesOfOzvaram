@@ -458,11 +458,28 @@ namespace SagesOfOzvaram.Units
         /// </summary>
         public int GetAggro(BaseUnit toward) => _aggro.TryGetValue(toward, out int value) ? value : 0;
 
+        /// <summary>
+        /// Fired whenever AddAggro produces a REAL change (not when clamping at 0 or 20 makes a
+        /// request a no-op) - (unit, toward, delta), where `unit` is whichever unit's own aggro
+        /// value just changed (the one a floating indicator should appear above) and `delta` is
+        /// the actual signed change applied, post-clamp, not just the raw requested amount. A
+        /// single hook here covers every aggro trigger in the game (damage, affliction
+        /// placement/ticks, healing broadcast, Wild anger, trap triggers, Syphon, ...) since all
+        /// of them already route through AddAggro or its two wrapper methods below - see
+        /// Game1.SpawnAggroIndicator, the sole subscriber, for the UI-side effect this drives.
+        /// </summary>
+        public static event Action<BaseUnit, BaseUnit, int> AggroChanged;
+
         /// <summary>Raise (or lower, with a negative amount) this unit's aggro toward `toward` by `amount`, clamped to the Aggro System's 0-20 range.</summary>
         public void AddAggro(BaseUnit toward, int amount)
         {
-            int current = GetAggro(toward);
-            _aggro[toward] = Math.Clamp(current + amount, 0, 20);
+            int before = GetAggro(toward);
+            int after = Math.Clamp(before + amount, 0, 20);
+            if (after == before)
+                return;
+
+            _aggro[toward] = after;
+            AggroChanged?.Invoke(this, toward, after - before);
         }
 
         /// <summary>

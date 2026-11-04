@@ -122,7 +122,7 @@ namespace SagesOfOzvaram
         /// and right side. Add an additional 10 tiles to the left and right"): a SQUARE 20x20
         /// chunk is narrower than a typical widescreen viewport at the zoom level that still
         /// covers its full height, so width was the binding constraint and the zoom-clamp alone
-        /// (GetOpenWorldMinZoomToFillScreen) wasn't enough margin in practice. Chunks are now
+        /// (GetMinZoomToFillScreen) wasn't enough margin in practice. Chunks are now
         /// 40 tiles wide (10 extra tiles added to each of the west/east directions) - comfortably
         /// wider than tall, matching a wide viewport's own aspect ratio far better than a square
         /// chunk could, on top of (not instead of) the existing zoom clamp. Every
@@ -134,7 +134,7 @@ namespace SagesOfOzvaram
         /// <summary>
         /// Bug fix, on request ("There's still some darkness at the bottom. Please add five
         /// tiles on the BOTTOM"): even after the zoom-clamp math itself was corrected (see
-        /// GetOpenWorldMinZoomToFillScreen's own doc comment), the clamp's "safe" assumption is
+        /// GetMinZoomToFillScreen's own doc comment), the clamp's "safe" assumption is
         /// that the camera sits exactly at the chunk's own geometric center - but the player
         /// actually spawns wherever FindValidSpawnPosition's nearby-tile search happens to land
         /// (up to a few tiles off from the true center, e.g. if the exact center tile is water/
@@ -149,31 +149,34 @@ namespace SagesOfOzvaram
         private const int OpenWorldViewRange = 10;
 
         /// <summary>
-        /// Bug fix, on request: "I scrolled out all the way and I'm seeing the void around the
-        /// generated map" - a single chunk is a FIXED world-space size, but the camera's normal
-        /// zoom-out range (HexGridRenderer.MIN_ZOOM = 0.5) lets the viewport show more area than
-        /// that at most window sizes, revealing empty space past the loaded chunk's edge (nothing
-        /// is drawn there - the tile loop only covers 0..Width-1/0..Height-1). Rather than build
-        /// full simultaneous multi-chunk rendering (a much bigger feature than asked for), this
-        /// computes the LOWEST zoom level (most zoomed out) that still keeps the whole current
-        /// chunk covering the given viewport in both dimensions, so Open World's own zoom-out can
-        /// be clamped to it. Computed fresh from the viewport size passed in (not cached), so it
-        /// stays correct across a window resize.
+        /// Bug fix, originally on request for Open World ("I scrolled out all the way and I'm
+        /// seeing the void around the generated map") but generalized on request after the exact
+        /// same "camera shifts into a dark out-of-bounds area" report recurred in Debug/Test Mode
+        /// too - ANY map is a fixed world-space size, and the camera's normal zoom-out range
+        /// (HexGridRenderer.MIN_ZOOM = 0.5) can let the viewport show more area than that at most
+        /// window sizes, revealing empty space past the map's edge (nothing is drawn there - the
+        /// tile loop only covers 0..Width-1/0..Height-1) - this was only ever guarded against for
+        /// an Open World chunk specifically, leaving every other mode's own (differently-sized,
+        /// but no less real) map edge completely unprotected. Computes the LOWEST zoom level (most
+        /// zoomed out) that still keeps the WHOLE current map (whatever mode/size it is - a 3x3
+        /// Test Mode grid, the standard 20x15 Arena map, or an Open World chunk) covering the given
+        /// viewport in both dimensions. Computed fresh from the viewport size passed in (not
+        /// cached), so it stays correct across a window resize.
         /// </summary>
         /// <remarks>
         /// Bug fix (the first version of this method still left void on request, twice - once on
-        /// the left/right, then again on top/bottom after chunks were widened): the chunk's
-        /// world-space footprint was being OVERESTIMATED (extra margin ADDED on top of an already
-        /// generous closed-form bound), which made the computed minimum zoom too PERMISSIVE -
-        /// backwards for a "how far can zoom safely go OUT" clamp, where erring toward
+        /// the left/right, then again on top/bottom after Open World's own chunks were widened):
+        /// the map's world-space footprint was being OVERESTIMATED (extra margin ADDED on top of
+        /// an already generous closed-form bound), which made the computed minimum zoom too
+        /// PERMISSIVE - backwards for a "how far can zoom safely go OUT" clamp, where erring toward
         /// underestimating the available space is the actually-safe direction. This version reads
-        /// the chunk's true world-space bounds off GetOpenWorldChunkWorldBounds (shared with
-        /// ClampCameraToOpenWorldChunk, so the two can never quietly drift apart) and then
-        /// SUBTRACTS one TileSize as a small safety buffer, rather than adding one.
+        /// the map's true world-space bounds off GetCurrentMapWorldBounds (shared with
+        /// ClampCameraToMapBounds, so the two can never quietly drift apart) and then SUBTRACTS one
+        /// TileSize as a small safety buffer, rather than adding one.
         /// </remarks>
-        private float GetOpenWorldMinZoomToFillScreen(Vector2 viewportSize)
+        private float GetMinZoomToFillScreen(Vector2 viewportSize)
         {
-            var (minX, maxX, minY, maxY) = GetOpenWorldChunkWorldBounds();
+            var (minX, maxX, minY, maxY) = GetCurrentMapWorldBounds();
 
             // Safety buffer SUBTRACTED (not added) - the right direction for a minimum-zoom
             // (maximum zoom-OUT) clamp: underestimating the available space makes the clamp
@@ -190,17 +193,20 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// The current Open World chunk's TRUE world-space bounding box - every hex's own center
-        /// (HexGrid.HexToWorld, worst case including the odd-row 0.5-hex-width stagger) plus each
-        /// edge hex's own visual extent (half a hex) past its center point. Closed-form (not a
-        /// per-tile scan), so it's cheap enough to call every frame. Shared by
-        /// GetOpenWorldMinZoomToFillScreen (how far OUT zoom can safely go) and
-        /// ClampCameraToOpenWorldChunk (where the camera's POSITION can safely sit) - the two
-        /// together are what finally guarantee "never beyond the map's bounds" regardless of
-        /// exactly where the camera happens to be centered, rather than each one separately
-        /// assuming the other already handled it.
+        /// The CURRENT map's (`_hexGrid`'s - whatever map is actually loaded right now, an Open
+        /// World chunk, Debug/Test Mode's 3x3 grid, or the standard Arena map) TRUE world-space
+        /// bounding box - every hex's own center (HexGrid.HexToWorld, worst case including the
+        /// odd-row 0.5-hex-width stagger) plus each edge hex's own visual extent (half a hex) past
+        /// its center point. Closed-form (not a per-tile scan), so it's cheap enough to call every
+        /// frame, and reads `_hexGrid.Width`/`Height` live rather than any Open-World-specific
+        /// chunk-size constant, so it's automatically correct for whichever map is actually active.
+        /// Shared by GetMinZoomToFillScreen (how far OUT zoom can safely go) and
+        /// ClampCameraToMapBounds (where the camera's POSITION can safely sit) - the two together
+        /// are what finally guarantee "never beyond the map's bounds" regardless of exactly where
+        /// the camera happens to be centered, rather than each one separately assuming the other
+        /// already handled it.
         /// </summary>
-        private (float minX, float maxX, float minY, float maxY) GetOpenWorldChunkWorldBounds()
+        private (float minX, float maxX, float minY, float maxY) GetCurrentMapWorldBounds()
         {
             float tileSize = _hexGrid.TileSize;
             float hexWidth = (float)Math.Sqrt(3f) * tileSize;    // flat-to-flat width
@@ -215,20 +221,26 @@ namespace SagesOfOzvaram
         }
 
         /// <summary>
-        /// Bug fix, on request ("still moving FAR BEYOND the map's bounds"): clamps `desiredPosition`
-        /// so the viewport (at the CURRENT zoom level) never extends past the current chunk's true
-        /// world-space bounds (GetOpenWorldChunkWorldBounds) on any side - the hard guarantee the
-        /// zoom-out clamp alone couldn't provide, since that one only protects against zooming out
-        /// too far while assuming the camera is centered; this protects the CENTERING itself,
-        /// regardless of how the camera got to wherever it's about to go (cursor-follow, WASD pan,
-        /// ...). If the viewport is wider/taller than the chunk itself at this zoom (shouldn't
-        /// happen once GetOpenWorldMinZoomToFillScreen's own clamp is respected, but this is the
-        /// safety net for if it somehow isn't), that axis locks to the chunk's own true center
-        /// instead of an inverted/invalid clamp range.
+        /// Bug fix, on request ("still moving FAR BEYOND the map's bounds") and then generalized
+        /// (on request again, after "the view map button keeps causing problems... this time in
+        /// debug mode, it shifted into a dark area out of bounds" - the exact same bug, just in a
+        /// mode this clamp was never actually being called for): clamps `desiredPosition` so the
+        /// viewport (at the CURRENT zoom level) never extends past the CURRENT map's true
+        /// world-space bounds (GetCurrentMapWorldBounds) on any side, no matter which mode/map is
+        /// actually active - the hard guarantee the zoom-out clamp alone couldn't provide, since
+        /// that one only protects against zooming out too far while assuming the camera is
+        /// centered; this protects the CENTERING itself, regardless of how the camera got to
+        /// wherever it's about to go (cursor-follow, WASD pan, ...). If the viewport is
+        /// wider/taller than the map itself at this zoom (shouldn't happen once
+        /// GetMinZoomToFillScreen's own clamp is respected, but this is the safety net for if it
+        /// somehow isn't - e.g. Debug/Test Mode's tiny 3x3 grid at a zoom level nobody has
+        /// specifically tuned the way Open World's own entry zoom is, see
+        /// ConfirmCharacterSelection), that axis locks to the map's own true center instead of an
+        /// inverted/invalid clamp range.
         /// </summary>
-        private Vector2 ClampCameraToOpenWorldChunk(Vector2 desiredPosition, Vector2 viewportSize)
+        private Vector2 ClampCameraToMapBounds(Vector2 desiredPosition, Vector2 viewportSize)
         {
-            var (minX, maxX, minY, maxY) = GetOpenWorldChunkWorldBounds();
+            var (minX, maxX, minY, maxY) = GetCurrentMapWorldBounds();
             float halfVisibleW = viewportSize.X / (2f * _renderer.ZoomLevel);
             float halfVisibleH = viewportSize.Y / (2f * _renderer.ZoomLevel);
 
@@ -422,6 +434,9 @@ namespace SagesOfOzvaram
         /// <summary>Cached placeholder sprite for every Trap (loaded once in LoadContent) - reuses the same generic Pawn placeholder several summons without unique art already use, just drawn smaller and tinted (see Draw's trap-rendering pass) rather than loaded per-instance.</summary>
         private Texture2D _trapSpriteTexture;
 
+        /// <summary>Procedurally-generated (CreateAngryFaceTexture, built once in LoadContent) icon for the floating Aggro System indicator - see ActiveAggroIndicator/SpawnAggroIndicator.</summary>
+        private Texture2D _angryFaceTexture;
+
         // Leap targeting (opened for Move.IsLeap, e.g. the Dusk Roachlin's Leap) - a dual mode no
         // other move needs: click either an empty, passable tile within Range (a plain
         // reposition) OR a living unit within Range (lands adjacent to it instead, then resolves
@@ -541,6 +556,17 @@ namespace SagesOfOzvaram
         }
 
         private readonly List<ActiveDamageNumber> _activeDamageNumbers = new List<ActiveDamageNumber>();
+
+        /// <summary>A floating angry-face icon + signed "+N"/"-N" number that rises and fades above Target - visual feedback for the Aggro System (see Units.BaseUnit.AggroChanged/SpawnAggroIndicator), spawned once per actual aggro change (an AoE heal that raises 3 hostiles' aggro by 1 each spawns 3 of these, one over each hostile - on request).</summary>
+        private class ActiveAggroIndicator
+        {
+            public BaseUnit Target;
+            public int Delta;
+            public float Elapsed;
+            public float Duration;
+        }
+
+        private readonly List<ActiveAggroIndicator> _activeAggroIndicators = new List<ActiveAggroIndicator>();
         // Long enough to actually read: a sin(pi*t) intensity curve only spends a sliver of its
         // total duration near full strength, so a short duration (the original 0.25s, matched to
         // a melee Slash's own tiny window) made the flash/nudge nearly subliminal - same lesson
@@ -1097,6 +1123,58 @@ namespace SagesOfOzvaram
             // Create 1x1 white pixel for UI drawing
             _whitePixel = new Texture2D(GraphicsDevice, 1, 1);
             _whitePixel.SetData(new[] { Color.White });
+
+            _angryFaceTexture = CreateAngryFaceTexture();
+
+            // Aggro System: drive the floating angry-face indicator from one single hook point
+            // (BaseUnit.AggroChanged) rather than a SpawnAggroIndicator call at every place
+            // AddAggro/ApplyDamageAggro/ApplyAfflictionPlacementAggro/BroadcastAggroToHostiles is
+            // used - that already covers every aggro trigger in the game (damage, affliction
+            // placement/ticks, healing broadcast, Wild anger, trap triggers, Syphon, ...).
+            BaseUnit.AggroChanged += SpawnAggroIndicator;
+        }
+
+        /// <summary>
+        /// A small procedurally-generated icon (no art asset) for the Aggro System's floating
+        /// indicator - a red circle "face" with two dark eyebrows angled down toward the center
+        /// (the classic "angry V") and a flat frown line, built once here rather than loaded from
+        /// disk since nothing this simple needs a real sprite.
+        /// </summary>
+        private Texture2D CreateAngryFaceTexture()
+        {
+            const int size = 20;
+            var data = new Color[size * size];
+            var center = new Vector2(size / 2f, size / 2f);
+            float radius = size / 2f - 1f;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dist = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), center);
+                    data[y * size + x] = dist <= radius ? new Color(210, 45, 35) : Color.Transparent;
+                }
+            }
+
+            void SetPixel(int x, int y, Color c)
+            {
+                if (x >= 0 && x < size && y >= 0 && y < size)
+                    data[y * size + x] = c;
+            }
+
+            var browColor = new Color(45, 10, 5);
+            for (int i = 0; i < 5; i++)
+            {
+                SetPixel(4 + i, 6 + i / 2, browColor);
+                SetPixel(size - 5 - i, 6 + i / 2, browColor);
+            }
+
+            for (int i = 0; i < 6; i++)
+                SetPixel(7 + i, 14, browColor);
+
+            var texture = new Texture2D(GraphicsDevice, size, size);
+            texture.SetData(data);
+            return texture;
         }
 
         /// <summary>Load a texture directly from disk (bypassing the Content pipeline), or null if the file doesn't exist.</summary>
@@ -1477,6 +1555,14 @@ namespace SagesOfOzvaram
                         _activeDamageNumbers[i].Elapsed += deltaTime;
                         if (_activeDamageNumbers[i].Elapsed >= _activeDamageNumbers[i].Duration)
                             _activeDamageNumbers.RemoveAt(i);
+                    }
+
+                    // Advance (and drop once finished) every active floating aggro indicator (see SpawnAggroIndicator).
+                    for (int i = _activeAggroIndicators.Count - 1; i >= 0; i--)
+                    {
+                        _activeAggroIndicators[i].Elapsed += deltaTime;
+                        if (_activeAggroIndicators[i].Elapsed >= _activeAggroIndicators[i].Duration)
+                            _activeAggroIndicators.RemoveAt(i);
                     }
 
                     if (_combatLogTimer > 0f)
@@ -2046,7 +2132,7 @@ namespace SagesOfOzvaram
                 int centerCol = OpenWorldChunkWidth / 2;
                 // True center (OpenWorldChunkHeight/2), not anchored to the pre-growth half-height
                 // - tried anchoring off-center once (keeping this at the OLD center so the 5 new
-                // rows landed purely to the south) and it broke GetOpenWorldMinZoomToFillScreen's
+                // rows landed purely to the south) and it broke GetMinZoomToFillScreen's
                 // own safety guarantee, which only holds when the camera sits at the chunk's TRUE
                 // geometric center (verified directly: an off-center anchor measurably let void
                 // back in on the now-less-padded north edge). True centering still nets more
@@ -2074,7 +2160,7 @@ namespace SagesOfOzvaram
                 ResetCombatMessageCount(_turnSystem.CurrentUnit);
                 _renderer.CameraPosition = chosen.Position;
                 Vector2 initialViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                _cameraZoomTarget = Math.Max(2.5f, GetOpenWorldMinZoomToFillScreen(initialViewport));
+                _cameraZoomTarget = Math.Max(2.5f, GetMinZoomToFillScreen(initialViewport));
                 _renderer.ZoomLevel = _cameraZoomTarget;
                 _hasAutoAdvancedThisTurn = false;
                 _hasAiActedThisTurn = false;
@@ -3942,11 +4028,21 @@ namespace SagesOfOzvaram
         /// own doc comment for why precise instant-snap is the wrong fit for free-roam over a big
         /// Open World chunk specifically.
         /// </summary>
+        /// <remarks>
+        /// Bug fix, on request ("the view map button keeps causing problems... this time in debug
+        /// mode, it shifted into a dark area out of bounds"): `GetHexAtScreenPos` happily
+        /// extrapolates a hex col/row for a cursor position that implies a tile far past the
+        /// actual map's edge - there was never anything here stopping that from snapping the
+        /// camera straight into the void, same bug `PanCameraTowardCursorSlowly` had, just
+        /// unnoticed longer since Move/targeting's candidates are normally bounded to begin with.
+        /// Now runs through the same ClampCameraToMapBounds every cursor-follow path uses.
+        /// </remarks>
         private void SnapCameraToCursor(MouseState mouseState)
         {
             var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
             var cursorHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
-            _renderer.CameraPosition = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
+            Vector2 target = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
+            _renderer.CameraPosition = ClampCameraToMapBounds(target, viewportSize);
         }
 
         /// <summary>
@@ -3960,9 +4056,12 @@ namespace SagesOfOzvaram
         /// implies a position many tiles away, arriving instantly with no sense of travel. This
         /// EASES toward that same implied position instead, capped at ViewMapCameraPanSpeed world
         /// units/second, "in-game" only (an in-engine speed cap, never touching the OS's own mouse
-        /// sensitivity). ClampCameraToOpenWorldChunk is applied on top regardless of the eased
-        /// speed, so even holding the cursor pinned at the extreme screen edge indefinitely can
-        /// never actually walk the camera's position past the chunk's own true bounds - the eased
+        /// sensitivity). ClampCameraToMapBounds is applied on top regardless of the eased speed -
+        /// originally gated to Open World only, but the exact same "shifted into a dark area out
+        /// of bounds" report recurred in Debug/Test Mode, where this clamp was simply never being
+        /// called at all - so it now applies unconditionally, for whichever map is actually
+        /// loaded, so even holding the cursor pinned at the extreme screen edge indefinitely can
+        /// never actually walk the camera's position past that map's own true bounds - the eased
         /// speed is a feel improvement, the clamp is the hard guarantee.
         /// </summary>
         private void PanCameraTowardCursorSlowly(MouseState mouseState, float deltaTime)
@@ -3979,8 +4078,7 @@ namespace SagesOfOzvaram
                 _renderer.CameraPosition += toTarget / distance * moveDistance;
             }
 
-            if (_openWorldModeActive)
-                _renderer.CameraPosition = ClampCameraToOpenWorldChunk(_renderer.CameraPosition, viewportSize);
+            _renderer.CameraPosition = ClampCameraToMapBounds(_renderer.CameraPosition, viewportSize);
         }
 
         /// <summary>
@@ -5829,6 +5927,12 @@ namespace SagesOfOzvaram
             _activeDamageNumbers.Add(new ActiveDamageNumber { Target = target, Amount = amount, Duration = 1f });
         }
 
+        /// <summary>Wired once to BaseUnit.AggroChanged in LoadContent - `unit` is whichever unit's own aggro value just changed (the one the floating icon appears over) and `delta` is the real signed change actually applied, post-clamp. `toward` (whose aggro changed, from this unit's perspective) isn't needed for the indicator itself.</summary>
+        private void SpawnAggroIndicator(BaseUnit unit, BaseUnit toward, int delta)
+        {
+            _activeAggroIndicators.Add(new ActiveAggroIndicator { Target = unit, Delta = delta, Duration = 1f });
+        }
+
         private void SpawnAttackAnimations(BaseUnit attacker, Move move, List<AttackOutcome> outcomes)
         {
             Vector2 from = attacker.Position;
@@ -6117,15 +6221,16 @@ namespace SagesOfOzvaram
                 if (keyboardState.IsKeyDown(Keys.D))
                     _renderer.PanCamera(Vector2.UnitX * panSpeed * deltaTime);   // D = right (positive X)
 
-                // Bug fix, on request ("still moving FAR BEYOND the map's bounds"): WASD panning
-                // had no bounds check at all - clamp right back to the current chunk after
-                // applying it, same ClampCameraToOpenWorldChunk the cursor-follow fix uses, so
+                // Bug fix, on request ("still moving FAR BEYOND the map's bounds"), generalized
+                // (on request again - "the view map button keeps causing problems... in debug
+                // mode, it shifted into a dark area out of bounds"): WASD panning had no bounds
+                // check at all - clamp right back to the current MAP (whichever one is actually
+                // loaded, not just an Open World chunk - this was wrongly gated to Open World only
+                // before, which is exactly why Debug/Test Mode's own tiny map had no protection)
+                // after applying it, same ClampCameraToMapBounds the cursor-follow fix uses, so
                 // holding W/A/S/D against an edge can't walk the camera out of bounds either.
-                if (_openWorldModeActive)
-                {
-                    var panViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                    _renderer.CameraPosition = ClampCameraToOpenWorldChunk(_renderer.CameraPosition, panViewport);
-                }
+                var panViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                _renderer.CameraPosition = ClampCameraToMapBounds(_renderer.CameraPosition, panViewport);
             }
 
             // Zoom (mouse wheel) - _cameraZoomTarget has to move WITH ZoomLevel here, not just
@@ -6167,15 +6272,15 @@ namespace SagesOfOzvaram
                 {
                     _renderer.Zoom(-0.1f, zoomOrigin);
 
-                    // Open World, on request: never let zoom-out go far enough to reveal the
-                    // void past the current chunk's edge - see GetOpenWorldMinZoomToFillScreen.
-                    if (_openWorldModeActive)
-                    {
-                        Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                        float minZoom = GetOpenWorldMinZoomToFillScreen(viewportSize);
-                        if (_renderer.ZoomLevel < minZoom)
-                            _renderer.ZoomLevel = minZoom;
-                    }
+                    // Originally Open World only, on request; generalized the same way the two
+                    // position clamps above were, after the identical "dark area out of bounds"
+                    // report recurred in Debug Mode - never let zoom-out go far enough to reveal
+                    // the void past the CURRENT map's edge, whichever map that is - see
+                    // GetMinZoomToFillScreen.
+                    Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                    float minZoom = GetMinZoomToFillScreen(viewportSize);
+                    if (_renderer.ZoomLevel < minZoom)
+                        _renderer.ZoomLevel = minZoom;
 
                     _cameraZoomTarget = _renderer.ZoomLevel;
                 }
@@ -6748,6 +6853,32 @@ namespace SagesOfOzvaram
                 }
             }
 
+            // Floating aggro indicators (see BaseUnit.AggroChanged/SpawnAggroIndicator) - an
+            // angry-face icon plus a signed delta, rising and fading above whichever unit's
+            // aggro just changed. Offset to the side (not straight up, like the damage number
+            // above) so the two don't collide when a single hit both damages and generates aggro
+            // in the same instant.
+            if (_font != null && _angryFaceTexture != null)
+            {
+                foreach (var aggro in _activeAggroIndicators)
+                {
+                    float t = MathHelper.Clamp(aggro.Elapsed / aggro.Duration, 0f, 1f);
+                    Vector2 pos = aggro.Target.Position + new Vector2(30f, -40f - 24f * t);
+                    float alphaF = 1f - t;
+                    int alpha = (int)(255 * alphaF);
+
+                    const float iconSize = 18f;
+                    var iconRect = new Rectangle((int)pos.X, (int)(pos.Y - iconSize / 2f), (int)iconSize, (int)iconSize);
+                    _spriteBatch.Draw(_angryFaceTexture, iconRect, Color.White * alphaF);
+
+                    string text = aggro.Delta > 0 ? $"+{aggro.Delta}" : aggro.Delta.ToString();
+                    Color textColor = aggro.Delta > 0 ? new Color(255, 90, 40, alpha) : new Color(110, 220, 130, alpha);
+                    Vector2 textPos = pos + new Vector2(iconSize + 2f, iconSize / 2f);
+                    _spriteBatch.DrawString(_font, text, textPos - new Vector2(0f, (_font.MeasureString(text).Y * 0.4f) / 2f),
+                        textColor, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+                }
+            }
+
             _spriteBatch.End();
 
             // Draw UI (screen space, no camera transform)
@@ -7277,14 +7408,71 @@ namespace SagesOfOzvaram
             var sourceLines = GetBuffDebuffSourceLines(unit);
             lines.AddRange(sourceLines.Count > 0 ? sourceLines : new List<string> { "None" });
 
-            string text = string.Join("\n", lines);
+            // Bug fix, reported directly with a screenshot on a narrower laptop display: an
+            // Ability's own description (e.g. Summon Portal's full sentence) is far wider than
+            // any stat line this box was originally sized for, so the box's width - driven by
+            // its single WIDEST line (MeasureString on a multi-line string measures the widest
+            // row) - could exceed the viewport entirely, centering it with a negative X and
+            // clipping text off BOTH edges at once with nothing readable in the middle. Word-wrap
+            // any line wider than the box's own max width instead of letting the box itself grow
+            // past the screen.
+            float maxTextWidth = Math.Max(220f, viewportSize.X - 120f);
+            var wrapped = WrapLines(lines, maxTextWidth);
+
+            string text = string.Join("\n", wrapped);
             Vector2 textSize = _font.MeasureString(text);
-            Vector2 textPos = new Vector2((viewportSize.X - textSize.X) / 2f, 100f);
+
+            float textPosX = (viewportSize.X - textSize.X) / 2f;
+            textPosX = MathHelper.Clamp(textPosX, 14f, Math.Max(14f, viewportSize.X - textSize.X - 14f));
+
+            float textPosY = 100f;
+            textPosY = MathHelper.Clamp(textPosY, 14f, Math.Max(14f, viewportSize.Y - textSize.Y - 14f));
+
+            Vector2 textPos = new Vector2(textPosX, textPosY);
 
             var boxRect = new Rectangle((int)(textPos.X - 14), (int)(textPos.Y - 10),
                                         (int)(textSize.X + 28), (int)(textSize.Y + 20));
             _spriteBatch.Draw(_whitePixel, boxRect, new Color(15, 15, 20, 230));
             _spriteBatch.DrawString(_font, text, textPos, Color.White);
+        }
+
+        /// <summary>
+        /// Word-wraps any line in `lines` whose rendered width (via _font.MeasureString) exceeds
+        /// `maxWidth` into multiple lines, breaking on spaces - see DrawUnitDetailBox, the one
+        /// caller, for why. A line already within maxWidth passes through unchanged. A single
+        /// WORD wider than maxWidth on its own (shouldn't come up with real content, but cheap to
+        /// guard) is left as its own line rather than breaking mid-word.
+        /// </summary>
+        private List<string> WrapLines(List<string> lines, float maxWidth)
+        {
+            var result = new List<string>();
+            foreach (var line in lines)
+            {
+                if (_font.MeasureString(line).X <= maxWidth)
+                {
+                    result.Add(line);
+                    continue;
+                }
+
+                var words = line.Split(' ');
+                string current = "";
+                foreach (var word in words)
+                {
+                    string candidate = current.Length == 0 ? word : current + " " + word;
+                    if (_font.MeasureString(candidate).X > maxWidth && current.Length > 0)
+                    {
+                        result.Add(current);
+                        current = word;
+                    }
+                    else
+                    {
+                        current = candidate;
+                    }
+                }
+                if (current.Length > 0)
+                    result.Add(current);
+            }
+            return result;
         }
 
         /// <summary>
@@ -7317,6 +7505,13 @@ namespace SagesOfOzvaram
             lines.Add($"HP: {unit.HP}/{unit.EffectiveMaxHP}    MP: {unit.CurrentMP}/{unit.MaxMP}    AP: {unit.CurrentAP}/{unit.MaxAP}");
             lines.Add($"STR: {unit.EffectiveStrength}    INT: {unit.EffectiveIntelligence}    DEF: {unit.TotalDefense}    RES: {unit.TotalResistance}");
             lines.Add($"ACC: {unit.EffectiveAccuracy}    EVA: {unit.EffectiveEvasion}    SPD: {unit.EffectiveSpeed}");
+
+            // Aggro System, on request: how much this unit wants to attack whoever's currently
+            // under player control (_playerUnit - the "caster" doing the inspecting) right now.
+            // Omitted when inspecting yourself, since a unit's aggro toward itself is never set
+            // by anything (AddAggro is only ever called with some OTHER unit as `toward`).
+            if (unit != _playerUnit)
+                lines.Add($"Aggression toward you: {unit.GetAggro(_playerUnit)}/20");
 
             return lines;
         }
