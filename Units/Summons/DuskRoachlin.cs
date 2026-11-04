@@ -11,7 +11,7 @@ namespace SagesOfOzvaram.Units.Summons
             : base("Dusk Roachlin", maxHP: 12, speed: 9, race: Race.Roachlin, heroClass: HeroClass.None, rank: UnitRank.Normal, position)
         {
             Factions.Add(Faction.Wild);
-            SpriteAssetPath = "imgs/sprites/units/Roachlin_Sprite_1";
+            SpriteAssetPath = "imgs/sprites/units/Roachlings/Dusk Roachlin/Roachlin_Sprite_1";
 
             // The source image (662x657) is actually close to the Warrior's (736x769) but with
             // no per-unit Scale set it defaulted to 1.0 - the SAME multiplier as the Sorcerer's
