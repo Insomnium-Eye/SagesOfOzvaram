@@ -13,7 +13,7 @@ namespace SagesOfOzvaram.Units.Summons
             Factions.Add(Faction.Wild);
             Diet = Diet.Herbivore;
             ViewRange = 3;
-            SpriteAssetPath = "imgs/sprites/units/Pawn_Sprite_1"; // placeholder - no unique art yet
+            SpriteAssetPath = "imgs/sprites/units/Beasts/AetherfluffBeetle/AetherfluffBeetle_Sprite_1";
             Strength = 0;      // "Attack" on the card
             Intelligence = 2;
             Defense = 4;
