@@ -70,6 +70,8 @@ namespace SagesOfOzvaram.Combat
                 targets = GetConeTargets(attacker, move, sourceWeapon, aimDirection.Value, grid, unitsSnapshot);
             else if (move.HitsAllAdjacent)
                 targets = GetAdjacentTargets(attacker, grid, unitsSnapshot);
+            else if (move.IsMultiShot)
+                targets = GetMultiShotTargets(attacker, primaryTarget, move, grid, unitsSnapshot);
             else
                 targets = primaryTarget != null ? new List<BaseUnit> { primaryTarget } : new List<BaseUnit>();
 
@@ -89,6 +91,48 @@ namespace SagesOfOzvaram.Combat
             var attackerHex = grid.WorldToHex(attacker.Position);
             var adjacentHexes = grid.GetNeighbors(attackerHex.col, attackerHex.row).ToHashSet();
             return allUnits.Where(u => u != attacker && u.IsAlive && adjacentHexes.Contains(grid.WorldToHex(u.Position))).ToList();
+        }
+
+        /// <summary>
+        /// Multi-Shot's own target list (on request): 3 total shots, spread across the primary
+        /// target plus up to 2 more enemies (a different team than the attacker, via the same
+        /// Owner-rooted team check Game1.GetTeamRoot uses) within the move's own Range of the
+        /// attacker - closest to the PRIMARY target first (not just closest to the attacker), so
+        /// the extra arrows favor whatever's actually clustered around where the shot is aimed,
+        /// not some other enemy that merely happens to also be in range. How many distinct
+        /// targets end up in range decides the split: 1 found = all 3 shots on it; 2 found = 2
+        /// shots on the primary, 1 on the other; 3 (or more - only the 2 closest extras are ever
+        /// used) = one shot each. The returned list has one entry PER SHOT (the primary may
+        /// appear more than once) - Resolve's own foreach already resolves one outcome per list
+        /// entry, so repeating a target here is what makes it take multiple independent hit/
+        /// damage rolls rather than needing any special-casing in Resolve itself.
+        /// </summary>
+        private static List<BaseUnit> GetMultiShotTargets(BaseUnit attacker, BaseUnit primaryTarget, Move move, HexGrid grid, IList<BaseUnit> allUnits)
+        {
+            if (primaryTarget == null)
+                return new List<BaseUnit>();
+
+            var attackerHex = grid.WorldToHex(attacker.Position);
+            var primaryHex = grid.WorldToHex(primaryTarget.Position);
+            int range = move.GetEffectiveRange(attacker, null);
+            BaseUnit attackerTeam = attacker.Owner ?? attacker;
+
+            var extras = allUnits.Where(u => u != attacker && u != primaryTarget && u.IsAlive
+                    && (u.Owner ?? u) != attackerTeam
+                    && grid.GetDistance(attackerHex.col, attackerHex.row, grid.WorldToHex(u.Position).col, grid.WorldToHex(u.Position).row) <= range)
+                .OrderBy(u => grid.GetDistance(primaryHex.col, primaryHex.row, grid.WorldToHex(u.Position).col, grid.WorldToHex(u.Position).row))
+                .Take(2)
+                .ToList();
+
+            var distinctTargets = new List<BaseUnit> { primaryTarget };
+            distinctTargets.AddRange(extras);
+
+            return distinctTargets.Count switch
+            {
+                1 => new List<BaseUnit> { distinctTargets[0], distinctTargets[0], distinctTargets[0] },
+                2 => new List<BaseUnit> { distinctTargets[0], distinctTargets[0], distinctTargets[1] },
+                _ => new List<BaseUnit> { distinctTargets[0], distinctTargets[1], distinctTargets[2] },
+            };
         }
 
         private static List<BaseUnit> GetConeTargets(BaseUnit attacker, Move move, Weapon sourceWeapon, HexDirection direction, HexGrid grid, IList<BaseUnit> allUnits)

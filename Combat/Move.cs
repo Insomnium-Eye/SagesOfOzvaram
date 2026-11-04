@@ -88,6 +88,8 @@ namespace SagesOfOzvaram.Combat
         public bool IsTameBeast { get; }             // true = attempts to tame a nearby Wild/Neutral/unowned beast at or below the caster's Level within Range (BaseAccuracy = success chance) - handled by Game1's tame-beast targeting mode, not AttackResolver or SpellCaster
         public bool IsPlaceTrap { get; }             // true = places a persistent Objects.Trap on an empty tile within Range instead of attacking immediately, visible only to the caster's own team - this Move's own BaseDamage/InflictsStatusEffect etc. are unused for it (the Trap object carries its own hardcoded trigger-time effect instead, since there's no caster present when it actually goes off - see Game1.CreateBearatTrap); only APCost/MPCost/Range matter here - handled by Game1's trap-placement targeting mode and _placedTraps tracking, not AttackResolver or SpellCaster
         public bool IsLeap { get; }                  // true = pounces to either an empty tile within Range OR directly onto a living unit within Range (e.g. the Dusk Roachlin's Leap) - deals no damage of its own; landing on a unit whose EffectiveStrength is lower than the caster's applies Knocked Down to them and "Pinning" to the caster (see Game1.ExecuteLeapOntoUnit). Handled by Game1's own dedicated tile-or-unit targeting mode (opened from ConfirmAttackMenuSelection, not the generic attack-target list), not AttackResolver - also excluded from GetUsableAttacks' AI candidate list for the same reason every other specially-flagged move is (AttackResolver doesn't know what to do with it)
+        public bool IsMultiShot { get; }             // true = resolves as 3 total shots spread across the primary target plus up to 2 more nearby enemies (within Range of the attacker, closest to the primary target first) instead of one hit on one target - see AttackResolver.GetMultiShotTargets for the exact 1/2/3-target distribution (3-on-primary / 2-and-1 / one-each)
+        public WeaponType[] RequiredWeaponTypes { get; } // non-null/non-empty = this move can't be cast unless a weapon of one of these Types is equipped (e.g. Multi-Shot: Bow or Crossbow) - Game1.CastSpellAsAttack auto-equips a matching one from Inventory if the equipped weapon doesn't already qualify, charging the usual +1 AP draw cost, same as switching weapons for a normal attack. The ACTUAL attack still resolves with sourceWeapon null (the move's own BaseDamage/StrengthDivisor, not whatever AttackPower the required weapon itself carries - several weapons, including Bow/Crossbow, don't have one migrated yet) - this only gates/auto-equips the weapon TYPE, nothing about damage scaling
         public bool IsReshuffle { get; }             // true = shuffles every card in the caster's class discard pile back into their deck, each one cloned with its MP cost +1 (see Move.WithMPCostIncrease) - auto-granted to a hand once that class's deck AND hand are both empty (Game1.EnsureReshuffleCardIfNeeded), never drawn normally (not part of SpellCatalog.AllCards) - handled by Game1.CastReshuffle, not AttackResolver or SpellCaster
         public bool IsSummonPortal { get; }          // true = conjures a Generic Portal on an empty tile within Range instead of attacking - an Ability (see Combat.AbilityCatalog), not a SpellCard/racial move, granted innately by Rank/Race/unit identity rather than drawn/equipped. Same cost/range/mechanics as Phase 1 of Game1.CastSummon, just standalone - handled by Game1.CastSummonPortal, not AttackResolver or SpellCaster
 
@@ -122,6 +124,7 @@ namespace SagesOfOzvaram.Combat
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
                     bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false,
+                    bool isMultiShot = false, WeaponType[] requiredWeaponTypes = null,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -173,6 +176,8 @@ namespace SagesOfOzvaram.Combat
             IsLeap = isLeap;
             IsReshuffle = isReshuffle;
             IsSummonPortal = isSummonPortal;
+            IsMultiShot = isMultiShot;
+            RequiredWeaponTypes = requiredWeaponTypes;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;
@@ -208,6 +213,7 @@ namespace SagesOfOzvaram.Combat
                 RequiredAmmoType, AnimationType,
                 IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
                 IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal,
+                IsMultiShot, RequiredWeaponTypes,
                 StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
         }
 

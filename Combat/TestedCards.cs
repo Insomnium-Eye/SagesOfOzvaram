@@ -27,6 +27,7 @@ namespace SagesOfOzvaram.Combat
             "Steady Hands",
             "Bandage Wound",
             "Place Trap",
+            "Eagle Eye",
         };
     }
 }
