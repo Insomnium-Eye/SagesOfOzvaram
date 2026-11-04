@@ -29,6 +29,19 @@ namespace SagesOfOzvaram.Maps
         public bool Passable { get; set; } = true;
         public bool Roofed { get; set; } = false;
         public Dictionary<string, float> StatModifiers { get; set; } = new();
+
+        /// <summary>True once this tile's grass object (see HasGrassObject) has been eaten by an Aetherfluff Beetle's Consume - see Combat.RaceAttacks' AetherfluffBeetle entry/Game1.ExecuteConsume. Meaningless for a non-grass tile.</summary>
+        public bool GrassConsumed { get; set; } = false;
+
+        /// <summary>
+        /// Every "grass" tile always has a decorative grass object on it, on request - drawn as
+        /// a small grass-tuft sprite by Game1.Draw - until it's Consumed. Derived directly off
+        /// Type/GrassConsumed rather than a separately-seeded flag, so this is automatically true
+        /// for every grass tile from every source (Arena's procedural map, Test Mode's blank 3x3
+        /// default, an Open World chunk, a dev-console tile edit, ...) with no map-generation-time
+        /// code needed anywhere to seed it.
+        /// </summary>
+        public bool HasGrassObject => Type == "grass" && !GrassConsumed;
  
         // Objects on this tile (stacked)
         public List<MapObject> Objects { get; set; } = new();
@@ -50,6 +63,7 @@ namespace SagesOfOzvaram.Maps
                 Type = Type,
                 Passable = Passable,
                 Roofed = Roofed,
+                GrassConsumed = GrassConsumed,
                 StatModifiers = new Dictionary<string, float>(StatModifiers),
                 Objects = new List<MapObject>(Objects)
             };

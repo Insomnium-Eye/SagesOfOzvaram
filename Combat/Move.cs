@@ -92,6 +92,7 @@ namespace SagesOfOzvaram.Combat
         public WeaponType[] RequiredWeaponTypes { get; } // non-null/non-empty = this move can't be cast unless a weapon of one of these Types is equipped (e.g. Multi-Shot: Bow or Crossbow) - Game1.CastSpellAsAttack auto-equips a matching one from Inventory if the equipped weapon doesn't already qualify, charging the usual +1 AP draw cost, same as switching weapons for a normal attack. The ACTUAL attack still resolves with sourceWeapon null (the move's own BaseDamage/StrengthDivisor, not whatever AttackPower the required weapon itself carries - several weapons, including Bow/Crossbow, don't have one migrated yet) - this only gates/auto-equips the weapon TYPE, nothing about damage scaling
         public bool IsReshuffle { get; }             // true = shuffles every card in the caster's class discard pile back into their deck, each one cloned with its MP cost +1 (see Move.WithMPCostIncrease) - auto-granted to a hand once that class's deck AND hand are both empty (Game1.EnsureReshuffleCardIfNeeded), never drawn normally (not part of SpellCatalog.AllCards) - handled by Game1.CastReshuffle, not AttackResolver or SpellCaster
         public bool IsSummonPortal { get; }          // true = conjures a Generic Portal on an empty tile within Range instead of attacking - an Ability (see Combat.AbilityCatalog), not a SpellCard/racial move, granted innately by Rank/Race/unit identity rather than drawn/equipped. Same cost/range/mechanics as Phase 1 of Game1.CastSummon, just standalone - handled by Game1.CastSummonPortal, not AttackResolver or SpellCaster
+        public bool IsConsume { get; }               // true = eats the caster's own tile's grass object (Maps.Tile.HasGrassObject - on request, every grass tile always has one) instead of attacking, leaving a Mana Powder item behind to pick up (e.g. the Aetherfluff Beetle's Consume) - no targeting needed (always the caster's own tile), handled by Game1.ExecuteConsume, not AttackResolver - also excluded from GetUsableAttacks' AI candidate list, same reason IsLeap already is
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -123,7 +124,7 @@ namespace SagesOfOzvaram.Combat
                     List<(int MinDistance, int MaxDistance, float Accuracy)> accuracyBands = null,
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
-                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false,
+                    bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false, bool isConsume = false,
                     bool isMultiShot = false, WeaponType[] requiredWeaponTypes = null,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
@@ -176,6 +177,7 @@ namespace SagesOfOzvaram.Combat
             IsLeap = isLeap;
             IsReshuffle = isReshuffle;
             IsSummonPortal = isSummonPortal;
+            IsConsume = isConsume;
             IsMultiShot = isMultiShot;
             RequiredWeaponTypes = requiredWeaponTypes;
             StrengthBuff = strengthBuff;
@@ -212,7 +214,7 @@ namespace SagesOfOzvaram.Combat
                 AccuracyBands,
                 RequiredAmmoType, AnimationType,
                 IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
-                IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal,
+                IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal, IsConsume,
                 IsMultiShot, RequiredWeaponTypes,
                 StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
         }

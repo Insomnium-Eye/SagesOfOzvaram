@@ -117,7 +117,130 @@ namespace SagesOfOzvaram
         private bool _openWorldModeActive = false;
 
         /// <summary>Tile width/height of a single Open World chunk - the unit both of map generation and of streaming (crossing into a chunk's outer quarter in any direction loads/restores its neighbor - see CheckOpenWorldChunkTransition). The user's own example number.</summary>
-        private const int OpenWorldChunkSize = 20;
+        /// <summary>
+        /// Bug fix, on request ("I still see the void when zoomed out all the way, on the left
+        /// and right side. Add an additional 10 tiles to the left and right"): a SQUARE 20x20
+        /// chunk is narrower than a typical widescreen viewport at the zoom level that still
+        /// covers its full height, so width was the binding constraint and the zoom-clamp alone
+        /// (GetOpenWorldMinZoomToFillScreen) wasn't enough margin in practice. Chunks are now
+        /// 40 tiles wide (10 extra tiles added to each of the west/east directions) - comfortably
+        /// wider than tall, matching a wide viewport's own aspect ratio far better than a square
+        /// chunk could, on top of (not instead of) the existing zoom clamp. Every
+        /// chunk-coordinate-math site below reads its own axis's size, since width and height
+        /// are no longer equal.
+        /// </summary>
+        private const int OpenWorldChunkWidth = 40;
+
+        /// <summary>
+        /// Bug fix, on request ("There's still some darkness at the bottom. Please add five
+        /// tiles on the BOTTOM"): even after the zoom-clamp math itself was corrected (see
+        /// GetOpenWorldMinZoomToFillScreen's own doc comment), the clamp's "safe" assumption is
+        /// that the camera sits exactly at the chunk's own geometric center - but the player
+        /// actually spawns wherever FindValidSpawnPosition's nearby-tile search happens to land
+        /// (up to a few tiles off from the true center, e.g. if the exact center tile is water/
+        /// mountain), so a small sliver of void could still show past whichever edge the spawn
+        /// landed closest to. Grown from 20 to 25 tall (5 extra rows added south) rather than
+        /// trying to chase an exact spawn-offset-aware margin formula - simpler, and gives real
+        /// slack against that same kind of residual edge case recurring on any side.
+        /// </summary>
+        private const int OpenWorldChunkHeight = 25;
+
+        /// <summary>Fog of War vision radius (tiles) for the Open World hero, on request - wider than Arena's default BaseUnit.ViewRange (5), since there's far more map to see and nothing hostile to hide from yet. Set directly on the chosen hero in ConfirmCharacterSelection's Open World branch.</summary>
+        private const int OpenWorldViewRange = 10;
+
+        /// <summary>
+        /// Bug fix, on request: "I scrolled out all the way and I'm seeing the void around the
+        /// generated map" - a single chunk is a FIXED world-space size, but the camera's normal
+        /// zoom-out range (HexGridRenderer.MIN_ZOOM = 0.5) lets the viewport show more area than
+        /// that at most window sizes, revealing empty space past the loaded chunk's edge (nothing
+        /// is drawn there - the tile loop only covers 0..Width-1/0..Height-1). Rather than build
+        /// full simultaneous multi-chunk rendering (a much bigger feature than asked for), this
+        /// computes the LOWEST zoom level (most zoomed out) that still keeps the whole current
+        /// chunk covering the given viewport in both dimensions, so Open World's own zoom-out can
+        /// be clamped to it. Computed fresh from the viewport size passed in (not cached), so it
+        /// stays correct across a window resize.
+        /// </summary>
+        /// <remarks>
+        /// Bug fix (the first version of this method still left void on request, twice - once on
+        /// the left/right, then again on top/bottom after chunks were widened): the chunk's
+        /// world-space footprint was being OVERESTIMATED (extra margin ADDED on top of an already
+        /// generous closed-form bound), which made the computed minimum zoom too PERMISSIVE -
+        /// backwards for a "how far can zoom safely go OUT" clamp, where erring toward
+        /// underestimating the available space is the actually-safe direction. This version reads
+        /// the chunk's true world-space bounds off GetOpenWorldChunkWorldBounds (shared with
+        /// ClampCameraToOpenWorldChunk, so the two can never quietly drift apart) and then
+        /// SUBTRACTS one TileSize as a small safety buffer, rather than adding one.
+        /// </remarks>
+        private float GetOpenWorldMinZoomToFillScreen(Vector2 viewportSize)
+        {
+            var (minX, maxX, minY, maxY) = GetOpenWorldChunkWorldBounds();
+
+            // Safety buffer SUBTRACTED (not added) - the right direction for a minimum-zoom
+            // (maximum zoom-OUT) clamp: underestimating the available space makes the clamp
+            // trigger slightly EARLIER than the exact mathematical limit, which is safe; an
+            // overestimate (this method's original, buggy version) makes it too permissive,
+            // which is exactly what let void back in twice.
+            float safetyBuffer = _hexGrid.TileSize;
+            float safeWidth = (maxX - minX) - safetyBuffer;
+            float safeHeight = (maxY - minY) - safetyBuffer;
+
+            float minZoomX = viewportSize.X / safeWidth;
+            float minZoomY = viewportSize.Y / safeHeight;
+            return Math.Max(minZoomX, minZoomY);
+        }
+
+        /// <summary>
+        /// The current Open World chunk's TRUE world-space bounding box - every hex's own center
+        /// (HexGrid.HexToWorld, worst case including the odd-row 0.5-hex-width stagger) plus each
+        /// edge hex's own visual extent (half a hex) past its center point. Closed-form (not a
+        /// per-tile scan), so it's cheap enough to call every frame. Shared by
+        /// GetOpenWorldMinZoomToFillScreen (how far OUT zoom can safely go) and
+        /// ClampCameraToOpenWorldChunk (where the camera's POSITION can safely sit) - the two
+        /// together are what finally guarantee "never beyond the map's bounds" regardless of
+        /// exactly where the camera happens to be centered, rather than each one separately
+        /// assuming the other already handled it.
+        /// </summary>
+        private (float minX, float maxX, float minY, float maxY) GetOpenWorldChunkWorldBounds()
+        {
+            float tileSize = _hexGrid.TileSize;
+            float hexWidth = (float)Math.Sqrt(3f) * tileSize;    // flat-to-flat width
+            float hexHeight = 2f * tileSize;                      // point-to-point height
+            float hexVerticalOffset = tileSize * 1.5f;            // row-to-row vertical spacing
+
+            float maxCenterX = (_hexGrid.Width - 1 + 0.5f) * hexWidth; // +0.5: the farthest row IS an odd one, so the stagger always applies
+            float maxCenterY = (_hexGrid.Height - 1) * hexVerticalOffset;
+
+            return (minX: -hexWidth / 2f, maxX: maxCenterX + hexWidth / 2f,
+                    minY: -hexHeight / 2f, maxY: maxCenterY + hexHeight / 2f);
+        }
+
+        /// <summary>
+        /// Bug fix, on request ("still moving FAR BEYOND the map's bounds"): clamps `desiredPosition`
+        /// so the viewport (at the CURRENT zoom level) never extends past the current chunk's true
+        /// world-space bounds (GetOpenWorldChunkWorldBounds) on any side - the hard guarantee the
+        /// zoom-out clamp alone couldn't provide, since that one only protects against zooming out
+        /// too far while assuming the camera is centered; this protects the CENTERING itself,
+        /// regardless of how the camera got to wherever it's about to go (cursor-follow, WASD pan,
+        /// ...). If the viewport is wider/taller than the chunk itself at this zoom (shouldn't
+        /// happen once GetOpenWorldMinZoomToFillScreen's own clamp is respected, but this is the
+        /// safety net for if it somehow isn't), that axis locks to the chunk's own true center
+        /// instead of an inverted/invalid clamp range.
+        /// </summary>
+        private Vector2 ClampCameraToOpenWorldChunk(Vector2 desiredPosition, Vector2 viewportSize)
+        {
+            var (minX, maxX, minY, maxY) = GetOpenWorldChunkWorldBounds();
+            float halfVisibleW = viewportSize.X / (2f * _renderer.ZoomLevel);
+            float halfVisibleH = viewportSize.Y / (2f * _renderer.ZoomLevel);
+
+            float clampedX = (maxX - minX <= halfVisibleW * 2f)
+                ? (minX + maxX) / 2f
+                : MathHelper.Clamp(desiredPosition.X, minX + halfVisibleW, maxX - halfVisibleW);
+            float clampedY = (maxY - minY <= halfVisibleH * 2f)
+                ? (minY + maxY) / 2f
+                : MathHelper.Clamp(desiredPosition.Y, minY + halfVisibleH, maxY - halfVisibleH);
+
+            return new Vector2(clampedX, clampedY);
+        }
 
         /// <summary>Which chunk (in chunk-coordinates, NOT tile coordinates) is currently loaded as `_map` - (0,0) is the one the player spawns into.</summary>
         private (int cx, int cy) _openWorldCurrentChunk = (0, 0);
@@ -139,6 +262,31 @@ namespace SagesOfOzvaram
         /// each chunk being an independent, seam-bordered noise sample.
         /// </summary>
         private MapGenerator _openWorldGenerator;
+
+        /// <summary>
+        /// Bug fix, on request ("still moving FAR BEYOND the map's bounds... LOCK the camera for
+        /// a few frames"): how many frames View Map's own cursor-follow stays frozen right after
+        /// opening - set when "View Map" is confirmed, counted down once per frame in Update's
+        /// _viewingMap branch. Covers the one-frame MouseState delta `Mouse.SetPosition` itself
+        /// produces (warping the OS cursor onto the player's own screen position is itself a
+        /// cursor "move" the very next frame, which would otherwise immediately start panning the
+        /// just-recentered camera away again) plus a little extra settle time. A frame count,
+        /// not a timer, matching "a few frames" literally - first-pass placeholder value.
+        /// </summary>
+        private int _viewMapCameraLockFramesRemaining = 0;
+        private const int ViewMapCameraLockFrames = 10;
+
+        /// <summary>
+        /// Bug fix, on request ("DECREASE CURSOR SPEED so it doesn't just fly around the map,
+        /// but ONLY in-game, not on the computer itself"): View Map's own cursor-follow now EASES
+        /// toward wherever the cursor's screen position maps to in world space, at this capped
+        /// rate (world units/second - roughly TileSize*12.5, about 12-13 hex-widths/second),
+        /// instead of snapping there instantly every frame (SnapCameraToCursor's own behavior,
+        /// still used as-is by targeting/Move mode, which aren't part of this request) - "in-game"
+        /// only, since this is purely how fast the CAMERA follows the cursor, not an OS mouse
+        /// setting. First-pass placeholder, pending a feel pass.
+        /// </summary>
+        private const float ViewMapCameraPanSpeed = 400f;
 
         private static readonly string[] AvatarFileNames =
         {
@@ -766,7 +914,7 @@ namespace SagesOfOzvaram
             _openWorldGenerator = new MapGenerator(Environment.TickCount);
             _openWorldCurrentChunk = (0, 0);
 
-            _hexGrid = new HexGrid(OpenWorldChunkSize, OpenWorldChunkSize, tileSize: 32f);
+            _hexGrid = new HexGrid(OpenWorldChunkWidth, OpenWorldChunkHeight, tileSize: 32f);
             _map = GenerateOpenWorldChunk(0, 0);
             _console.SetMap(_map);
 
@@ -813,17 +961,17 @@ namespace SagesOfOzvaram
         /// <summary>
         /// The chunk at (cx,cy) - restored from _openWorldChunkCache if the player has already
         /// been there (on request: "saving ... to recreate"), generated fresh and cached
-        /// otherwise. offsetX/offsetY (chunk coordinate * OpenWorldChunkSize) are what make a
-        /// freshly generated chunk's terrain line up seamlessly with whichever neighbors already
-        /// exist - see MapGenerator.GenerateMap's own doc comment.
+        /// otherwise. offsetX/offsetY (chunk coordinate * the chunk's own width/height) are what
+        /// make a freshly generated chunk's terrain line up seamlessly with whichever neighbors
+        /// already exist - see MapGenerator.GenerateMap's own doc comment.
         /// </summary>
         private Map GenerateOpenWorldChunk(int cx, int cy)
         {
             if (_openWorldChunkCache.TryGetValue((cx, cy), out var cached))
                 return cached;
 
-            var chunk = _openWorldGenerator.GenerateMap(OpenWorldChunkSize, OpenWorldChunkSize, scale: 0.08f, octaves: 4,
-                offsetX: cx * OpenWorldChunkSize, offsetY: cy * OpenWorldChunkSize);
+            var chunk = _openWorldGenerator.GenerateMap(OpenWorldChunkWidth, OpenWorldChunkHeight, scale: 0.08f, octaves: 4,
+                offsetX: cx * OpenWorldChunkWidth, offsetY: cy * OpenWorldChunkHeight);
             _openWorldChunkCache[(cx, cy)] = chunk;
             return chunk;
         }
@@ -847,12 +995,13 @@ namespace SagesOfOzvaram
         /// </summary>
         private void CheckOpenWorldChunkTransition((int col, int row) tile)
         {
-            int quarter = OpenWorldChunkSize / 4;
+            int quarterX = OpenWorldChunkWidth / 4;
+            int quarterY = OpenWorldChunkHeight / 4;
             int dx = 0, dy = 0;
-            if (tile.col < quarter) dx = -1;
-            else if (tile.col >= OpenWorldChunkSize - quarter) dx = 1;
-            if (tile.row < quarter) dy = -1;
-            else if (tile.row >= OpenWorldChunkSize - quarter) dy = 1;
+            if (tile.col < quarterX) dx = -1;
+            else if (tile.col >= OpenWorldChunkWidth - quarterX) dx = 1;
+            if (tile.row < quarterY) dy = -1;
+            else if (tile.row >= OpenWorldChunkHeight - quarterY) dy = 1;
 
             if (dx == 0 && dy == 0)
                 return;
@@ -864,8 +1013,8 @@ namespace SagesOfOzvaram
             _console.SetMap(_map);
             _openWorldCurrentChunk = target;
 
-            int newCol = dx != 0 ? OpenWorldChunkSize - 1 - tile.col : tile.col;
-            int newRow = dy != 0 ? OpenWorldChunkSize - 1 - tile.row : tile.row;
+            int newCol = dx != 0 ? OpenWorldChunkWidth - 1 - tile.col : tile.col;
+            int newRow = dy != 0 ? OpenWorldChunkHeight - 1 - tile.row : tile.row;
 
             _playerUnit.SetMovementPath(Enumerable.Empty<Vector2>()); // cancel any in-flight walk animation - this is a scene cut, not a continued walk
             _playerUnit.Position = _hexGrid.HexToWorld(newCol, newRow);
@@ -1355,7 +1504,26 @@ namespace SagesOfOzvaram
                         // "scroll-to-zoom fights the per-frame unit-lock" jitter HandleMapControls'
                         // own Zoom comment already documents).
                         if (!wasdHeld)
-                            SnapCameraToCursor(mouseState);
+                        {
+                            // View Map (on request) gets its own slower, clamped follow -
+                            // see PanCameraTowardCursorSlowly's doc comment - gated by a short
+                            // lock right after opening (ConfirmTurnMenuSelection's "ViewMap"
+                            // branch) so the Mouse.SetPosition recentering done there doesn't
+                            // immediately read back as cursor movement and pan the camera away
+                            // again. Move mode keeps the original instant SnapCameraToCursor -
+                            // not part of this request, and precision placement is the point there.
+                            if (_viewingMap)
+                            {
+                                if (_viewMapCameraLockFramesRemaining > 0)
+                                    _viewMapCameraLockFramesRemaining--;
+                                else
+                                    PanCameraTowardCursorSlowly(mouseState, deltaTime);
+                            }
+                            else
+                            {
+                                SnapCameraToCursor(mouseState);
+                            }
+                        }
                     }
                     else if (IsTargetingModeActive)
                     {
@@ -1875,8 +2043,20 @@ namespace SagesOfOzvaram
                 _units.Clear();
                 _units.Add(chosen);
 
-                int center = OpenWorldChunkSize / 2;
-                chosen.Position = FindValidSpawnPosition(center, center, new Random());
+                int centerCol = OpenWorldChunkWidth / 2;
+                // True center (OpenWorldChunkHeight/2), not anchored to the pre-growth half-height
+                // - tried anchoring off-center once (keeping this at the OLD center so the 5 new
+                // rows landed purely to the south) and it broke GetOpenWorldMinZoomToFillScreen's
+                // own safety guarantee, which only holds when the camera sits at the chunk's TRUE
+                // geometric center (verified directly: an off-center anchor measurably let void
+                // back in on the now-less-padded north edge). True centering still nets more
+                // south-side margin than before (the chunk grew 5 rows, split not-quite-evenly by
+                // where the center itself lands), it just isn't "literally all 5 rows south and
+                // zero north" - the safety guarantee holding is worth more than exact literal
+                // phrasing here.
+                int centerRow = OpenWorldChunkHeight / 2;
+                chosen.Position = FindValidSpawnPosition(centerCol, centerRow, new Random());
+                chosen.ViewRange = OpenWorldViewRange; // Fog of War, on request - 10 tiles instead of the default 5
 
                 _playerUnit = chosen;
                 _playerHero = chosen;
@@ -1893,7 +2073,9 @@ namespace SagesOfOzvaram
                 ApplyManaAuras(_turnSystem.CurrentUnit);
                 ResetCombatMessageCount(_turnSystem.CurrentUnit);
                 _renderer.CameraPosition = chosen.Position;
-                _cameraZoomTarget = 2.5f;
+                Vector2 initialViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                _cameraZoomTarget = Math.Max(2.5f, GetOpenWorldMinZoomToFillScreen(initialViewport));
+                _renderer.ZoomLevel = _cameraZoomTarget;
                 _hasAutoAdvancedThisTurn = false;
                 _hasAiActedThisTurn = false;
 
@@ -2304,6 +2486,33 @@ namespace SagesOfOzvaram
             }
             else if (optionId == "ViewMap")
             {
+                // Bug fix, on request ("pressing the 'view map' button... just shows darkness"):
+                // once _viewingMap is true, the per-frame camera logic snaps CameraPosition to
+                // wherever the CURSOR currently is (SnapCameraToCursor, whenever WASD isn't held -
+                // see Update's _viewingMap branch) every single frame, starting immediately. The
+                // mouse is still sitting wherever the "View Map" menu option itself was on screen
+                // the instant this runs - nowhere near the player's own tile - so the very first
+                // frame already jumped the camera off to whatever's under the menu, which (now
+                // that Fog of War covers Open World too) is usually well outside the player's own
+                // vision radius, reading as a screen that's just gone dark. One explicit snap to
+                // the player's own position HERE, before _viewingMap flips on, means the view
+                // always starts on the player's own (visible) surroundings - cursor-follow then
+                // takes over normally the moment the player actually moves the mouse to look
+                // elsewhere, exactly as intended.
+                //
+                // Bug fix, on request ("center the camera AND the cursor on the unit, and LOCK
+                // the camera for a few frames"): also warps the actual OS mouse cursor onto the
+                // player's own on-screen position (Mouse.SetPosition) so it visually starts right
+                // over the player's sprite instead of wherever it happened to be when "View Map"
+                // was clicked - and arms a short lock (_viewMapCameraLockFramesRemaining, see
+                // Update's _viewingMap branch) so the MouseState position delta that warp itself
+                // produces next frame doesn't immediately read as cursor movement and pan the
+                // just-recentered camera away again.
+                _renderer.CameraPosition = _playerUnit.Position;
+                var viewMapViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                Vector2 playerScreenPos = _renderer.WorldToScreen(_playerUnit.Position, viewMapViewport);
+                Mouse.SetPosition((int)playerScreenPos.X, (int)playerScreenPos.Y);
+                _viewMapCameraLockFramesRemaining = ViewMapCameraLockFrames;
                 _turnMenuActive = false;
                 _viewingMap = true;
             }
@@ -3338,6 +3547,12 @@ namespace SagesOfOzvaram
                     if (entry.Move.IsLeap)
                         return false;
 
+                    // IsConsume (the Aetherfluff Beetle's Consume) isn't an attack on a target at
+                    // all - it acts on the caster's OWN tile - so it can never be a usable attack
+                    // AGAINST `target` here, same exclusion reasoning as IsLeap just above.
+                    if (entry.Move.IsConsume)
+                        return false;
+
                     int apCost = aiUnit.GetEffectiveAPCost(entry.Move, entry.SourceWeapon);
                     if (apCost > aiUnit.CurrentAP || entry.Move.MPCost > aiUnit.CurrentMP)
                         return false;
@@ -3549,6 +3764,12 @@ namespace SagesOfOzvaram
                 return;
             }
 
+            if (move.IsConsume)
+            {
+                ExecuteConsume(move);
+                return;
+            }
+
             var validTargets = GetValidAttackTargets(move, sourceWeapon);
             if (validTargets.Count == 0)
             {
@@ -3566,6 +3787,42 @@ namespace SagesOfOzvaram
             _targetCandidates = validTargets;
             _attackMenuActive = false;
             _targetingModeActive = true;
+        }
+
+        /// <summary>
+        /// Resolve a Move.IsConsume attack (e.g. the Aetherfluff Beetle's Consume, on request) -
+        /// no targeting step, it always acts on the caster's own current tile. Refuses (no AP/MP
+        /// spent) if that tile has no grass object right now (Maps.Tile.HasGrassObject - either
+        /// it was never grass, or something already ate this tile's grass). Otherwise pays the
+        /// move's own AP/MP, marks the tile's grass Consumed (removing its drawn grass-tuft
+        /// overlay - see Draw), and drops a Mana Powder item at the caster's feet, same
+        /// Combat.DroppedItem/"Pick Up" Action path Meat already uses - no new pickup plumbing
+        /// needed, that system already works for any ConsumableItem.
+        /// </summary>
+        private void ExecuteConsume(Move move)
+        {
+            var hex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var tile = _map.GetTile(hex.col, hex.row);
+            if (tile == null || !tile.HasGrassObject)
+            {
+                ShowCombatMessage("There's no grass here to consume.");
+                return;
+            }
+
+            _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(move, null));
+            _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - move.MPCost);
+
+            tile.GrassConsumed = true;
+            _droppedItems.Add(new DroppedItem(ConsumableCatalog.ManaPowder, _playerUnit.Position));
+
+            ShowCombatMessage($"{_playerUnit.Name} consumes the grass, leaving behind a pinch of Mana Powder.");
+            string logMessage = $"{_playerUnit.Name} consumes grass at ({hex.col}, {hex.row}), dropping Mana Powder.";
+            GameLogger.Log(logMessage);
+            _console.Log(logMessage);
+
+            _attackMenuActive = false;
+            _turnMenuIndex = 0;
+            _turnMenuActive = true;
         }
 
         /// <summary>Opens the Abilities submenu (see Combat.AbilityCatalog/TurnMenuBuilder's own "Abilities" entry) - every ability the player's unit currently has, same list+"Back" shape as OpenAttackMenu.</summary>
@@ -3678,15 +3935,52 @@ namespace SagesOfOzvaram
         /// was meant to fix the original "jitter while clicking during targeting" report but
         /// still read as "drifting" once that was fixed, since the camera took a fraction of a
         /// second to actually arrive rather than simply being there already. No easing, no
-        /// bounded step - every targeting mode (IsTargetingModeActive) and View Map/Move
-        /// (whenever WASD isn't held) call this every single frame, so the camera is always
-        /// centered exactly on the cursor's hex with zero lag.
+        /// bounded step - every targeting mode (IsTargetingModeActive) and Move mode
+        /// (_movementModeActive, whenever WASD isn't held) call this every single frame, so the
+        /// camera is always centered exactly on the cursor's hex with zero lag. View Map
+        /// (_viewingMap) used to as well, but no longer does - see PanCameraTowardCursorSlowly's
+        /// own doc comment for why precise instant-snap is the wrong fit for free-roam over a big
+        /// Open World chunk specifically.
         /// </summary>
         private void SnapCameraToCursor(MouseState mouseState)
         {
             var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
             var cursorHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
             _renderer.CameraPosition = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
+        }
+
+        /// <summary>
+        /// Bug fix, on request ("still moving FAR BEYOND the map's bounds... DECREASE CURSOR
+        /// SPEED so it doesn't just fly around the map"): View Map's own cursor-follow, replacing
+        /// its previous use of SnapCameraToCursor (still used as-is by targeting/Move mode,
+        /// neither of which this request touches). SnapCameraToCursor jumps the camera to exactly
+        /// match the cursor's implied world position every single frame - fine for precision
+        /// target-picking at a fixed, small range, but disorienting for free-roaming a WIDE Open
+        /// World chunk at a zoomed-out view, where a small mouse movement near the screen edge
+        /// implies a position many tiles away, arriving instantly with no sense of travel. This
+        /// EASES toward that same implied position instead, capped at ViewMapCameraPanSpeed world
+        /// units/second, "in-game" only (an in-engine speed cap, never touching the OS's own mouse
+        /// sensitivity). ClampCameraToOpenWorldChunk is applied on top regardless of the eased
+        /// speed, so even holding the cursor pinned at the extreme screen edge indefinitely can
+        /// never actually walk the camera's position past the chunk's own true bounds - the eased
+        /// speed is a feel improvement, the clamp is the hard guarantee.
+        /// </summary>
+        private void PanCameraTowardCursorSlowly(MouseState mouseState, float deltaTime)
+        {
+            var viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+            var cursorHex = _renderer.GetHexAtScreenPos(mouseState.X, mouseState.Y, viewportSize);
+            Vector2 targetWorldPos = _hexGrid.HexToWorld(cursorHex.col, cursorHex.row);
+
+            Vector2 toTarget = targetWorldPos - _renderer.CameraPosition;
+            float distance = toTarget.Length();
+            if (distance > 0.01f)
+            {
+                float moveDistance = Math.Min(distance, ViewMapCameraPanSpeed * deltaTime);
+                _renderer.CameraPosition += toTarget / distance * moveDistance;
+            }
+
+            if (_openWorldModeActive)
+                _renderer.CameraPosition = ClampCameraToOpenWorldChunk(_renderer.CameraPosition, viewportSize);
         }
 
         /// <summary>
@@ -5822,6 +6116,16 @@ namespace SagesOfOzvaram
                     _renderer.PanCamera(-Vector2.UnitX * panSpeed * deltaTime);  // A = left (negative X)
                 if (keyboardState.IsKeyDown(Keys.D))
                     _renderer.PanCamera(Vector2.UnitX * panSpeed * deltaTime);   // D = right (positive X)
+
+                // Bug fix, on request ("still moving FAR BEYOND the map's bounds"): WASD panning
+                // had no bounds check at all - clamp right back to the current chunk after
+                // applying it, same ClampCameraToOpenWorldChunk the cursor-follow fix uses, so
+                // holding W/A/S/D against an edge can't walk the camera out of bounds either.
+                if (_openWorldModeActive)
+                {
+                    var panViewport = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                    _renderer.CameraPosition = ClampCameraToOpenWorldChunk(_renderer.CameraPosition, panViewport);
+                }
             }
 
             // Zoom (mouse wheel) - _cameraZoomTarget has to move WITH ZoomLevel here, not just
@@ -5862,6 +6166,17 @@ namespace SagesOfOzvaram
                 if (mouseState.ScrollWheelValue < _previousMouseState.ScrollWheelValue)
                 {
                     _renderer.Zoom(-0.1f, zoomOrigin);
+
+                    // Open World, on request: never let zoom-out go far enough to reveal the
+                    // void past the current chunk's edge - see GetOpenWorldMinZoomToFillScreen.
+                    if (_openWorldModeActive)
+                    {
+                        Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                        float minZoom = GetOpenWorldMinZoomToFillScreen(viewportSize);
+                        if (_renderer.ZoomLevel < minZoom)
+                            _renderer.ZoomLevel = minZoom;
+                    }
+
                     _cameraZoomTarget = _renderer.ZoomLevel;
                 }
             }
@@ -5949,7 +6264,12 @@ namespace SagesOfOzvaram
             // constraints for fast iteration (see "AP/MP effectively unlimited"), and fog would
             // actively work against testing by hiding the very units/AI behavior being tested -
             // and in the one state this far down in Draw that can still have no _playerUnit at all.
-            HashSet<(int col, int row)> fogVisibleTiles = (!_testModeActive && !_openWorldModeActive && _playerUnit != null)
+            // Open World (on request, reversing an earlier call to suppress it here) DOES use
+            // fog - a 10-tile radius around the hero (ConfirmCharacterSelection's Open World
+            // branch sets ViewRange = 10 specifically for this, wider than Arena's default 5 -
+            // there's far more map to see, and this is the exact same GetVisibleTilesForTeam
+            // every other mode already uses, just with a bigger radius for this one unit).
+            HashSet<(int col, int row)> fogVisibleTiles = (!_testModeActive && _playerUnit != null)
                 ? GetVisibleTilesForTeam(GetTeamRoot(_playerUnit))
                 : null;
 
@@ -5962,6 +6282,13 @@ namespace SagesOfOzvaram
                     Tile tile = _map.GetTile(col, row);
                     Color fillColor = GetTileColor(tile?.Type ?? "grass");
                     DrawHexFilled(worldPos, fillColor, Color.DarkGray);
+
+                    // Every grass tile always has a grass object on it, on request (Maps.Tile.
+                    // HasGrassObject - true until an Aetherfluff Beetle's Consume eats it) - a
+                    // small procedural tuft, same "no real art yet" placeholder treatment the
+                    // Portal/Trap already get, since no grass sprite asset exists.
+                    if (tile != null && tile.HasGrassObject)
+                        DrawGrassTuft(worldPos, col, row);
                 }
             }
 
@@ -7080,6 +7407,35 @@ namespace SagesOfOzvaram
 
         private static string SignedNumber(int value) => value > 0 ? $"+{value}" : value.ToString();
 
+        /// <summary>
+        /// Placeholder grass-tuft sprite for Maps.Tile.HasGrassObject (on request) - no real
+        /// grass asset exists yet, so this draws 3 short, slightly fanned "blades" per tile the
+        /// same procedural way the Portal's concentric discs/Trap's reused Pawn sprite are both
+        /// honest placeholders rather than real art. `variant` (deterministic off col/row, not
+        /// random - never changes frame to frame) picks one of 3 slightly different blade
+        /// layouts, so neighboring grass tiles don't all look perfectly identical.
+        /// </summary>
+        private void DrawGrassTuft(Vector2 center, int col, int row)
+        {
+            int variant = Math.Abs(col * 31 + row * 17) % 3;
+            float size = _hexGrid.TileSize;
+            Color bladeColor = new Color(50, 150, 60);
+
+            (float dx, float dy, float angle)[] blades = variant switch
+            {
+                0 => new[] { (-0.15f, 0.1f, -0.35f), (0f, 0.15f, 0f), (0.15f, 0.1f, 0.35f) },
+                1 => new[] { (-0.1f, 0.15f, -0.25f), (0.05f, 0.05f, 0.1f), (0.18f, 0.18f, 0.4f) },
+                _ => new[] { (-0.18f, 0.18f, -0.4f), (-0.02f, 0.1f, 0.05f), (0.12f, 0.15f, 0.3f) },
+            };
+
+            foreach (var (dx, dy, angle) in blades)
+            {
+                Vector2 basePoint = center + new Vector2(dx * size, dy * size);
+                Vector2 tip = basePoint + new Vector2((float)Math.Sin(angle) * size * 0.3f, -(float)Math.Cos(angle) * size * 0.3f);
+                DrawLineSimple(basePoint, tip, bladeColor, 2.5f);
+            }
+        }
+
         private Color GetTileColor(string tileType)
         {
             return tileType switch
@@ -7417,9 +7773,20 @@ namespace SagesOfOzvaram
             }
         }
 
+        /// <summary>
+        /// Performance fix, on request ("the game is getting LAGGY ... due to the tile count?"):
+        /// scanline-fills the triangle exactly as before (same edge-intersection math, same
+        /// pixel-perfect output), but each horizontal span is now ONE stretched `_spriteBatch.Draw`
+        /// call (a 1px-tall Rectangle scaled to the span's width) instead of one Draw call PER
+        /// PIXEL in that span - the actual lag source this was asked about. A single 32px-radius
+        /// hex tile's fill used to cost roughly 2000+ individual sprite draws (its whole pixel
+        /// area); it now costs roughly one draw per scanline ROW (tens, not thousands) - a
+        /// reduction that scales directly with however many tiles are on screen, which is exactly
+        /// why doubling Open World's chunk size (20x20 to 40x20) made the lag doubly noticeable.
+        /// Visually identical output - same pixels filled, just far fewer draw calls to do it.
+        /// </summary>
         private void DrawFilledTriangle(Vector2 p1, Vector2 p2, Vector2 p3, Color color)
         {
-            // Simple triangle fill using line drawing (inefficient but works for now)
             var minY = (int)Math.Min(p1.Y, Math.Min(p2.Y, p3.Y));
             var maxY = (int)Math.Max(p1.Y, Math.Max(p2.Y, p3.Y));
 
@@ -7439,10 +7806,9 @@ namespace SagesOfOzvaram
                     {
                         int x1 = (int)xinters[i];
                         int x2 = (int)xinters[i + 1];
-                        for (int x = x1; x <= x2; x++)
-                        {
-                            _spriteBatch.Draw(_whitePixel, new Vector2(x, y), color);
-                        }
+                        int width = x2 - x1 + 1;
+                        if (width > 0)
+                            _spriteBatch.Draw(_whitePixel, new Rectangle(x1, y, width, 1), color);
                     }
                 }
             }

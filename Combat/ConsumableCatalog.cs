@@ -28,5 +28,11 @@ namespace SagesOfOzvaram.Combat
             "Meat",
             "Fresh meat from a slain beast - heals 10 HP, restores 10 MP, and grants 3 AP the moment it's eaten.",
             healHP: 10, restoreMP: 10, grantAP: 3, weight: 1);
+
+        /// <summary>Dropped by an Aetherfluff Beetle's Consume (on request - see Combat.RaceAttacks' AetherfluffBeetle entry, which eats the grass object off its own tile), picked up via the "Pick Up" Action same as Meat - takes item-box space (Weight 1), since it's found in the field rather than freely granted.</summary>
+        public static ConsumableItem ManaPowder => new ConsumableItem(
+            "Mana Powder",
+            "A fine, faintly shimmering dust ground from consumed grass - restores 10 MP the moment it's used.",
+            restoreMP: 10, weight: 1);
     }
 }
