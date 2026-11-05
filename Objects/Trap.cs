@@ -28,7 +28,7 @@ namespace SagesOfOzvaram.Objects
         public (int col, int row) Tile;
         public BaseUnit Owner;
 
-        /// <summary>How far (in tiles) from Tile a unit still triggers this trap - 0 (every trap so far) means only the exact tile counts; a future, larger-area trap (e.g. Explosive Trap) could set this higher.</summary>
+        /// <summary>How far (in tiles) from Tile a unit still triggers this trap - 0 (every trap so far) means only the exact tile counts; a future, larger-area trap could set this higher.</summary>
         public int Range;
 
         // The trap's own trigger-time effect, independent of any caster stat - a trap resolves on
@@ -36,6 +36,9 @@ namespace SagesOfOzvaram.Objects
         // SpellCard's Move) there's nothing here to scale off Strength/Intelligence.
         public int FlatDamage;
         public DamageType DamageType;
+
+        /// <summary>How far (in tiles) from the TRIGGERING UNIT's own position, at the moment it sets this off, the blast also reaches - 0 (Bearat Trap) means only the mover itself takes damage; Explosive Trap sets this to 1 ("anyone adjacent to it") - see Game1.TriggerTrap. Deliberately separate from Range above: Range gates how close a mover has to get to trigger the trap at all, this gates how far the EXPLOSION spreads from wherever the mover actually was once it goes off - the two happen to share a value for every trap so far, but aren't the same concept.</summary>
+        public int BlastRadius;
 
         /// <summary>Every StatusEffect this trap applies to whoever triggers it, unconditionally (no chance roll, no per-effect condition) - e.g. the Bearat Trap's Weak Root + Weak Bleed (see Game1.CreateBearatTrap). Built fresh per Trap instance, not shared/cloned, since a Trap only ever triggers once (it's removed from Game1._placedTraps the moment it does) - there's no second victim to worry about reusing these same StatusEffect objects against.</summary>
         public List<StatusEffect> AppliedEffects = new List<StatusEffect>();

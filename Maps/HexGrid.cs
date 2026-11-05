@@ -201,6 +201,53 @@ namespace SagesOfOzvaram.Maps
         }
 
         /// <summary>
+        /// Bug fix, on request ("it only missed Apprentice Cleric, but it completely ignored the
+        /// Warrior" - Piercing Shot's own world-space "thick line" distance check was catching
+        /// some units near the firing line but missing others that should have been just as hit):
+        /// every ACTUAL hex from (fromCol,fromRow) through (toCol,toRow), continuing in that same
+        /// direction out to `range` hex-steps from the origin - not just the hexes between origin
+        /// and the target, but past the target too, out to the full range (e.g. Piercing Shot:
+        /// "anyone standing behind them in a line"). Standard cube-coordinate line algorithm:
+        /// linearly interpolates between the origin and a point exactly `range` hex-steps away
+        /// along the origin-to-target direction (which may not land on one of the 6 principal
+        /// axes at all - the target was picked by click/distance, not forced onto one), rounding
+        /// each interpolated step to its nearest real hex via the exact same cube-rounding
+        /// RoundToHex already uses for screen clicks - so "which hexes does the line cross" is
+        /// answered in actual hex-grid terms instead of an approximate world-space distance
+        /// threshold that could over- or under-reach depending on exactly where a unit's hex
+        /// happened to sit relative to the line. Excludes the origin itself; includes `range`
+        /// hexes total (one per step), so the target's own hex is always among them by
+        /// construction (it sits at step targetDistance of range).
+        /// </summary>
+        public List<(int col, int row)> GetHexesOnLineThroughTarget(int fromCol, int fromRow, int toCol, int toRow, int range)
+        {
+            var hexes = new List<(int col, int row)>();
+            if (range <= 0)
+                return hexes;
+
+            int targetDistance = GetDistance(fromCol, fromRow, toCol, toRow);
+            if (targetDistance == 0)
+                return hexes;
+
+            var (fq, fr) = OddRToCube(fromCol, fromRow);
+            var (tq, tr) = OddRToCube(toCol, toRow);
+
+            float scale = (float)range / targetDistance;
+            float endQ = fq + (tq - fq) * scale;
+            float endR = fr + (tr - fr) * scale;
+
+            for (int i = 1; i <= range; i++)
+            {
+                float t = (float)i / range;
+                float q = fq + (endQ - fq) * t;
+                float r = fr + (endR - fr) * t;
+                hexes.Add(RoundToHex(q, r));
+            }
+
+            return hexes;
+        }
+
+        /// <summary>
         /// The tile one step away from (col, row) in the given direction (not bounds-checked).
         /// </summary>
         public (int col, int row) GetNeighborCoords(int col, int row, HexDirection direction)

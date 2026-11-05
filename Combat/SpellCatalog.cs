@@ -583,9 +583,7 @@ namespace SagesOfOzvaram.Combat
 
         public static readonly SpellCard MultiShot = new SpellCard(
             "Multi-Shot",
-            "Requires a Bow or Crossbow. Fires three arrows at once: all three strike a lone target, or split 2-and-1 "
-                + "against two, or one each against three - always the primary target plus whichever OTHER enemies are "
-                + "closest to it, within range.",
+            "Requires a Bow or Crossbow. Fires 3 arrows, divided among the nearest enemies in range.",
             HeroClass.Hunter,
             new Move("Multi-Shot", "Why loose one arrow when you can loose three.",
                 apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.80f, baseDamage: 5,
@@ -599,17 +597,22 @@ namespace SagesOfOzvaram.Combat
             HeroClass.Hunter,
             new Move("Piercing Shot", "One line, drawn straight through everything in it.",
                 apCost: 1, mpCost: 3, range: 5, baseAccuracy: 0.85f, baseDamage: 8,
-                strengthDivisor: 3.5f, damageType: DamageType.Sharp),
+                strengthDivisor: 3.5f, damageType: DamageType.Sharp, animationType: AttackAnimationType.Shooting,
+                hitsLine: true),
             "imgs/Cards/Spells/PiercingShot_CardArt");
 
         public static readonly SpellCard ExplosiveTrap = new SpellCard(
             "Explosive Trap",
-            "Places a hidden trap within 3 tiles that detonates when triggered, dealing heavy damage to the "
-                + "triggering unit and anyone adjacent to it. No snare - it's built to hurt, not hold.",
+            "Places a hidden trap within 3 tiles that detonates when triggered, dealing a flat 12 Fire damage "
+                + "to the triggering unit and anyone adjacent to it. No snare - it's built to hurt, not hold.",
             HeroClass.Hunter,
+            // The trap's own trigger-time effect (flat damage, blast radius) lives on
+            // Objects.Trap/Game1.CreateExplosiveTrap instead of here, same reasoning Place Trap's
+            // own Move already follows - there's no caster present at the moment a trap actually
+            // goes off, so nothing here would scale off Strength anyway. Only the casting
+            // cost/placement Range are real for this Move.
             new Move("Explosive Trap", "Not every trap needs to be subtle.",
-                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 10,
-                strengthDivisor: 3f, damageType: DamageType.Sharp),
+                apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0, isPlaceTrap: true),
             "imgs/Cards/Spells/ExplosiveTrap_CardArt");
 
         public static readonly SpellCard Camouflage = new SpellCard(

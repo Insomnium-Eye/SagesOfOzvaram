@@ -4969,6 +4969,35 @@ namespace SagesOfOzvaram
         };
 
         /// <summary>
+        /// The trap Move.IsPlaceTrap/CastPlaceTrap places for the "Explosive Trap" SpellCard, on
+        /// request - "No snare, it's built to hurt, not hold," so unlike CreateBearatTrap this
+        /// has an empty AppliedEffects (nothing to apply, the TriggerTrap loop over it simply
+        /// does nothing) and instead sets BlastRadius to 1, the part CreateBearatTrap has no use
+        /// for - "dealing heavy damage to the triggering unit and anyone adjacent to it." Damage
+        /// type Fire is a judgment call (an explosive blast reads better as Fire than Bearat
+        /// Trap's own Sharp claw-hazard damage; also makes this the only current non-Roachlin
+        /// source of Fire damage, incidentally relevant to the Dusk Roachlin's own +50% Fire
+        /// vulnerability if one is ever caught in the blast). FlatDamage 12 - noticeably heavier
+        /// than Bearat Trap's 1, first-pass placeholder pending a balance pass like everything
+        /// else here, stated directly in the card's own description the same way Place Trap's is.
+        /// </summary>
+        private Trap CreateExplosiveTrap((int col, int row) tile, BaseUnit owner) => new Trap
+        {
+            Name = "Explosive Trap",
+            Tile = tile,
+            Owner = owner,
+            Range = 0,
+            BlastRadius = 1,
+            FlatDamage = 12,
+            DamageType = DamageType.Fire,
+            AppliedEffects = new List<StatusEffect>(),
+        };
+
+        /// <summary>Which Trap a given IsPlaceTrap SpellCard actually places - the one place this dispatch lives, same "a static reference-equality check per catalog entry" pattern CreateSummonUnit already uses for SummonCards. A card this doesn't recognize falls back to a Bearat Trap rather than throwing, same defensive default CreateSummonUnit's own unmatched case (null) deliberately isn't - there's always SOME trap to place once IsPlaceTrap is confirmed true, unlike a summon's creature type.</summary>
+        private Trap CreateTrapForCard(SpellCard card, (int col, int row) tile, BaseUnit owner) =>
+            card == SpellCatalog.ExplosiveTrap ? CreateExplosiveTrap(tile, owner) : CreateBearatTrap(tile, owner);
+
+        /// <summary>
         /// Cast an IsPlaceTrap spell (e.g. Place Trap): pays AP/MP up front like any other cast,
         /// then opens trap-placement targeting showing every passable, unoccupied, not-already-
         /// trapped tile within Range of the caster - clicking one plants a Trap there (see
@@ -5095,13 +5124,13 @@ namespace SagesOfOzvaram
             }
         }
 
-        /// <summary>Spend _pendingMove's AP/MP, record a new Trap (see CreateBearatTrap) at destHex owned by the caster, consume the card, and return to the turn menu.</summary>
+        /// <summary>Spend _pendingMove's AP/MP, record a new Trap (see CreateTrapForCard - which trap depends on which IsPlaceTrap SpellCard was actually cast) at destHex owned by the caster, consume the card, and return to the turn menu.</summary>
         private void ExecutePlaceTrap((int col, int row) destHex)
         {
             _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(_pendingMove, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - _pendingMove.MPCost);
 
-            var trap = CreateBearatTrap(destHex, _playerUnit);
+            var trap = CreateTrapForCard(_pendingSpellCard, destHex, _playerUnit);
             _placedTraps.Add(trap);
             ShowCombatMessage($"{_playerUnit.Name} sets a {trap.Name}.");
 
@@ -5136,7 +5165,14 @@ namespace SagesOfOzvaram
         /// stat scaling (see Objects.Trap), grants the same aggro a landed attack would, spawns a
         /// floating damage number (SpawnDamageNumber - a trap trigger has no attack animation of
         /// its own to otherwise carry that feedback), then applies every one of its AppliedEffects
-        /// unconditionally (no chance roll - see CreateBearatTrap for the Bearat Trap's own two).
+        /// unconditionally (no chance roll - see CreateBearatTrap for the Bearat Trap's own two;
+        /// Explosive Trap's own AppliedEffects is empty - "no snare" - so this loop simply does
+        /// nothing for it). Finally, if BlastRadius > 0 (Explosive Trap, on request - "dealing
+        /// heavy damage to the triggering unit and anyone adjacent to it"), the same FlatDamage
+        /// (no hit roll, no AppliedEffects - the blast is damage-only) also hits every OTHER
+        /// living unit within BlastRadius tiles of wherever `mover` actually was when it triggered
+        /// the trap - any team, same "nothing is exempt" rule triggering it in the first place
+        /// already follows.
         /// </summary>
         private void TriggerTrap(Trap trap, BaseUnit mover)
         {
@@ -5158,6 +5194,22 @@ namespace SagesOfOzvaram
                 mover.ApplyStatusEffect(effect);
                 mover.ApplyAfflictionPlacementAggro(trap.Owner);
                 ShowCombatMessage($"{mover.Name} is afflicted with {effect.Name}!");
+            }
+
+            if (trap.BlastRadius > 0)
+            {
+                var moverHex = _hexGrid.WorldToHex(mover.Position);
+                var splashVictims = _units.Where(u => u != mover && u.IsAlive
+                        && _hexGrid.GetDistance(moverHex.col, moverHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= trap.BlastRadius)
+                    .ToList();
+
+                foreach (var victim in splashVictims)
+                {
+                    victim.TakeDamage(trap.FlatDamage, trap.DamageType, trap.Owner);
+                    victim.ApplyDamageAggro(trap.Owner, trap.FlatDamage);
+                    SpawnDamageNumber(victim, trap.FlatDamage);
+                    ShowCombatMessage($"{victim.Name} is caught in the blast for {trap.FlatDamage} damage!");
+                }
             }
         }
 
@@ -6279,15 +6331,29 @@ namespace SagesOfOzvaram
                 {
                     _renderer.Zoom(-0.1f, zoomOrigin);
 
-                    // Originally Open World only, on request; generalized the same way the two
-                    // position clamps above were, after the identical "dark area out of bounds"
-                    // report recurred in Debug Mode - never let zoom-out go far enough to reveal
-                    // the void past the CURRENT map's edge, whichever map that is - see
-                    // GetMinZoomToFillScreen.
-                    Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-                    float minZoom = GetMinZoomToFillScreen(viewportSize);
-                    if (_renderer.ZoomLevel < minZoom)
-                        _renderer.ZoomLevel = minZoom;
+                    // Bug fix, reported directly: "after taking a turn, then zooming in briefly,
+                    // the camera then zoomed in very close, and i can no longer zoom out." This
+                    // clamp was briefly generalized to every mode (Session 30), on the assumption
+                    // it was the same class of bug as the camera-POSITION-out-of-bounds report
+                    // that prompted that session - but it isn't: for the standard 20x15 Arena map,
+                    // GetMinZoomToFillScreen computes a floor around 1.2-1.7x (viewport-dependent),
+                    // far above the renderer's own MIN_ZOOM (0.5) - so the instant zoom dipped
+                    // below that floor even once, it snapped back up and the player could never
+                    // zoom out past it again for the rest of the match. This clamp exists ONLY
+                    // because Open World's map is chunk-streamed (zooming out past a chunk's own
+                    // edge reveals genuinely unrendered neighboring chunks) - Arena/Debug's maps
+                    // are fully generated up front, so there's no equivalent "unrendered void" to
+                    // guard against there, and this never should have applied outside Open World.
+                    // Reverted to Open-World-only; the camera-POSITION clamps (SnapCameraToCursor/
+                    // PanCameraTowardCursorSlowly/WASD panning) stay generalized, since THAT bug
+                    // (camera panning somewhere out of bounds) was real in every mode.
+                    if (_openWorldModeActive)
+                    {
+                        Vector2 viewportSize = new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                        float minZoom = GetMinZoomToFillScreen(viewportSize);
+                        if (_renderer.ZoomLevel < minZoom)
+                            _renderer.ZoomLevel = minZoom;
+                    }
 
                     _cameraZoomTarget = _renderer.ZoomLevel;
                 }

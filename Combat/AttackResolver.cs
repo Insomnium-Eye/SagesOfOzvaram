@@ -41,7 +41,10 @@ namespace SagesOfOzvaram.Combat
         /// HitsAllAdjacent move (e.g. Sword Spin), primaryTarget is ignored and every living
         /// unit adjacent to the attacker is hit instead; for a HitsCone move (e.g. Frost Blast),
         /// both primaryTarget and aimDirection matter differently - aimDirection is required and
-        /// every living unit in that 60-degree cone out to Range is hit (see HexGrid.GetHexesInCone).
+        /// every living unit in that 60-degree cone out to Range is hit (see HexGrid.GetHexesInCone);
+        /// for a HitsLine move (e.g. Piercing Shot), primaryTarget is still a normal single-target
+        /// pick, but everyone near the straight line from attacker through it (out to Range) is
+        /// hit too, not just primaryTarget itself (see PathChecker).
         /// Callers should already have confirmed attacker.GetEffectiveAPCost(move, sourceWeapon)
         /// &lt;= attacker.CurrentAP (and MP cost) before calling - this clamps rather than
         /// validates, so it never goes negative.
@@ -72,6 +75,8 @@ namespace SagesOfOzvaram.Combat
                 targets = GetAdjacentTargets(attacker, grid, unitsSnapshot);
             else if (move.IsMultiShot)
                 targets = GetMultiShotTargets(attacker, primaryTarget, move, grid, unitsSnapshot);
+            else if (move.HitsLine)
+                targets = PathChecker(attacker, primaryTarget, move, grid, unitsSnapshot);
             else
                 targets = primaryTarget != null ? new List<BaseUnit> { primaryTarget } : new List<BaseUnit>();
 
@@ -133,6 +138,39 @@ namespace SagesOfOzvaram.Combat
                 2 => new List<BaseUnit> { distinctTargets[0], distinctTargets[0], distinctTargets[1] },
                 _ => new List<BaseUnit> { distinctTargets[0], distinctTargets[1], distinctTargets[2] },
             };
+        }
+
+        /// <summary>
+        /// Piercing Shot's own target list ("PathChecker"). Two earlier attempts both reported
+        /// wrong, directly: a world-space "thick line" distance-to-segment check (a fixed-radius
+        /// tube around the straight line) missed a unit standing no less in the way, then the
+        /// exact single-file hex line that replaced it (`HexGrid.GetHexesOnLineThroughTarget`
+        /// alone, no width at all) STILL missed one - a single-file line only ever includes ONE
+        /// hex per step along the path, so a unit sitting right beside that path (e.g. the
+        /// Warrior next to the Cleric, both roughly on the way to the Sorcerer in the report that
+        /// caught this) falls just outside it even though the line visibly passes over its tile
+        /// too. Fixed by giving the line actual width in HEX terms rather than continuous world
+        /// space: the thin single-file path PLUS every one of those hexes' own immediate neighbors
+        /// (a one-hex "dilation" of the path) - a corridor three hexes wide along most of its
+        /// length instead of one, wide enough to catch a unit standing directly beside the exact
+        /// line without reaching far enough to also catch someone merely in the general area.
+        /// </summary>
+        private static List<BaseUnit> PathChecker(BaseUnit attacker, BaseUnit primaryTarget, Move move, HexGrid grid, IList<BaseUnit> allUnits)
+        {
+            if (primaryTarget == null)
+                return new List<BaseUnit>();
+
+            var attackerHex = grid.WorldToHex(attacker.Position);
+            var targetHex = grid.WorldToHex(primaryTarget.Position);
+            int range = move.GetEffectiveRange(attacker, null);
+
+            var centerLine = grid.GetHexesOnLineThroughTarget(attackerHex.col, attackerHex.row, targetHex.col, targetHex.row, range);
+            var lineHexes = new HashSet<(int col, int row)>(centerLine);
+            foreach (var (col, row) in centerLine)
+                foreach (var neighbor in grid.GetNeighbors(col, row))
+                    lineHexes.Add(neighbor);
+
+            return allUnits.Where(u => u != attacker && u.IsAlive && lineHexes.Contains(grid.WorldToHex(u.Position))).ToList();
         }
 
         private static List<BaseUnit> GetConeTargets(BaseUnit attacker, Move move, Weapon sourceWeapon, HexDirection direction, HexGrid grid, IList<BaseUnit> allUnits)

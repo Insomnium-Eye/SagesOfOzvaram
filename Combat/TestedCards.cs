@@ -29,6 +29,8 @@ namespace SagesOfOzvaram.Combat
             "Place Trap",
             "Eagle Eye",
             "Tame Beast",
+            "Multi-Shot",
+            "Piercing Shot",
         };
     }
 }

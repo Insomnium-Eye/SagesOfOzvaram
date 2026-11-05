@@ -93,6 +93,7 @@ namespace SagesOfOzvaram.Combat
         public bool IsReshuffle { get; }             // true = shuffles every card in the caster's class discard pile back into their deck, each one cloned with its MP cost +1 (see Move.WithMPCostIncrease) - auto-granted to a hand once that class's deck AND hand are both empty (Game1.EnsureReshuffleCardIfNeeded), never drawn normally (not part of SpellCatalog.AllCards) - handled by Game1.CastReshuffle, not AttackResolver or SpellCaster
         public bool IsSummonPortal { get; }          // true = conjures a Generic Portal on an empty tile within Range instead of attacking - an Ability (see Combat.AbilityCatalog), not a SpellCard/racial move, granted innately by Rank/Race/unit identity rather than drawn/equipped. Same cost/range/mechanics as Phase 1 of Game1.CastSummon, just standalone - handled by Game1.CastSummonPortal, not AttackResolver or SpellCaster
         public bool IsConsume { get; }               // true = eats the caster's own tile's grass object (Maps.Tile.HasGrassObject - on request, every grass tile always has one) instead of attacking, leaving a Mana Powder item behind to pick up (e.g. the Aetherfluff Beetle's Consume) - no targeting needed (always the caster's own tile), handled by Game1.ExecuteConsume, not AttackResolver - also excluded from GetUsableAttacks' AI candidate list, same reason IsLeap already is
+        public bool HitsLine { get; }                // true = pierces through the primary target and out the other side, hitting every unit near the straight line from the attacker through the target out to Range (e.g. Piercing Shot) - targeting itself is unchanged (still just "pick one target within range"), the piercing is AttackResolver's own target-list expansion after that pick - see AttackResolver.PathChecker
 
         // Temporary stat buff fields (e.g. Brace, Rally Cry, Steady Hands) - a flat bonus to the
         // named stat for StatusDurationTurns, applied via BaseUnit.ApplyBuff/ticked down by
@@ -125,7 +126,7 @@ namespace SagesOfOzvaram.Combat
                     AmmoType? requiredAmmoType = null, AttackAnimationType animationType = AttackAnimationType.Slash,
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
                     bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false, bool isConsume = false,
-                    bool isMultiShot = false, WeaponType[] requiredWeaponTypes = null,
+                    bool isMultiShot = false, WeaponType[] requiredWeaponTypes = null, bool hitsLine = false,
                     int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
         {
             Name = name;
@@ -180,6 +181,7 @@ namespace SagesOfOzvaram.Combat
             IsConsume = isConsume;
             IsMultiShot = isMultiShot;
             RequiredWeaponTypes = requiredWeaponTypes;
+            HitsLine = hitsLine;
             StrengthBuff = strengthBuff;
             AccuracyBuff = accuracyBuff;
             DefenseBuff = defenseBuff;
@@ -215,7 +217,7 @@ namespace SagesOfOzvaram.Combat
                 RequiredAmmoType, AnimationType,
                 IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
                 IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal, IsConsume,
-                IsMultiShot, RequiredWeaponTypes,
+                IsMultiShot, RequiredWeaponTypes, HitsLine,
                 StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
         }
 
