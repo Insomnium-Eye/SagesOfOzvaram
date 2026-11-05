@@ -28,6 +28,7 @@ namespace SagesOfOzvaram.Combat
             "Bandage Wound",
             "Place Trap",
             "Eagle Eye",
+            "Tame Beast",
         };
     }
 }

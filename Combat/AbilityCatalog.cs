@@ -33,13 +33,35 @@ namespace SagesOfOzvaram.Combat
             "Summon Portal", "Conjures a Generic Portal nearby, so creatures can be summoned without paying the usual portal surcharge.",
             apCost: 2, mpCost: 5, range: 0, baseAccuracy: 1f, baseDamage: 0, isSummonPortal: true);
 
-        /// <summary>Every ability `unit` currently has access to - by Rank for now (Elite/Hero get Summon Portal); a future pass can add Race- or unit-specific grants here too without changing how any of this is consumed elsewhere.</summary>
-        public static List<Move> GetAbilitiesFor(BaseUnit unit)
+        /// <summary>
+        /// Moved here from Combat.RaceAttacks' innate-move list, on request: an Aetherfluff
+        /// Beetle's Consume only ever does anything while it's standing on a grass tile, so it
+        /// fits the Ability shape (something a unit just HAS, shown only when it can currently be
+        /// used) better than an always-present Attack Menu entry that's a no-op everywhere else.
+        /// Still handled by Game1.ExecuteConsume via Move.IsConsume, unchanged - eats the grass
+        /// object off the caster's own tile (range 0, no targeting) and drops a Mana Powder item.
+        /// </summary>
+        public static readonly Move ConsumeGrass = new Move(
+            "Consume Grass", "Eats the grass beneath it, leaving a pinch of Mana Powder behind.",
+            apCost: 1, mpCost: 0, range: 0, baseAccuracy: 1f, baseDamage: 0, isConsume: true);
+
+        /// <summary>
+        /// Every ability `unit` currently has access to RIGHT NOW - by Rank (Elite/Hero get
+        /// Summon Portal) and, for Consume Grass specifically, by Race AND whether `standingOnGrass`
+        /// is true this instant (computed by the caller - Game1.OpenAbilitiesMenu/
+        /// Combat.TurnMenuBuilder.Build - since AbilityCatalog has no map/tile access of its own).
+        /// A future pass can add further Race- or unit-specific grants here too without changing
+        /// how any of this is consumed elsewhere.
+        /// </summary>
+        public static List<Move> GetAbilitiesFor(BaseUnit unit, bool standingOnGrass = false)
         {
             var abilities = new List<Move>();
 
             if (unit.Rank == UnitRank.Elite || unit.Rank == UnitRank.Hero)
                 abilities.Add(SummonPortal);
+
+            if (unit.Race == Race.AetherfluffBeetle && standingOnGrass)
+                abilities.Add(ConsumeGrass);
 
             return abilities;
         }

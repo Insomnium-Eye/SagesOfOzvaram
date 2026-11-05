@@ -78,7 +78,14 @@ namespace SagesOfOzvaram.Combat
             // NOT drawn/equipped - its own category, distinct from Attack/Cards/Items. Shown only
             // once the unit actually has at least one AND can currently afford at least one of
             // them, same "don't offer what can't work" rule every option here already follows.
-            bool hasAffordableAbility = AbilityCatalog.GetAbilitiesFor(unit)
+            // standingOnGrass is passed through to GetAbilitiesFor since Consume Grass (the
+            // Aetherfluff Beetle's own ability) is only ever actually grantable while true - see
+            // AbilityCatalog.ConsumeGrass.
+            var abilityHex = grid.WorldToHex(unit.Position);
+            var abilityTile = map.GetTile(abilityHex.col, abilityHex.row);
+            bool standingOnGrass = abilityTile != null && abilityTile.HasGrassObject;
+
+            bool hasAffordableAbility = AbilityCatalog.GetAbilitiesFor(unit, standingOnGrass)
                 .Any(ability => unit.GetEffectiveAPCost(ability, null) <= unit.CurrentAP && ability.MPCost <= unit.CurrentMP);
             if (hasAffordableAbility)
                 options.Add(new TurnMenuOption { Id = "Abilities", Label = "Abilities" });

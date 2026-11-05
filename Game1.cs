@@ -3633,12 +3633,6 @@ namespace SagesOfOzvaram
                     if (entry.Move.IsLeap)
                         return false;
 
-                    // IsConsume (the Aetherfluff Beetle's Consume) isn't an attack on a target at
-                    // all - it acts on the caster's OWN tile - so it can never be a usable attack
-                    // AGAINST `target` here, same exclusion reasoning as IsLeap just above.
-                    if (entry.Move.IsConsume)
-                        return false;
-
                     int apCost = aiUnit.GetEffectiveAPCost(entry.Move, entry.SourceWeapon);
                     if (apCost > aiUnit.CurrentAP || entry.Move.MPCost > aiUnit.CurrentMP)
                         return false;
@@ -3850,12 +3844,6 @@ namespace SagesOfOzvaram
                 return;
             }
 
-            if (move.IsConsume)
-            {
-                ExecuteConsume(move);
-                return;
-            }
-
             var validTargets = GetValidAttackTargets(move, sourceWeapon);
             if (validTargets.Count == 0)
             {
@@ -3875,25 +3863,38 @@ namespace SagesOfOzvaram
             _targetingModeActive = true;
         }
 
+        /// <summary>True if `unit` is currently standing on a tile with a grass object on it (Maps.Tile.HasGrassObject) - shared by ExecuteConsume and OpenAbilitiesMenu/GetAbilitySourceLines so "is Consume Grass usable right now" is computed exactly one way.</summary>
+        private bool IsStandingOnGrass(BaseUnit unit)
+        {
+            var hex = _hexGrid.WorldToHex(unit.Position);
+            var tile = _map.GetTile(hex.col, hex.row);
+            return tile != null && tile.HasGrassObject;
+        }
+
         /// <summary>
-        /// Resolve a Move.IsConsume attack (e.g. the Aetherfluff Beetle's Consume, on request) -
-        /// no targeting step, it always acts on the caster's own current tile. Refuses (no AP/MP
-        /// spent) if that tile has no grass object right now (Maps.Tile.HasGrassObject - either
-        /// it was never grass, or something already ate this tile's grass). Otherwise pays the
-        /// move's own AP/MP, marks the tile's grass Consumed (removing its drawn grass-tuft
-        /// overlay - see Draw), and drops a Mana Powder item at the caster's feet, same
-        /// Combat.DroppedItem/"Pick Up" Action path Meat already uses - no new pickup plumbing
-        /// needed, that system already works for any ConsumableItem.
+        /// Resolve a Move.IsConsume attack (e.g. the Aetherfluff Beetle's Consume Grass ability,
+        /// on request) - no targeting step, it always acts on the caster's own current tile.
+        /// Refuses (no AP/MP spent) if that tile has no grass object right now
+        /// (IsStandingOnGrass - either it was never grass, or something already ate this tile's
+        /// grass since the Abilities menu was opened) - shouldn't normally be reachable at all,
+        /// since Consume Grass only even appears in that menu while standing on grass, but this
+        /// is the same safety net every other "don't offer what can't work" option still backs up
+        /// with a real check rather than trusting the menu alone. Otherwise pays the move's own
+        /// AP/MP, marks the tile's grass Consumed (removing its drawn grass-tuft overlay - see
+        /// Draw), and drops a Mana Powder item at the caster's feet, same Combat.DroppedItem/
+        /// "Pick Up" Action path Meat already uses - no new pickup plumbing needed, that system
+        /// already works for any ConsumableItem.
         /// </summary>
         private void ExecuteConsume(Move move)
         {
-            var hex = _hexGrid.WorldToHex(_playerUnit.Position);
-            var tile = _map.GetTile(hex.col, hex.row);
-            if (tile == null || !tile.HasGrassObject)
+            if (!IsStandingOnGrass(_playerUnit))
             {
                 ShowCombatMessage("There's no grass here to consume.");
                 return;
             }
+
+            var hex = _hexGrid.WorldToHex(_playerUnit.Position);
+            var tile = _map.GetTile(hex.col, hex.row);
 
             _playerUnit.SpendAP(_playerUnit.GetEffectiveAPCost(move, null));
             _playerUnit.CurrentMP = Math.Max(0, _playerUnit.CurrentMP - move.MPCost);
@@ -3906,7 +3907,7 @@ namespace SagesOfOzvaram
             GameLogger.Log(logMessage);
             _console.Log(logMessage);
 
-            _attackMenuActive = false;
+            _abilitiesMenuActive = false;
             _turnMenuIndex = 0;
             _turnMenuActive = true;
         }
@@ -3914,7 +3915,7 @@ namespace SagesOfOzvaram
         /// <summary>Opens the Abilities submenu (see Combat.AbilityCatalog/TurnMenuBuilder's own "Abilities" entry) - every ability the player's unit currently has, same list+"Back" shape as OpenAttackMenu.</summary>
         private void OpenAbilitiesMenu()
         {
-            _abilitiesMenuAbilities = AbilityCatalog.GetAbilitiesFor(_playerUnit);
+            _abilitiesMenuAbilities = AbilityCatalog.GetAbilitiesFor(_playerUnit, IsStandingOnGrass(_playerUnit));
             _abilitiesMenuLabels = _abilitiesMenuAbilities
                 .Select(ability => FormatAbilityLabel(ability))
                 .ToList();
@@ -3976,6 +3977,12 @@ namespace SagesOfOzvaram
             if (ability.IsSummonPortal)
             {
                 CastSummonPortal(ability);
+                return;
+            }
+
+            if (ability.IsConsume)
+            {
+                ExecuteConsume(ability);
                 return;
             }
 
@@ -7523,7 +7530,7 @@ namespace SagesOfOzvaram
         /// </summary>
         private List<string> GetAbilitySourceLines(BaseUnit unit)
         {
-            return AbilityCatalog.GetAbilitiesFor(unit)
+            return AbilityCatalog.GetAbilitiesFor(unit, IsStandingOnGrass(unit))
                 .Select(ability => $"{ability.Name} ({ability.APCost} AP, {ability.MPCost} MP): {ability.Description}")
                 .ToList();
         }

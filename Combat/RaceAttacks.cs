@@ -67,21 +67,16 @@ namespace SagesOfOzvaram.Combat
                 apCost: 1, mpCost: 0, range: 3,
                 baseAccuracy: 0.75f, baseDamage: 3, damageType: DamageType.Magical, intelligenceDivisor: 3.5f) },
 
-            // Consume (on request): eats the grass object off the beetle's OWN tile (Maps.Tile.
-            // HasGrassObject - every grass tile always has one), leaving behind a Mana Powder
-            // item (Combat.ConsumableCatalog.ManaPowder, +10 MP on use) for anyone to pick up via
-            // the existing "Pick Up" Action. Range 0, no targeting of its own (always acts on the
-            // caster's own tile) - handled directly by Game1.ExecuteConsume via Move.IsConsume,
-            // same "racial move with a special flag, not a normal attack" pattern IsLeap already
-            // established for this same race list (see Race.Roachlin below).
+            // Consume moved to Combat.AbilityCatalog (on request): it was originally an innate
+            // Move here, but since it only ever does anything while standing on a grass tile,
+            // it's really the same shape as a Rank-granted Ability (something a unit just HAS,
+            // shown only when it can currently do something) rather than an always-present
+            // attack-menu move - see AbilityCatalog.ConsumeGrass.
             [Race.AetherfluffBeetle] = new List<Move>
             {
                 new Move("Nudge", "A harmless little bump - this creature isn't built to fight.",
                     apCost: 1, mpCost: 0, range: 1,
                     baseAccuracy: 0.90f, baseDamage: 0, damageType: DamageType.Blunt),
-                new Move("Consume", "Eats the grass beneath it, leaving a pinch of Mana Powder behind.",
-                    apCost: 1, mpCost: 0, range: 0,
-                    baseAccuracy: 1f, baseDamage: 0, isConsume: true),
             },
 
             // 1:1 STR scaling, on request: each of these beasts' main attack is now baseDamage 0,
