@@ -5198,9 +5198,18 @@ namespace SagesOfOzvaram
 
             if (trap.BlastRadius > 0)
             {
-                var moverHex = _hexGrid.WorldToHex(mover.Position);
+                // Bug fix, reported directly ("Sorcerer walked over explosive trap, which only
+                // damaged it, not the adjacent warrior"): this used to center the blast on
+                // mover.Position - but TriggerTrap fires right after SetMovementPath queues the
+                // walk animation, BEFORE UpdateMovementAnimation has ever actually run for it, so
+                // Position was still the mover's PRE-move tile, not the trap's own tile, the
+                // entire time this method runs. Centers on trap.Tile instead - also the more
+                // correct origin for an explosion regardless: Range is 0 for every trap so far, so
+                // triggering one already means standing exactly on its own tile by the time this
+                // runs, making trap.Tile and "wherever the mover currently visually is" the same
+                // real hex, just one of them actually available before the walk animation plays.
                 var splashVictims = _units.Where(u => u != mover && u.IsAlive
-                        && _hexGrid.GetDistance(moverHex.col, moverHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= trap.BlastRadius)
+                        && _hexGrid.GetDistance(trap.Tile.col, trap.Tile.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= trap.BlastRadius)
                     .ToList();
 
                 foreach (var victim in splashVictims)
