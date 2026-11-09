@@ -31,6 +31,7 @@ namespace SagesOfOzvaram.Combat
             "Tame Beast",
             "Multi-Shot",
             "Piercing Shot",
+            "Explosive Trap",
         };
     }
 }

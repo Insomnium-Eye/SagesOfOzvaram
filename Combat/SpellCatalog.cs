@@ -615,13 +615,21 @@ namespace SagesOfOzvaram.Combat
                 apCost: 1, mpCost: 4, range: 3, baseAccuracy: 1f, baseDamage: 0, isPlaceTrap: true),
             "imgs/Cards/Spells/ExplosiveTrap_CardArt");
 
+        // Previously granted a "Camouflaged" StatusEffect with no AccuracyBuff/etc. behind it at
+        // all - since IsSelfUtility/CastSelfUtility only ever recognized the 5 stat buffs (the
+        // same gap Eagle Eye's own missing accuracyBuff hit before it), this never even had an
+        // execution path; the card's own "+Evasion" claim was dead flavor text, not a real,
+        // un-implemented bonus. Replaced with real Weak Invisibility instead, on request -
+        // "blending into the surroundings" fits hiding from view rather better than a flat
+        // Evasion number anyway. See Move.InvisibilityRevealRange/StatusEffect's own field.
         public static readonly SpellCard Camouflage = new SpellCard(
             "Camouflage",
-            "Blend into the surroundings: +Evasion for 3 turns.",
+            "Blend into the surroundings: enemies can't see you unless they're within 3 tiles. Any action besides "
+                + "moving, guarding, or ending your turn breaks it.",
             HeroClass.Hunter,
             new Move("Camouflage", "Become part of the terrain.",
                 apCost: 1, mpCost: 2, range: 0, baseAccuracy: 1f, baseDamage: 0,
-                inflictsStatusEffect: "Camouflaged", statusDurationTurns: 3),
+                inflictsStatusEffect: "Weak Invisibility", statusDurationTurns: 3, invisibilityRevealRange: 3),
             "imgs/Cards/Spells/Camouflage_CardArt");
 
         public static readonly SpellCard HuntersMark = new SpellCard(

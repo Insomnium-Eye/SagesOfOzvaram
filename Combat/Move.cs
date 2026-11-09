@@ -109,6 +109,9 @@ namespace SagesOfOzvaram.Combat
         public int ResistanceBuff { get; }
         public int IntelligenceBuff { get; }
 
+        /// <summary>&gt;0 = this move grants Invisibility (see StatusEffect.InvisibilityRevealRange) to its target(s) for StatusDurationTurns, same self-utility shape the 5 stat buffs above already use (e.g. Camouflage: 3). 0 = doesn't grant it at all.</summary>
+        public int InvisibilityRevealRange { get; }
+
         public Move(string name, string description, int apCost, int mpCost, int range,
                     float baseAccuracy, int baseDamage, DamageType damageType = DamageType.Magical,
                     float strengthDivisor = 0f, float intelligenceDivisor = 0f,
@@ -127,7 +130,8 @@ namespace SagesOfOzvaram.Combat
                     bool isBlink = false, bool isManaShield = false, bool isAllyShield = false, bool isSleepSpell = false, bool isMeditateSpell = false,
                     bool isConjurePotions = false, bool curesBleed = false, bool isTameBeast = false, bool isPlaceTrap = false, bool isLeap = false, bool isReshuffle = false, bool isSummonPortal = false, bool isConsume = false,
                     bool isMultiShot = false, WeaponType[] requiredWeaponTypes = null, bool hitsLine = false,
-                    int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0)
+                    int strengthBuff = 0, int accuracyBuff = 0, int defenseBuff = 0, int resistanceBuff = 0, int intelligenceBuff = 0,
+                    int invisibilityRevealRange = 0)
         {
             Name = name;
             Description = description;
@@ -187,6 +191,7 @@ namespace SagesOfOzvaram.Combat
             DefenseBuff = defenseBuff;
             ResistanceBuff = resistanceBuff;
             IntelligenceBuff = intelligenceBuff;
+            InvisibilityRevealRange = invisibilityRevealRange;
         }
 
         /// <summary>
@@ -218,7 +223,8 @@ namespace SagesOfOzvaram.Combat
                 IsBlink, IsManaShield, IsAllyShield, IsSleepSpell, IsMeditateSpell,
                 IsConjurePotions, CuresBleed, IsTameBeast, IsPlaceTrap, IsLeap, IsReshuffle, IsSummonPortal, IsConsume,
                 IsMultiShot, RequiredWeaponTypes, HitsLine,
-                StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff);
+                StrengthBuff, AccuracyBuff, DefenseBuff, ResistanceBuff, IntelligenceBuff,
+                InvisibilityRevealRange);
         }
 
         /// <summary>

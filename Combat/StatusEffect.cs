@@ -135,5 +135,19 @@ namespace SagesOfOzvaram.Combat
 
         /// <summary>A single hit for this % of max HP or more clears this effect immediately with NO lock-in, even if LockInDurationTurns is set (e.g. Meditate). 0 = can't be interrupted by damage. See BaseUnit.ApplyRawDamage.</summary>
         public float InterruptDamagePercentMaxHP;
+
+        /// <summary>
+        /// Invisibility (on request, starting with "Weak" - e.g. Camouflage): &gt;0 = the affected
+        /// unit is hidden from every OTHER team's rendering (sprite, HP bar, name, everything -
+        /// same all-or-nothing skip Fog of War's own vision check already uses, not a dimmed/
+        /// partial draw) UNLESS at least one living unit of that OTHER team is within this many
+        /// tiles of it right now - see Game1's unit-drawing loop. 0 (the default) = not invisible
+        /// at all. Always visible to the affected unit's OWN team regardless of this value -
+        /// invisibility hides you from enemies, not your own side. Broken by any action besides
+        /// Move/Guard/End Turn (see BaseUnit.SpendAP's breaksInvisibility parameter) - scoped to
+        /// rendering only, same as Fog of War itself, NOT a targeting restriction (Fog of War
+        /// doesn't block targeting an unseen enemy either, so this doesn't widen that gap further).
+        /// </summary>
+        public int InvisibilityRevealRange;
     }
 }

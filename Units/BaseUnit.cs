@@ -670,15 +670,26 @@ namespace SagesOfOzvaram.Units
         /// standing up from Knocked Down, ending a restricting effect early, ...), so a single
         /// check here covers "the affected unit performed an action" for any StatusEffect with
         /// DamagePercentMaxHPPerAction set (e.g. Weak Bleed's 1%-per-action) without needing that
-        /// check duplicated at every individual cost site.
+        /// check duplicated at every individual cost site. Also the one place Invisibility breaks
+        /// (on request: "any action besides movement, guarding, or ending turns should end
+        /// invisibility") - `breaksInvisibility` defaults true for exactly that reason, with only
+        /// Move (Game1.MoveUnitTowards) and Guard (Game1's "End"/Guard turn-menu branch) passing
+        /// false to stay exempt; End Turn needs no exemption at all since it never calls this to
+        /// begin with. Every other action - attacks, casts, abilities, traps, taming, picking up,
+        /// summoning, consuming, standing up from Knocked Down, ending a restricting effect early
+        /// - keeps the default and correctly ends invisibility, with no extra code needed at any
+        /// of those call sites.
         /// </summary>
-        public void SpendAP(int amount)
+        public void SpendAP(int amount, bool breaksInvisibility = true)
         {
             if (amount <= 0)
                 return;
 
             CurrentAP = Math.Max(0, CurrentAP - amount);
             ApplyPerActionAfflictionDamage();
+
+            if (breaksInvisibility)
+                StatusEffects.RemoveAll(e => e.InvisibilityRevealRange > 0);
         }
 
         /// <summary>See SpendAP - applies true damage (bypassing Defense/Resistance, same as a Bleed tick) for every active StatusEffect with DamagePercentMaxHPPerAction set. A no-op (one cheap LINQ scan, no allocation) for the overwhelming majority of units/turns that have no such effect active.</summary>

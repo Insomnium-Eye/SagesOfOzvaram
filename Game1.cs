@@ -2564,7 +2564,7 @@ namespace SagesOfOzvaram
                 // again, so the actual behavior can never drift from what the label promised.
                 if (!_playerUnit.IsKnockedDown && _playerUnit.CurrentAP >= _playerUnit.GuardAPCost)
                 {
-                    _playerUnit.SpendAP(_playerUnit.GuardAPCost);
+                    _playerUnit.SpendAP(_playerUnit.GuardAPCost, breaksInvisibility: false);
                     _playerUnit.ApplyGuard();
                 }
 
@@ -3312,7 +3312,7 @@ namespace SagesOfOzvaram
             }
 
             unit.SetMovementPath(affordablePath.Select(hex => _hexGrid.HexToWorld(hex.col, hex.row)));
-            unit.SpendAP(apCost);
+            unit.SpendAP(apCost, breaksInvisibility: false);
 
             var finalTile = affordablePath[affordablePath.Count - 1];
             string moveMessage = $"{unit.Name} moved from ({start.col}, {start.row}) to ({finalTile.col}, {finalTile.row})";
@@ -3869,6 +3869,36 @@ namespace SagesOfOzvaram
             var hex = _hexGrid.WorldToHex(unit.Position);
             var tile = _map.GetTile(hex.col, hex.row);
             return tile != null && tile.HasGrassObject;
+        }
+
+        /// <summary>
+        /// True if `unit` should be hidden from `_playerUnit`'s own team right now because of an
+        /// active Invisibility effect (StatusEffect.InvisibilityRevealRange &gt; 0, e.g.
+        /// Camouflage) - on request. Always false for `_playerUnit`'s own team (invisibility
+        /// hides you from enemies, not your own side) and whenever nothing's invisible to begin
+        /// with; otherwise true unless at least one living unit of the VIEWING team is currently
+        /// within the effect's own reveal range of `unit`'s position. Used only by the unit-
+        /// drawing loop (Draw) - scoped to rendering, same as Fog of War itself, not a targeting
+        /// restriction (see the field's own doc comment for why).
+        /// </summary>
+        private bool IsHiddenByInvisibility(BaseUnit unit)
+        {
+            if (_playerUnit == null)
+                return false;
+
+            var invisibility = unit.StatusEffects.FirstOrDefault(e => e.InvisibilityRevealRange > 0);
+            if (invisibility == null)
+                return false;
+
+            var viewerTeam = GetTeamRoot(_playerUnit);
+            if (GetTeamRoot(unit) == viewerTeam)
+                return false;
+
+            var unitHex = _hexGrid.WorldToHex(unit.Position);
+            bool revealed = _units.Any(u => u.IsAlive && GetTeamRoot(u) == viewerTeam
+                && _hexGrid.GetDistance(unitHex.col, unitHex.row, _hexGrid.WorldToHex(u.Position).col, _hexGrid.WorldToHex(u.Position).row) <= invisibility.InvisibilityRevealRange);
+
+            return !revealed;
         }
 
         /// <summary>
@@ -6776,6 +6806,14 @@ namespace SagesOfOzvaram
                 // hide anything. A unit's own tile is always within its own ViewRange of itself
                 // (distance 0), so this never hides a unit from its own team.
                 if (fogVisibleTiles != null && !fogVisibleTiles.Contains(_hexGrid.WorldToHex(unit.Position)))
+                    continue;
+
+                // Invisibility (on request, e.g. Camouflage) - same all-or-nothing skip as Fog of
+                // War just above, layered on top of it rather than replacing it: a unit still has
+                // to be within Fog of War's own vision range to even reach this check, and now
+                // ALSO has to not be invisible (or have an enemy close enough to reveal it) to
+                // actually get drawn. See IsHiddenByInvisibility.
+                if (IsHiddenByInvisibility(unit))
                     continue;
 
                 if (unit.SpriteTexture != null)

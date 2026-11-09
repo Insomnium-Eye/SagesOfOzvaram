@@ -53,7 +53,8 @@ namespace SagesOfOzvaram.Combat
         {
             bool hasEffect = move.StrengthBuff > 0 || move.AccuracyBuff > 0 || move.DefenseBuff > 0
                 || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0 || move.GrantedAP > 0
-                || move.HealFlat > 0 || move.HealPercentMaxHP > 0f || move.CuresBleed;
+                || move.HealFlat > 0 || move.HealPercentMaxHP > 0f || move.CuresBleed
+                || move.InvisibilityRevealRange > 0;
             if (!hasEffect || move.BaseDamage > 0 || move.IsBlink || move.IsManaShield || move.IsAllyShield || move.IsSleepSpell || move.IsMeditateSpell)
                 return false;
             return (move.Range == 0 && !move.HitsAllAdjacent) || (move.HitsAllAdjacent && move.TargetsAllies);
@@ -248,7 +249,7 @@ namespace SagesOfOzvaram.Combat
             PayCost(move, caster);
 
             bool hasStatBuff = move.StrengthBuff > 0 || move.AccuracyBuff > 0 || move.DefenseBuff > 0
-                || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0;
+                || move.ResistanceBuff > 0 || move.IntelligenceBuff > 0 || move.InvisibilityRevealRange > 0;
             string buffName = move.InflictsStatusEffect ?? move.Name;
             var healedTargets = new List<BaseUnit>();
             var curedTargets = new List<BaseUnit>();
@@ -266,6 +267,7 @@ namespace SagesOfOzvaram.Combat
                         DefenseBonus = move.DefenseBuff,
                         ResistanceBonus = move.ResistanceBuff,
                         IntelligenceBonus = move.IntelligenceBuff,
+                        InvisibilityRevealRange = move.InvisibilityRevealRange,
                     });
                 }
                 if (move.GrantedAP > 0)
