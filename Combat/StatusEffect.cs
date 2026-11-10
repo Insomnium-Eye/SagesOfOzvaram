@@ -87,6 +87,9 @@ namespace SagesOfOzvaram.Combat
         /// <summary>% EffectiveAccuracy is multiplicatively reduced by while this effect is active (e.g. Weak Blind: 0.40 = -40%) - a proportional reduction, not a flat AccuracyBonus penalty, same "% of the stat itself" shape BaseUnit.EffectiveSpeed's own SpeedReductionPercent already uses for Slowed. The STRONGEST active one wins if more than one effect sets this, rather than compounding them together.</summary>
         public float AccuracyReductionPercent;
 
+        /// <summary>% bonus damage taken from EVERY source while this effect is active (e.g. Hunter's Mark: 0.25 = +25%) - applied multiplicatively in BaseUnit.TakeDamage, the same spot/shape a racial DamageVulnerability already uses (before DEF/RES mitigation, so DEF/RES still mitigates a portion of the inflated amount). The STRONGEST active one wins if more than one effect sets this, same "strongest wins" rule AccuracyReductionPercent already uses, rather than compounding them together.</summary>
+        public float DamageTakenPercentBonus;
+
         /// <summary>% of max HP dealt as true damage (bypassing Defense/Resistance, see BaseUnit.ApplyTrueDamage) each time this effect's StartOfTurn/EndOfTurn TurnTrigger matches (e.g. Weak Bleed's 5%/turn). 0 = no per-tick damage. Meaningless for an Active effect.</summary>
         public float DamagePercentMaxHPPerTick;
 

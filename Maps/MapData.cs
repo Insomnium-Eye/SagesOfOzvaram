@@ -37,7 +37,7 @@ namespace SagesOfOzvaram.Maps
         /// Every "grass" tile always has a decorative grass object on it, on request - drawn as
         /// a small grass-tuft sprite by Game1.Draw - until it's Consumed. Derived directly off
         /// Type/GrassConsumed rather than a separately-seeded flag, so this is automatically true
-        /// for every grass tile from every source (Arena's procedural map, Test Mode's blank 3x3
+        /// for every grass tile from every source (Arena's procedural map, Test Mode's blank 6x6
         /// default, an Open World chunk, a dev-console tile edit, ...) with no map-generation-time
         /// code needed anywhere to seed it.
         /// </summary>

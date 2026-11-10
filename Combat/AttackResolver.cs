@@ -322,6 +322,20 @@ namespace SagesOfOzvaram.Combat
                 case "Slowed":
                     target.ApplySpeedReduction(move.SpeedReductionPercent, move.StatusDurationTurns);
                     break;
+                case "Marked":
+                    // Take the longer of this and any Mark already active, same reasoning as
+                    // Snared/Stunned above - a follow-up Hunter's Mark shouldn't shorten one
+                    // already ticking. See StatusEffect.DamageTakenPercentBonus/BaseUnit.TakeDamage.
+                    int markTurns = Math.Max(target.GetStatusEffectTurnsRemaining("Marked"), move.StatusDurationTurns);
+                    target.ApplyStatusEffect(new StatusEffect
+                    {
+                        Name = "Marked",
+                        Type = StatusEffectType.Affliction,
+                        TurnsRemaining = markTurns,
+                        DamageTakenPercentBonus = 0.25f,
+                        Source = attacker,
+                    });
+                    break;
             }
         }
 

@@ -1086,6 +1086,13 @@ namespace SagesOfOzvaram.Units
             if (racialMods.DamageVulnerabilities.TryGetValue(damageType, out float vulnerabilityPercent))
                 rawDamage *= 1f + vulnerabilityPercent;
 
+            // Hunter's Mark (and anything similar in future): bonus damage from EVERY source
+            // while active - strongest-wins, same convention EffectiveAccuracy's own
+            // AccuracyReductionPercent already uses.
+            float markedBonus = StatusEffects.Count > 0 ? StatusEffects.Max(e => e.DamageTakenPercentBonus) : 0f;
+            if (markedBonus > 0f)
+                rawDamage *= 1f + markedBonus;
+
             float mitigation = damageType.IsPhysical() ? EffectiveDefense : EffectiveResistance;
             float mitigated = rawDamage * (1f - mitigation / 100f);
 

@@ -88,7 +88,7 @@ namespace SagesOfOzvaram
 
         // Start menu (the game's actual boot screen - see Initialize) - "Arena" (EnterOriginalMode,
         // the full 20x15 map + character select, controlling only the chosen character) or
-        // "Debug" (EnterTestMode, the small 3x3 map, controlling every unit) - see
+        // "Debug" (EnterTestMode, the small 6x6 map, controlling every unit) - see
         // HandleStartMenuInput/ConfirmStartMenuSelection/DrawStartMenu.
         private int _startMenuIndex = 0;
         private static readonly string[] StartMenuLabels = { "Arena", "Debug", "Open World" };
@@ -158,7 +158,7 @@ namespace SagesOfOzvaram
         /// tile loop only covers 0..Width-1/0..Height-1) - this was only ever guarded against for
         /// an Open World chunk specifically, leaving every other mode's own (differently-sized,
         /// but no less real) map edge completely unprotected. Computes the LOWEST zoom level (most
-        /// zoomed out) that still keeps the WHOLE current map (whatever mode/size it is - a 3x3
+        /// zoomed out) that still keeps the WHOLE current map (whatever mode/size it is - a 6x6
         /// Test Mode grid, the standard 20x15 Arena map, or an Open World chunk) covering the given
         /// viewport in both dimensions. Computed fresh from the viewport size passed in (not
         /// cached), so it stays correct across a window resize.
@@ -194,7 +194,7 @@ namespace SagesOfOzvaram
 
         /// <summary>
         /// The CURRENT map's (`_hexGrid`'s - whatever map is actually loaded right now, an Open
-        /// World chunk, Debug/Test Mode's 3x3 grid, or the standard Arena map) TRUE world-space
+        /// World chunk, Debug/Test Mode's 6x6 grid, or the standard Arena map) TRUE world-space
         /// bounding box - every hex's own center (HexGrid.HexToWorld, worst case including the
         /// odd-row 0.5-hex-width stagger) plus each edge hex's own visual extent (half a hex) past
         /// its center point. Closed-form (not a per-tile scan), so it's cheap enough to call every
@@ -233,7 +233,7 @@ namespace SagesOfOzvaram
         /// wherever it's about to go (cursor-follow, WASD pan, ...). If the viewport is
         /// wider/taller than the map itself at this zoom (shouldn't happen once
         /// GetMinZoomToFillScreen's own clamp is respected, but this is the safety net for if it
-        /// somehow isn't - e.g. Debug/Test Mode's tiny 3x3 grid at a zoom level nobody has
+        /// somehow isn't - e.g. Debug/Test Mode's tiny 6x6 grid at a zoom level nobody has
         /// specifically tuned the way Open World's own entry zoom is, see
         /// ConfirmCharacterSelection), that axis locks to the map's own true center instead of an
         /// inverted/invalid clamp range.
@@ -600,7 +600,7 @@ namespace SagesOfOzvaram
             _units = new List<BaseUnit>();
 
             // Hex grid/map need SOME initial values to construct the console/renderer against -
-            // EnterTestMode (called below) immediately replaces both with the 3x3 test setup, so
+            // EnterTestMode (called below) immediately replaces both with the 6x6 test setup, so
             // what's built here doesn't matter beyond being valid.
             _hexGrid = new HexGrid(3, 3, tileSize: 32f);
             _map = new Map(3, 3);
@@ -716,11 +716,11 @@ namespace SagesOfOzvaram
         /// (_testModeActive, this method, BuildTestDeck) rather than woven into the normal
         /// match-setup path, so stripping it later only means deleting this and its few
         /// _testModeActive checks elsewhere, not untangling it from real game logic. Swaps to a
-        /// small 3x3 all-grass map (the real procedural MapGenerator - see Initialize - is left
+        /// small 6x6 all-grass map (the real procedural MapGenerator - see Initialize - is left
         /// completely alone; this builds a Map directly, whose tiles already default to
         /// grass/passable with no generator needed), spawns all 4 hero classes at its 4 corners
         /// (reuses SpawnUnits/FindValidSpawnPosition exactly as a normal match does, just against
-        /// the swapped-in 3x3 grid), puts the player in control of the first one (Sorcerer - no
+        /// the swapped-in 6x6 grid), puts the player in control of the first one (Sorcerer - no
         /// character select in Test Mode), gives every unit effectively unlimited AP/MP (999 -
         /// "free" in every practical sense, since TurnSystem's normal ResetAP/RegenMana top back
         /// up to that same inflated Max every turn with no extra code needed, rather than
@@ -734,8 +734,8 @@ namespace SagesOfOzvaram
             GameLogger.ResetForNewMatch();
             _hasLoggedAnyUnitTurn = false;
 
-            _hexGrid = new HexGrid(3, 3, tileSize: 32f);
-            _map = new Map(3, 3);
+            _hexGrid = new HexGrid(6, 6, tileSize: 32f);
+            _map = new Map(6, 6);
             _console.SetMap(_map);
 
             _units.Clear();
@@ -782,7 +782,7 @@ namespace SagesOfOzvaram
             LogUnitAggro(_turnSystem.CurrentUnit);
             ApplyManaAuras(_turnSystem.CurrentUnit);
             ResetCombatMessageCount(_turnSystem.CurrentUnit);
-            _renderer.CameraPosition = _hexGrid.HexToWorld(1, 1);
+            _renderer.CameraPosition = _hexGrid.HexToWorld(3, 3);
 
             // Reset every input-mode flag - whatever was on screen before "test mode" was typed
             // (a targeting mode, an open menu, ...) no longer refers to anything valid.
@@ -813,7 +813,7 @@ namespace SagesOfOzvaram
 
             var playerDeck = _classDecks[_playerUnit.Class];
             int untestedCount = playerDeck.Count(c => !IsCardTested(c));
-            return $"Test Mode active - 3x3 grass map, {_units.Count} classes spawned, every unit player-controlled on its own turn (starting with {_playerUnit.Name}). "
+            return $"Test Mode active - 6x6 grass map, {_units.Count} classes spawned, every unit player-controlled on its own turn (starting with {_playerUnit.Name}). "
                 + $"Deck: {playerDeck.Count} cards each ({untestedCount} untested, at the top). AP/MP effectively unlimited.";
         }
 
@@ -1061,7 +1061,7 @@ namespace SagesOfOzvaram
 
             // Center on whichever unit's turn it is rather than a hardcoded hex (used to be
             // HexToWorld(10, 7), a fixed point on the original 20x15 map specifically - once
-            // Test Mode's 3x3 map could also be the active one at this point, that fixed point
+            // Test Mode's 6x6 map could also be the active one at this point, that fixed point
             // would aim the camera at empty space off the edge of it). MonoGame calls LoadContent
             // automatically right after Initialize() returns - before the Start Menu has had a
             // chance to show, let alone before the player has picked Arena/Debug - so _turnSystem
@@ -2055,7 +2055,7 @@ namespace SagesOfOzvaram
         /// itself opens character select (GameState.CharacterSelect), so the player ends up
         /// controlling only whichever single character they then pick, same as the game's
         /// original pre-Test-Mode flow. "Debug" (index 1) routes straight to EnterTestMode - the
-        /// small 3x3 map with every unit player-controlled on its own turn - mirroring exactly
+        /// small 6x6 map with every unit player-controlled on its own turn - mirroring exactly
         /// what Initialize() used to do unconditionally before this menu existed, including the
         /// one-time camera/auto-advance setup EnterTestMode's caller is responsible for. "Open
         /// World" (index 2, on request) routes to EnterOpenWorldMode - same character-select
@@ -3414,7 +3414,7 @@ namespace SagesOfOzvaram
 
             // Test Mode: the other 3 spawned classes don't act at all - no movement (per the
             // original request) AND no attacking either. Discovered why the attack half matters
-            // too by actually looking at a live screenshot: on a 3x3 map every corner is close
+            // too by actually looking at a live screenshot: on a 6x6 map every corner is close
             // enough to every other that the "attack if already in range" behavior alone let the
             // 3 AI units kill each other, and the player's OWN unit, by turn 3 with the player
             // never getting a turn - the opposite of a safe card-testing sandbox. Movement-only
@@ -6053,7 +6053,7 @@ namespace SagesOfOzvaram
                     // rather than a near-instant flash, for Arcane Missile in particular. Plus a
                     // brief hold once it lands (see TravelDuration/Duration on ActiveAttackEffect)
                     // so a short hop between two adjacent units - the common case on Test Mode's
-                    // 3x3 map - still gets a clearly visible pause, not just a flicker.
+                    // 6x6 map - still gets a clearly visible pause, not just a flicker.
                     travelDuration = 0.4f + 0.06f * distanceTiles;
                     holdDuration = 0.25f;
                 }
@@ -6301,13 +6301,19 @@ namespace SagesOfOzvaram
 
         private void HandleMapControls(KeyboardState keyboardState, MouseState mouseState, float deltaTime)
         {
-            // Camera pan (WASD) - suppressed while the turn menu or attack submenu is open,
-            // since W/S there navigate the menu instead (Move mode doesn't use W/S for
-            // anything, so panning stays available there - see OpenMovementMode for its
-            // one-time entry snap). Scaled by deltaTime (not a flat per-frame step) so it's
+            // Camera pan (WASD) - suppressed while the turn menu or any W/S-navigable submenu
+            // (Attack/Cards/Abilities/Items) is open, since W/S there navigate the menu instead
+            // (Move mode doesn't use W/S for anything, so panning stays available there - see
+            // OpenMovementMode for its one-time entry snap). Bug fix: the Abilities submenu was
+            // missing from this list - pressing S to navigate down to "Back" also panned the
+            // camera, which shifts the menu's own on-screen anchor (GetMenuOptionRects anchors
+            // off the player's current SCREEN position, which moves as the camera pans even
+            // though the player's WORLD position hasn't), so the menu visibly slid out from under
+            // the mouse and clicking "Back" (or anything else) afterward missed. Scaled by
+            // deltaTime (not a flat per-frame step) so it's
             // smooth and frame-rate-independent instead of speeding up or stuttering with the
             // frame rate - this was the actual cause of View Map feeling laggy/jittery.
-            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive && !_itemsMenuActive && !_itemDetailActive)
+            if (!_turnMenuActive && !_attackMenuActive && !_cardMenuActive && !_abilitiesMenuActive && !_itemsMenuActive && !_itemDetailActive)
             {
                 float panSpeed = 400f; // pixels/second
                 if (keyboardState.IsKeyDown(Keys.W))
@@ -6553,7 +6559,7 @@ namespace SagesOfOzvaram
                     // GetHexesInRadius is a pure hex-distance circle with no map-bounds awareness
                     // of its own - skip anything off the edge of the actual map, or the range
                     // indicator spills out past the grid entirely (very visible on a small map,
-                    // e.g. Test Mode's 3x3 one, where an ordinary 5-range spell's circle is
+                    // e.g. Test Mode's 6x6 one, where an ordinary 5-range spell's circle is
                     // several times the size of the map itself).
                     if (!_hexGrid.IsInBounds(col, row))
                         continue;
@@ -8163,7 +8169,7 @@ namespace SagesOfOzvaram
             DrawLineSimple(target + new Vector2(-size, size), target + new Vector2(size, -size), color, 3f);
         }
 
-        /// <summary>A small projectile traveling straight from attacker to target, with a soft glow and a short motion trail behind it - the ranged attack effect (see SpawnAttackAnimations). t goes 0 (just fired) to 1 (arrived). color distinguishes a magical bolt (e.g. Arcane Missile) from a physical one (arrow/bolt/bullet). Sized to still read clearly at a fully zoomed-out camera or over a short hop (e.g. between two adjacent units on Test Mode's 3x3 map) - a single small square at the old size could get lost in either case.</summary>
+        /// <summary>A small projectile traveling straight from attacker to target, with a soft glow and a short motion trail behind it - the ranged attack effect (see SpawnAttackAnimations). t goes 0 (just fired) to 1 (arrived). color distinguishes a magical bolt (e.g. Arcane Missile) from a physical one (arrow/bolt/bullet). Sized to still read clearly at a fully zoomed-out camera or over a short hop (e.g. between two adjacent units on Test Mode's 6x6 map) - a single small square at the old size could get lost in either case.</summary>
         private void DrawShootingEffect(Vector2 from, Vector2 to, float t, Color color)
         {
             Vector2 pos = Vector2.Lerp(from, to, t);

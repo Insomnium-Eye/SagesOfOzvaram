@@ -32,6 +32,7 @@ namespace SagesOfOzvaram.Combat
             "Multi-Shot",
             "Piercing Shot",
             "Explosive Trap",
+            "Camouflage",
         };
     }
 }

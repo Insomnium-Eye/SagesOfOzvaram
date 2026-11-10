@@ -40,7 +40,7 @@ namespace SagesOfOzvaram.Maps
 
         /// <summary>
         /// Set by Game1 after construction - "test mode" hands off to Game1 entirely (swapping
-        /// to the 3x3 test map, spawning all 4 classes, building the "every card, Untested
+        /// to the 6x6 test map, spawning all 4 classes, building the "every card, Untested
         /// first" test deck, giving everyone effectively unlimited AP/MP, ...) and prints back
         /// whatever status line it returns. Pre-release dev tooling only - see Game1.EnterTestMode.
         /// Test Mode is currently what the game boots directly into (see Game1.Initialize); use
@@ -70,7 +70,7 @@ namespace SagesOfOzvaram.Maps
             AddOutput("Developer Console initialized. Type 'help' for commands.");
         }
 
-        /// <summary>Point every tile/object/map command at a different Map instance - needed whenever Game1 swaps the active map out from under the console (e.g. EnterTestMode's 3x3 test map), since the console otherwise keeps operating on whatever Map it was constructed with.</summary>
+        /// <summary>Point every tile/object/map command at a different Map instance - needed whenever Game1 swaps the active map out from under the console (e.g. EnterTestMode's 6x6 test map), since the console otherwise keeps operating on whatever Map it was constructed with.</summary>
         public void SetMap(Map map)
         {
             _map = map;
@@ -699,7 +699,7 @@ namespace SagesOfOzvaram.Maps
             AddOutput("list cards <ClassID> - list only that class's own cards, Generic excluded (0=Generic, 1=Sorcerer, 2=Warrior, 3=Cleric, 4=Hunter)");
             AddOutput("add card <CardID> - add a spell/summon card (by integer ID) to the player's hand for testing");
             AddOutput("summon <UnitID> <Team> - spawn a summon creature directly onto a clicked tile, bypassing AP/MP/hand entirely. Team = 'Neutral' or an exact on-field unit's Name to own it");
-            AddOutput("test mode - enter Test Mode: 3x3 grass map, all 4 classes spawned, unlimited AP/MP, deck has every card (Untested first) - pre-release dev tooling, currently the default on launch");
+            AddOutput("test mode - enter Test Mode: 6x6 grass map, all 4 classes spawned, unlimited AP/MP, deck has every card (Untested first) - pre-release dev tooling, currently the default on launch");
             AddOutput("original mode - switch back to the normal 20x15 procedural map, character select, and standard decks/AP/MP");
             AddOutput("clear - Clear console output");
             AddOutput("help - Show this message");
