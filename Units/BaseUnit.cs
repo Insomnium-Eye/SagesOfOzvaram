@@ -1074,6 +1074,8 @@ namespace SagesOfOzvaram.Units
         /// BEFORE that mitigation: a racial vulnerability bonus (see RaceCatalog), if this
         /// unit's Race is vulnerable to damageType specifically (e.g. Lethios + Frost) - so DEF/RES
         /// still mitigates a portion of the inflated amount, rather than being tacked on after.
+        /// Hunter's Mark's own bonus (DamageTakenPercentBonus, below) is the one exception -
+        /// applied AFTER mitigation instead, on request.
         /// `attacker` is optional (null = unknown/no real attacker, e.g. none of the current
         /// callers happen to omit it, but a future one might) - only read for the guaranteed
         /// racial reaction below, to credit its own Aggro System placement aggro (see
@@ -1086,15 +1088,20 @@ namespace SagesOfOzvaram.Units
             if (racialMods.DamageVulnerabilities.TryGetValue(damageType, out float vulnerabilityPercent))
                 rawDamage *= 1f + vulnerabilityPercent;
 
-            // Hunter's Mark (and anything similar in future): bonus damage from EVERY source
-            // while active - strongest-wins, same convention EffectiveAccuracy's own
-            // AccuracyReductionPercent already uses.
-            float markedBonus = StatusEffects.Count > 0 ? StatusEffects.Max(e => e.DamageTakenPercentBonus) : 0f;
-            if (markedBonus > 0f)
-                rawDamage *= 1f + markedBonus;
-
             float mitigation = damageType.IsPhysical() ? EffectiveDefense : EffectiveResistance;
             float mitigated = rawDamage * (1f - mitigation / 100f);
+
+            // Hunter's Mark (and anything similar in future): bonus damage from EVERY source
+            // while active - strongest-wins, same convention EffectiveAccuracy's own
+            // AccuracyReductionPercent already uses. On request ("First calculate total damage
+            // taking base damage, resistances, etc, then increase that amount by 15%"), applied
+            // AFTER mitigation - a deliberate change from the original design (applied BEFORE
+            // mitigation, the same spot a racial DamageVulnerability uses above), which let
+            // DEF/RES eat into part of the bonus; this way the full 15% always lands on top of
+            // whatever the hit would otherwise have dealt, mitigation already included.
+            float markedBonus = StatusEffects.Count > 0 ? StatusEffects.Max(e => e.DamageTakenPercentBonus) : 0f;
+            if (markedBonus > 0f)
+                mitigated *= 1f + markedBonus;
 
             ApplyRawDamage((int)Math.Round(mitigated));
 

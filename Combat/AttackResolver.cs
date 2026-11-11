@@ -326,13 +326,16 @@ namespace SagesOfOzvaram.Combat
                     // Take the longer of this and any Mark already active, same reasoning as
                     // Snared/Stunned above - a follow-up Hunter's Mark shouldn't shorten one
                     // already ticking. See StatusEffect.DamageTakenPercentBonus/BaseUnit.TakeDamage.
+                    // 15%, on request (lowered from an original 25%, applied before DEF/RES
+                    // mitigation - that whole calculation was reworked at the same time, see
+                    // TakeDamage's own doc comment on why it moved to after mitigation instead).
                     int markTurns = Math.Max(target.GetStatusEffectTurnsRemaining("Marked"), move.StatusDurationTurns);
                     target.ApplyStatusEffect(new StatusEffect
                     {
                         Name = "Marked",
                         Type = StatusEffectType.Affliction,
                         TurnsRemaining = markTurns,
-                        DamageTakenPercentBonus = 0.25f,
+                        DamageTakenPercentBonus = 0.15f,
                         Source = attacker,
                     });
                     break;

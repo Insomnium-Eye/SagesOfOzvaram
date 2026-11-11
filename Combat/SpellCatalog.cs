@@ -634,7 +634,7 @@ namespace SagesOfOzvaram.Combat
 
         public static readonly SpellCard HuntersMark = new SpellCard(
             "Hunter's Mark",
-            "Marks a distant target - they take bonus damage from all sources for 3 turns.",
+            "Marks a distant target - they take +15% bonus damage from all sources for 3 turns.",
             HeroClass.Hunter,
             new Move("Hunter's Mark", "Once marked, there's nowhere left to hide.",
                 apCost: 1, mpCost: 2, range: 5, baseAccuracy: 0.90f, baseDamage: 0,

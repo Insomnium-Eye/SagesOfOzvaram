@@ -4376,11 +4376,31 @@ namespace SagesOfOzvaram
         /// TryCastSelectedCard.
 
         /// </summary>
+        /// <summary>
+        /// Bug fix, reported directly ("'hunters mark cant be cast yet' message"): this only ever
+        /// recognized a damage-dealing attack (`BaseDamage > 0`) - but Hunter's Mark deals no
+        /// direct damage at all, it's a pure debuff (accuracy roll, single enemy target at range,
+        /// inflicts "Marked" on a hit) that still needs the exact same targeting/hit-roll pipeline
+        /// a real attack uses, just with nothing in `AttackResolver.ResolveAgainst`'s own damage
+        /// step actually landing. Widened to also recognize that shape: no base damage, but a real
+        /// ranged single-target debuff (`Range > 0`, not a self/ally spell, carries an
+        /// `InflictsStatusEffect`) - same fix incidentally unblocks Curse/Taunt/Disarm too, which
+        /// shared the identical gap (all `Range > 0`, `BaseDamage == 0`, enemy-targeted). Still
+        /// excludes a `Range == 0` self-only spell like Camouflage (its own `InflictsStatusEffect`
+        /// is "Weak Invisibility," but it must stay on the `CastSelfUtility` path, not this one) -
+        /// every current self/ally-buff spell is `Range == 0`, so this stays a safe, precise split
+        /// rather than a blanket "has InflictsStatusEffect" check that would wrongly catch those too.
+        /// </summary>
         private static bool SpellCastsAsAttack(SpellCard card)
         {
             if (card.Name == "Place Trap" || card.Name == "Explosive Trap")
                 return false;
-            return card.Effect.BaseDamage > 0 && !card.Effect.TargetsAllies;
+
+            var move = card.Effect;
+            if (move.TargetsAllies)
+                return false;
+
+            return move.BaseDamage > 0 || (move.Range > 0 && move.InflictsStatusEffect != null);
         }
 
         /// <summary>
@@ -7720,6 +7740,8 @@ namespace SagesOfOzvaram
             if (effect.HealPercentMaxHPPerTurn > 0f) parts.Add($"heals {effect.HealPercentMaxHPPerTurn * 100f:0}% max HP/turn");
             if (effect.DamagePercentMaxHPPerTick > 0f) parts.Add($"-{effect.DamagePercentMaxHPPerTick * 100f:0}% HP/turn");
             if (effect.DamagePercentMaxHPPerAction > 0f) parts.Add($"-{effect.DamagePercentMaxHPPerAction * 100f:0}% HP/action");
+            if (effect.DamageTakenPercentBonus > 0f) parts.Add($"+{effect.DamageTakenPercentBonus * 100f:0}% dmg taken");
+            if (effect.InvisibilityRevealRange > 0) parts.Add($"hidden beyond {effect.InvisibilityRevealRange} tiles");
             if (effect.RestrictsActions) parts.Add("restricts actions");
             if (effect.PreventsMovement) parts.Add("no movement");
 
